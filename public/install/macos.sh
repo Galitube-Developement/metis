@@ -60,6 +60,19 @@ wait_for_health() {
   return 1
 }
 
+wait_for_frontend_assets() {
+  local base_url="$1" html asset attempt
+  for attempt in $(seq 1 30); do
+    html="$(curl --fail --silent --max-time 2 "${base_url%/}/" 2>/dev/null || true)"
+    asset="$(printf '%s' "$html" | grep -oE '/_next/static/[^[:space:]"<>]+\.js' | head -n 1 || true)"
+    if [[ -n "$asset" ]] && curl --fail --silent --max-time 2 "${base_url%/}${asset}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 port_in_use() {
   local p="$1"
   if command -v lsof >/dev/null 2>&1; then
@@ -644,7 +657,14 @@ chmod 700 "$install_dir/run-service.sh"
   set +a
   cd "$install_dir"
   pnpm install --frozen-lockfile
-  pnpm build
+  current_build_slot="${NEXT_DIST_DIR:-}"
+  if [[ "$current_build_slot" == ".next-a" ]]; then
+    next_build_slot=".next-b"
+  else
+    next_build_slot=".next-a"
+  fi
+  bash scripts/build-production-slot.sh "$next_build_slot"
+  upsert_env_key "$install_dir/.env" NEXT_DIST_DIR "$next_build_slot"
 )
 
 launch_dir="$HOME/Library/LaunchAgents"
@@ -686,6 +706,8 @@ write_plist mcp "$install_dir/lib/mcp-core/gateway-core.mjs"
 fi
 wait_for_health "http://127.0.0.1:$port/api/status" ||
   die "The application did not become healthy. Check launchctl, docker compose logs, or the service logs."
+wait_for_frontend_assets "http://127.0.0.1:$port" ||
+  die "The application started, but its browser assets are not available. Check launchctl, docker compose logs, or the service logs."
 wait_for_health "http://127.0.0.1:$mcp_port/health" ||
   die "The MCP gateway did not become healthy on port $mcp_port."
 

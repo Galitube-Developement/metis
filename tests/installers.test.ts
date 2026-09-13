@@ -92,9 +92,26 @@ test("linux native installer installs C/C++ build tools before pnpm install", ()
   for (const source of [content, published]) {
     assert.match(source, /ensure_native_build_tools/);
     assert.match(source, /build-essential/);
-    const toolsAt = source.indexOf("ensure_native_build_tools\n(");
+    const toolsAt = source.search(/ensure_native_build_tools\r?\n\(/);
     const pnpmAt = source.indexOf("pnpm install --frozen-lockfile");
     assert.ok(toolsAt >= 0 && pnpmAt > toolsAt, "build tools must be ensured before pnpm install");
+  }
+});
+
+test("unix native installers build an inactive Next slot and verify browser assets", () => {
+  for (const file of ["linux.sh", "macos.sh"]) {
+    const content = readFileSync(path.join(root, "install", file), "utf8");
+    const published = readFileSync(path.join(installerDir, file), "utf8");
+    for (const source of [content, published]) {
+      assert.match(source, /current_build_slot="\$\{NEXT_DIST_DIR:-\}"/);
+      assert.match(source, /next_build_slot="\.next-b"/);
+      assert.match(source, /bash scripts\/build-production-slot\.sh "\$next_build_slot"/);
+      assert.match(source, /upsert_env_key "\$install_dir\/\.env" NEXT_DIST_DIR "\$next_build_slot"/);
+      assert.match(source, /wait_for_frontend_assets "http:\/\/127\.0\.0\.1:\$port"/);
+      const buildAt = source.indexOf('bash scripts/build-production-slot.sh "$next_build_slot"');
+      const activateAt = source.indexOf('upsert_env_key "$install_dir/.env" NEXT_DIST_DIR "$next_build_slot"');
+      assert.ok(buildAt >= 0 && activateAt > buildAt, `${file} must switch slots only after a successful build`);
+    }
   }
 });
 
