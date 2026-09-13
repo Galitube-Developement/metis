@@ -30,5 +30,35 @@ export function commitChannelUpdateAvailable(
   checkoutSha?: string | null,
 ): boolean {
   if (!latestSha?.trim()) return false;
-  return !sameGitSha(latestSha, installedCommit) && !sameGitSha(latestSha, checkoutSha);
+  const current = checkoutSha?.trim() ? checkoutSha : installedCommit;
+  return !sameGitSha(latestSha, current);
 }
+
+export type UpdateReleaseItem = {
+  tag: string;
+  name: string;
+  body: string;
+  htmlUrl: string;
+  publishedAt: string | null;
+  prerelease: boolean;
+  current: boolean;
+};
+
+export type UpdateCommitItem = {
+  sha: string;
+  shortSha: string;
+  title: string;
+  body: string;
+  htmlUrl: string;
+  authoredAt: string | null;
+  author: string | null;
+  current: boolean;
+};
+
+export type UpdateVersionList = {
+  currentRef: string;
+  currentCommit: string | null;
+  currentTag: string | null;
+  releases: UpdateReleaseItem[];
+  commits: UpdateCommitItem[];
+};

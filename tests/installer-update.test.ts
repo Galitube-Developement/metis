@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildInstallerUpdatePlan, installerLogIndicatesFailure, installerSystemdEnvironment } from "../lib/installer-update";
+import { buildInstallerUpdatePlan, installerLogIndicatesFailure, installerLogIndicatesSuccess, installerSystemdEnvironment } from "../lib/installer-update";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -45,6 +45,19 @@ test("native commit updates omit --version so the installer git-pulls master", (
     tag: "v1.0.5",
     platform: "linux",
   });
+  assert.equal(plan.args.includes("--version"), false);
+});
+
+test("native commit plans pin the selected SHA with --commit", () => {
+  const plan = buildInstallerUpdatePlan({
+    ...base,
+    docker: false,
+    channel: "commits",
+    commit: "abcdef1234567890",
+    platform: "linux",
+  });
+  assert.equal(plan.args.includes("--commit"), true);
+  assert.equal(plan.args.includes("abcdef1234567890"), true);
   assert.equal(plan.args.includes("--version"), false);
 });
 
@@ -103,4 +116,9 @@ test("installer logs detect the HOME unbound failure", () => {
   assert.equal(installerLogIndicatesFailure("/tmp/metis-ai-update.sh: line 9: HOME: unbound variable"), true);
   assert.equal(installerLogIndicatesFailure("Error: git pull failed"), true);
   assert.equal(installerLogIndicatesFailure("Installing packages..."), false);
+});
+
+test("installer logs detect a finished native install", () => {
+  assert.equal(installerLogIndicatesSuccess("Metis AI installed successfully."), true);
+  assert.equal(installerLogIndicatesSuccess("Installing packages..."), false);
 });

@@ -12,6 +12,9 @@ import {
 import {
   commitChannelUpdateAvailable,
   sameGitSha,
+  type UpdateCommitItem,
+  type UpdateReleaseItem,
+  type UpdateVersionList,
 } from "@/lib/update-display";
 
 export {
@@ -20,6 +23,7 @@ export {
   sameGitSha,
   shortGitSha,
 } from "@/lib/update-display";
+export type { UpdateCommitItem, UpdateReleaseItem, UpdateVersionList } from "@/lib/update-display";
 
 const execFileAsync = promisify(execFile);
 const RELEASE_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest";
@@ -41,6 +45,7 @@ export type GithubRelease = {
   name?: string;
   body?: string;
   html_url?: string;
+  published_at?: string;
   prerelease?: boolean;
   draft?: boolean;
   assets?: GithubReleaseAsset[];
@@ -52,7 +57,12 @@ export type UpdateStatus = "development" | "up-to-date" | "available" | "commit-
 export type GithubCommit = {
   sha: string;
   html_url?: string;
-  commit?: { message?: string };
+  commit?: {
+    message?: string;
+    author?: { name?: string; date?: string };
+    committer?: { name?: string; date?: string };
+  };
+  author?: { login?: string };
 };
 
 export type UpdateCheck = {
@@ -97,6 +107,95 @@ export async function fetchLatestCommit(fetcher: typeof fetch = fetch): Promise<
   const commit = (await response.json()) as GithubCommit;
   if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
   return commit;
+}
+
+const githubHeaders = () => ({ "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" });
+
+export function isGitCommitSha(value: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(value.trim());
+}
+
+function splitCommitMessage(message?: string) {
+  const text = message?.trim() || "";
+  const [title, ...rest] = text.split(/\n/);
+  return { title: title || "Untitled commit", body: rest.join("\n").trim() };
+}
+
+export async function fetchReleaseByTag(tag: string, fetcher: typeof fetch = fetch): Promise<GithubRelease> {
+  const normalized = normalizeReleaseTag(tag);
+  if (!normalized) throw new Error("Release tag must look like v1.0.0.");
+  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/releases/tags/${encodeURIComponent(normalized)}`, {
+    headers: githubHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`GitHub release ${normalized} was not found (${response.status}).`);
+  const release = (await response.json()) as GithubRelease;
+  if (release.draft) throw new Error(`GitHub release ${normalized} is a draft.`);
+  return release;
+}
+
+export async function fetchCommitBySha(sha: string, fetcher: typeof fetch = fetch): Promise<GithubCommit> {
+  const value = sha.trim();
+  if (!isGitCommitSha(value)) throw new Error("Commit must be a git SHA.");
+  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/commits/${encodeURIComponent(value)}`, {
+    headers: githubHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`GitHub commit ${value.slice(0, 12)} was not found (${response.status}).`);
+  const commit = (await response.json()) as GithubCommit;
+  if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
+  return commit;
+}
+
+export async function listUpdateVersions(root: string, fetcher: typeof fetch = fetch): Promise<UpdateVersionList> {
+  const manifest = await loadReleaseManifest(root);
+  const head = await resolveCurrentGitHead(root);
+  const currentCommit = head || manifest.commit || null;
+  const currentTag = manifest.tag || null;
+  const [releasesResponse, commitsResponse] = await Promise.all([
+    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/releases?per_page=20", { headers: githubHeaders(), cache: "no-store" }),
+    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/commits?sha=master&per_page=30", { headers: githubHeaders(), cache: "no-store" }),
+  ]);
+  if (!releasesResponse.ok) throw new Error(`GitHub release list failed (${releasesResponse.status}).`);
+  if (!commitsResponse.ok) throw new Error(`GitHub commit list failed (${commitsResponse.status}).`);
+  const rawReleases = (await releasesResponse.json()) as GithubRelease[];
+  const rawCommits = (await commitsResponse.json()) as GithubCommit[];
+  const releases = (Array.isArray(rawReleases) ? rawReleases : [])
+    .filter((release) => !release.draft && normalizeReleaseTag(release.tag_name))
+    .map((release) => {
+      const tag = normalizeReleaseTag(release.tag_name) || release.tag_name;
+      return {
+        tag,
+        name: release.name?.trim() || tag,
+        body: release.body?.trim() || "",
+        htmlUrl: release.html_url || `https://github.com/f1shyondrugs/metis-ai/releases/tag/${encodeURIComponent(tag)}`,
+        publishedAt: release.published_at || null,
+        prerelease: Boolean(release.prerelease),
+        current: Boolean(currentTag && tag === currentTag),
+      } satisfies UpdateReleaseItem;
+    });
+  const commits = (Array.isArray(rawCommits) ? rawCommits : [])
+    .filter((commit) => commit.sha)
+    .map((commit) => {
+      const split = splitCommitMessage(commit.commit?.message);
+      return {
+        sha: commit.sha,
+        shortSha: commit.sha.slice(0, 12),
+        title: split.title,
+        body: split.body,
+        htmlUrl: commit.html_url || `https://github.com/f1shyondrugs/metis-ai/commit/${commit.sha}`,
+        authoredAt: commit.commit?.author?.date || commit.commit?.committer?.date || null,
+        author: commit.commit?.author?.name || commit.author?.login || null,
+        current: sameGitSha(commit.sha, currentCommit),
+      } satisfies UpdateCommitItem;
+    });
+  return {
+    currentRef: currentTag || currentCommit || manifest.version,
+    currentCommit,
+    currentTag,
+    releases,
+    commits,
+  };
 }
 
 export async function resolveCurrentRef(root: string): Promise<string> {
@@ -184,11 +283,7 @@ export async function checkForUpdate(
     const commit = await fetchLatestCommit(fetcher);
     const checkoutSha = await resolveCurrentGitHead(root);
     const updateAvailable = commitChannelUpdateAvailable(commit.sha, currentManifest.commit, checkoutSha);
-    const matchedRef = sameGitSha(commit.sha, currentManifest.commit)
-      ? currentManifest.commit
-      : sameGitSha(commit.sha, checkoutSha)
-        ? checkoutSha
-        : currentManifest.commit || checkoutSha;
+    const currentCheckout = checkoutSha || currentManifest.commit || currentRef;
     return {
       channel,
       status: updateAvailable ? "commit-available" : "up-to-date",
@@ -196,7 +291,7 @@ export async function checkForUpdate(
       latestCommit: commit.sha,
       commitUrl: commit.html_url,
       commitMessage: commit.commit?.message,
-      currentRef: matchedRef || currentRef,
+      currentRef: currentCheckout,
       currentManifest,
       updateAvailable,
     };

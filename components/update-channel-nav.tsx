@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatUpdateInstalledLabel } from "@/lib/update-display";
+import { UpdateVersionDialog } from "@/components/update-version-dialog";
+import { installerJobFinishedMessage, pollInstallerJob } from "@/lib/update-job-client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -95,12 +97,6 @@ type UpdateScheduleState = {
   nextRunAt?: string | null;
 };
 
-type UpdateJobState = {
-  status?: "preparing" | "ready" | "failed";
-  result?: { tag?: string; preparedSlot?: string };
-  error?: string;
-};
-
 export function UpdateStatusProbe({
   isHostAdmin,
   onUpdateAvailableChange,
@@ -173,6 +169,7 @@ export function UpdateSettingsPanel({
   const [schedule, setSchedule] = useState<UpdateScheduleState | null>(null);
   const [scheduleTime, setScheduleTime] = useState("03:00");
   const [scheduleTimezone, setScheduleTimezone] = useState("UTC");
+  const [otherVersionOpen, setOtherVersionOpen] = useState(false);
 
   useEffect(() => {
     if (!isHostAdmin) return;
@@ -230,23 +227,17 @@ export function UpdateSettingsPanel({
     let active = true;
     const poll = async () => {
       try {
-        const response = await fetch(`/api/admin/system/update?job=${encodeURIComponent(jobId)}`, { cache: "no-store" });
-        const job = (await response.json().catch(() => ({}))) as UpdateJobState & { error?: string };
+        const job = await pollInstallerJob(jobId);
         if (!active) return;
-        if (!response.ok) {
-          if (response.status === 404) {
-            setMessage("The installer is restarting Metis. Keep this page open.");
-            return;
-          }
+        if (job.status === "restarting") {
+          setMessage("The installer is restarting Metis. Keep this page open.");
+          return;
+        }
+        if (job.status === "ready") {
           window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
           setPreparing(false);
           setJobId(null);
-          setMessage(job.error || `Could not restore update status (HTTP ${response.status}).`);
-        } else if (job.status === "ready") {
-          window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
-          setPreparing(false);
-          setJobId(null);
-          setMessage(`Installer finished${job.result?.tag ? ` (${job.result.tag})` : ""}. Metis will come back after the service restart.`);
+          setMessage(installerJobFinishedMessage(job.tag));
         } else if (job.status === "failed") {
           window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
           setPreparing(false);
@@ -278,14 +269,14 @@ export function UpdateSettingsPanel({
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not save automatic update schedule."); }
   }
 
-  async function prepareUpdate() {
+  async function prepareUpdate(body: { channel: UpdateChannel; tag?: string; commit?: string } = { channel }) {
     setBusy(true);
     setMessage("");
     try {
       const response = await fetch("/api/admin/system/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ channel }),
+        body: JSON.stringify(body),
       });
       const raw = await response.text();
       let result: {
@@ -400,6 +391,19 @@ export function UpdateSettingsPanel({
       {available && channel === "commits" ? (
         <p className="text-xs text-muted-foreground">This runs the installer against the current checkout (git pull on master, then rebuild and restart). Master commits may be buggy or broken.</p>
       ) : null}
+      <div className="space-y-2 border-t border-border/60 pt-5">
+        <h4 className="text-sm font-medium">Other versions</h4>
+        <p className="text-xs text-muted-foreground">Install an older or specific GitHub release or master commit. This rebuilds Metis.</p>
+        <Button type="button" size="sm" variant="outline" onClick={() => setOtherVersionOpen(true)} disabled={busy || preparing}>
+          Download other version
+        </Button>
+      </div>
+      <UpdateVersionDialog
+        open={otherVersionOpen}
+        onOpenChange={setOtherVersionOpen}
+        busy={busy || preparing}
+        onInstall={(input) => prepareUpdate(input)}
+      />
     </div>
   );
 }

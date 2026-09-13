@@ -164,6 +164,7 @@ Options:
      --service-name NAME     systemd service prefix (default: metis-ai)
   --public-url URL        URL shown to users
   --version TAG          Checkout a release tag such as v1.0.0 after clone/pull
+  --commit SHA           Checkout a master commit SHA after clone/pull
   --native                Force Node.js + systemd instead of Docker
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
@@ -187,6 +188,7 @@ force_native=0
 replace_existing=0
 REPLACE_DATA_STASH=""
 release_version=""
+commit_sha=""
 
 if [[ "${1:-}" == "uninstall" ]]; then
   shift
@@ -250,6 +252,7 @@ while [[ $# -gt 0 ]]; do
              --service-name) [[ $# -ge 2 ]] || die "--service-name requires a value"; service_name="$2"; shift 2 ;;
     --public-url) [[ $# -ge 2 ]] || die "--public-url requires a value"; public_url="$2"; shift 2 ;;
     --version) [[ $# -ge 2 ]] || die "--version requires a value"; release_version="$2"; shift 2 ;;
+    --commit) [[ $# -ge 2 ]] || die "--commit requires a value"; commit_sha="$2"; shift 2 ;;
     --native) force_native=1; shift ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
@@ -286,6 +289,12 @@ public_url="${public_url:-http://${public_host}:${port}}"
 [[ "$service_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "Service name may contain letters, numbers, underscores and hyphens."
 if [[ -n "$release_version" && "$release_version" != "latest" ]]; then
   [[ "$release_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
+fi
+if [[ -n "$commit_sha" ]]; then
+  [[ "$commit_sha" =~ ^[0-9a-fA-F]{7,40}$ ]] || die "Commit must be a git SHA."
+fi
+if [[ -n "$release_version" && -n "$commit_sha" ]]; then
+  die "Use either --version or --commit, not both."
 fi
 
 existing_service_state=""
@@ -622,16 +631,20 @@ if ! command -v git >/dev/null 2>&1; then
     die "git is required."
 fi
 if [[ -e "$install_dir/.git" ]]; then
-  git -C "$install_dir" pull --ff-only
+  git -C "$install_dir" fetch origin
+  git -C "$install_dir" fetch --tags --force
 elif [[ -e "$install_dir" && -n "$(ls -A "$install_dir" 2>/dev/null)" ]]; then
   die "Installation directory exists and is not an existing Metis AI checkout: $install_dir"
 else
   mkdir -p "$(dirname "$install_dir")"
   git clone "$REPO_URL" "$install_dir"
 fi
-if [[ -n "$release_version" && "$release_version" != "latest" ]]; then
-  git -C "$install_dir" fetch --tags --force
+if [[ -n "$commit_sha" ]]; then
+  git -C "$install_dir" checkout --force -B master "$commit_sha"
+elif [[ -n "$release_version" && "$release_version" != "latest" ]]; then
   git -C "$install_dir" checkout --force "$release_version"
+else
+  git -C "$install_dir" pull --ff-only
 fi
 
 restore_stashed_data "$data_dir"

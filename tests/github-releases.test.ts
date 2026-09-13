@@ -10,6 +10,7 @@ import {
   compareReleaseVersions,
   formatUpdateInstalledLabel,
   isReleaseNewer,
+  listUpdateVersions,
   sameGitSha,
   type GithubRelease,
 } from "../lib/github-releases";
@@ -101,6 +102,7 @@ test("commit channel stays current when checkout HEAD already matches latest", (
   assert.equal(commitChannelUpdateAvailable(LIVE_SHA, STALE_SHA, LIVE_SHA), false);
   assert.equal(commitChannelUpdateAvailable(LIVE_SHA, STALE_SHA, STALE_SHA), true);
   assert.equal(commitChannelUpdateAvailable(LIVE_SHA, LIVE_SHA, null), false);
+  assert.equal(commitChannelUpdateAvailable(LIVE_SHA, LIVE_SHA, STALE_SHA), true);
 });
 
 test("commit channel installed label uses the SHA, not package version", () => {
@@ -137,6 +139,93 @@ test("commit channel is current when git HEAD matches latest even if the slot ma
     assert.equal(result.updateAvailable, false);
     assert.equal(result.status, "up-to-date");
     assert.equal(sameGitSha(result.currentRef, head), true);
+  } finally {
+    if (previousDistDir === undefined) delete process.env.NEXT_DIST_DIR;
+    else process.env.NEXT_DIST_DIR = previousDistDir;
+    if (previousGithubSha === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = previousGithubSha;
+    if (previousReleaseCommit === undefined) delete process.env.METIS_RELEASE_COMMIT;
+    else process.env.METIS_RELEASE_COMMIT = previousReleaseCommit;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("commit channel is behind when git HEAD is stale even if the slot manifest matches latest", async () => {
+  const root = await mkdtemp(`${os.tmpdir()}/metis-update-behind-`);
+  const previousDistDir = process.env.NEXT_DIST_DIR;
+  const previousGithubSha = process.env.GITHUB_SHA;
+  const previousReleaseCommit = process.env.METIS_RELEASE_COMMIT;
+  try {
+    delete process.env.GITHUB_SHA;
+    delete process.env.METIS_RELEASE_COMMIT;
+    await execFileAsync("git", ["init"], { cwd: root });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+    await execFileAsync("git", ["config", "user.name", "test"], { cwd: root });
+    await writeFile(`${root}/README.md`, "behind\n");
+    await execFileAsync("git", ["add", "README.md"], { cwd: root });
+    await execFileAsync("git", ["commit", "-m", "init"], { cwd: root });
+    const head = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await mkdir(`${root}/.next`, { recursive: true });
+    await writeFile(`${root}/package.json`, JSON.stringify({ version: "1.0.0" }));
+    await writeFile(`${root}/.next/release-manifest.json`, JSON.stringify({
+      schemaVersion: 1, version: "1.0.0", packageVersion: "1.0.0", tag: null,
+      commit: LIVE_SHA, channel: "development", isRelease: false, builtAt: new Date().toISOString(),
+    }));
+    process.env.NEXT_DIST_DIR = ".next";
+    const result = await checkForUpdate(root, async () => new Response(JSON.stringify({
+      sha: LIVE_SHA, html_url: `https://github.com/f1shyondrugs/metis-ai/commit/${LIVE_SHA}`,
+      commit: { message: "newer origin" },
+    }), { status: 200 }), "commits");
+    assert.equal(result.updateAvailable, true);
+    assert.equal(result.status, "commit-available");
+    assert.equal(sameGitSha(result.currentRef, head), true);
+    assert.equal(sameGitSha(result.latestCommit, LIVE_SHA), true);
+  } finally {
+    if (previousDistDir === undefined) delete process.env.NEXT_DIST_DIR;
+    else process.env.NEXT_DIST_DIR = previousDistDir;
+    if (previousGithubSha === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = previousGithubSha;
+    if (previousReleaseCommit === undefined) delete process.env.METIS_RELEASE_COMMIT;
+    else process.env.METIS_RELEASE_COMMIT = previousReleaseCommit;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("listUpdateVersions marks the current tag and commit", async () => {
+  const root = await mkdtemp(`${os.tmpdir()}/metis-update-list-`);
+  const previousDistDir = process.env.NEXT_DIST_DIR;
+  const previousGithubSha = process.env.GITHUB_SHA;
+  const previousReleaseCommit = process.env.METIS_RELEASE_COMMIT;
+  try {
+    delete process.env.GITHUB_SHA;
+    delete process.env.METIS_RELEASE_COMMIT;
+    await mkdir(`${root}/.next`, { recursive: true });
+    await writeFile(`${root}/package.json`, JSON.stringify({ version: "1.0.5" }));
+    await writeFile(`${root}/.next/release-manifest.json`, JSON.stringify({
+      schemaVersion: 1, version: "1.0.5", packageVersion: "1.0.5", tag: "v1.0.5",
+      commit: LIVE_SHA, channel: "stable", isRelease: true, builtAt: new Date().toISOString(),
+    }));
+    process.env.NEXT_DIST_DIR = ".next";
+    process.env.METIS_RELEASE_COMMIT = LIVE_SHA;
+    const listed = await listUpdateVersions(root, async (url) => {
+      const href = String(url);
+      if (href.includes("/releases?")) {
+        return new Response(JSON.stringify([
+          { tag_name: "v1.0.5", name: "Metis 1.0.5", body: "Latest notes", html_url: "https://github.com/f1shyondrugs/metis-ai/releases/tag/v1.0.5", published_at: "2026-09-12T00:00:00Z", draft: false, prerelease: false },
+          { tag_name: "v1.0.4", name: "Metis 1.0.4", body: "Older notes", html_url: "https://github.com/f1shyondrugs/metis-ai/releases/tag/v1.0.4", published_at: "2026-09-01T00:00:00Z", draft: false, prerelease: false },
+        ]), { status: 200 });
+      }
+      return new Response(JSON.stringify([
+        { sha: LIVE_SHA, html_url: `https://github.com/f1shyondrugs/metis-ai/commit/${LIVE_SHA}`, commit: { message: "keep installer updates alive\n\nDetails here.", author: { name: "f1shy", date: "2026-09-13T20:00:00Z" } } },
+        { sha: STALE_SHA, html_url: `https://github.com/f1shyondrugs/metis-ai/commit/${STALE_SHA}`, commit: { message: "older work" } },
+      ]), { status: 200 });
+    });
+    assert.equal(listed.releases[0]?.current, true);
+    assert.equal(listed.releases[1]?.current, false);
+    assert.equal(listed.commits[0]?.current, true);
+    assert.equal(listed.commits[0]?.title, "keep installer updates alive");
+    assert.equal(listed.commits[0]?.body, "Details here.");
+    assert.equal(listed.commits[1]?.current, false);
   } finally {
     if (previousDistDir === undefined) delete process.env.NEXT_DIST_DIR;
     else process.env.NEXT_DIST_DIR = previousDistDir;

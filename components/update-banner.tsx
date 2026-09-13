@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { installerJobFinishedMessage, pollInstallerJob } from "@/lib/update-job-client";
 
 type UpdateData = {
  status?: "development" | "up-to-date" | "available" | "external-installer";
@@ -46,23 +47,17 @@ export function UpdateBanner() {
    let active = true;
    const poll = async () => {
      try {
-       const response = await fetch(`/api/admin/system/update?job=${encodeURIComponent(jobId)}`, { cache: "no-store" });
-       const job = (await response.json().catch(() => ({}))) as { status?: string; error?: string; result?: { tag?: string } };
+       const job = await pollInstallerJob(jobId);
        if (!active) return;
-       if (!response.ok) {
-         if (response.status === 404) {
-           setMessage("The installer is restarting Metis. Keep this page open.");
-           return;
-         }
+       if (job.status === "restarting") {
+         setMessage("The installer is restarting Metis. Keep this page open.");
+         return;
+       }
+       if (job.status === "ready") {
          window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
          setPreparing(false);
          setJobId(null);
-         setMessage(job.error || `Could not restore update status (HTTP ${response.status}).`);
-       } else if (job.status === "ready") {
-         window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
-         setPreparing(false);
-         setJobId(null);
-         setMessage(`Installer finished${job.result?.tag ? ` (${job.result.tag})` : ""}. Metis will come back after the service restart.`);
+         setMessage(installerJobFinishedMessage(job.tag));
        } else if (job.status === "failed") {
          window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
          setPreparing(false);
@@ -81,8 +76,8 @@ export function UpdateBanner() {
    };
  }, [jobId]);
 
- if (!data?.updateAvailable) return null;
- const release = data.release;
+ if (!data?.updateAvailable && !preparing && !message) return null;
+ const release = data?.release;
 
  async function prepareUpdate() {
  setBusy(true);
@@ -108,12 +103,12 @@ export function UpdateBanner() {
  <section className="flex items-start gap-3 border-b border-primary/20 bg-primary/5 px-4 py-3 text-sm" role="status">
  <RefreshCw className="mt-0.5 size-4 shrink-0 text-primary" />
  <div className="min-w-0 flex-1">
- <p className="font-medium">Update available{data.currentManifest?.version ? `: ${data.currentManifest.version}` : ""}{data.latestTag ? ` → ${data.latestTag}` : ""}</p>
+ <p className="font-medium">{data?.updateAvailable ? `Update available${data.currentManifest?.version ? `: ${data.currentManifest.version}` : ""}${data.latestTag ? ` → ${data.latestTag}` : ""}` : "Installer update"}</p>
  {release?.name ? <p className="text-muted-foreground">{release.name}</p> : null}
  {release?.body ? <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{release.body}</p> : null}
  {message ? <p className="mt-1 text-xs text-muted-foreground">{message}</p> : null}
  </div>
- <Button type="button" size="sm" onClick={() => void prepareUpdate()} disabled={busy || preparing}>
+ <Button type="button" size="sm" onClick={() => void prepareUpdate()} disabled={busy || preparing || !data?.updateAvailable}>
  {busy || preparing ? <LoaderCircle className="size-4 animate-spin" /> : "Update"}
  </Button>
  </section>

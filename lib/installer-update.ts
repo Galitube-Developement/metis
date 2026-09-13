@@ -14,6 +14,7 @@ export type InstallerUpdateInput = {
   docker: boolean;
   channel: "releases" | "commits";
   tag?: string;
+  commit?: string;
   serviceName: string;
   dataDir: string;
   platform?: NodeJS.Platform;
@@ -50,6 +51,10 @@ export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env
 
 export function installerLogIndicatesFailure(text: string): boolean {
   return /unbound variable|^Error:|\bError: /m.test(text);
+}
+
+export function installerLogIndicatesSuccess(text: string): boolean {
+  return /Metis AI installed successfully/i.test(text);
 }
 
 function platformOf(value: NodeJS.Platform | undefined): "linux" | "darwin" | "win32" {
@@ -100,6 +105,7 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
       input.root,
     ];
     if (input.channel === "releases" && tag) args.push("-Version", tag);
+    if (input.channel === "commits" && input.commit) args.push("-Commit", input.commit);
     return {
       kind: "native",
       platform,
@@ -121,6 +127,7 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
     input.serviceName,
   ];
   if (input.channel === "releases" && tag) args.push("--version", tag);
+  if (input.channel === "commits" && input.commit) args.push("--commit", input.commit);
   return {
     kind: "native",
     platform,

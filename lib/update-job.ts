@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { runInstallerUpdate, type InstallerUpdateInput } from "@/lib/installer-update";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { config } from "@/lib/config";
+import {
+  installerLogIndicatesFailure,
+  installerUpdateIsRunning,
+  readInstallerUpdateLog,
+  runInstallerUpdate,
+  type InstallerUpdateInput,
+} from "@/lib/installer-update";
 import { clearMaintenanceState, setMaintenanceState } from "@/lib/maintenance-state";
 
 type UpdateJobResult = {
@@ -22,8 +31,84 @@ export type UpdateJob = {
 };
 
 const jobs = new Map<string, UpdateJob>();
-
 const INSTALLER_REASON = "Metis is being updated with the same installer used for a fresh install. Keep this page open.";
+
+function jobStorePath(dataDir = config.dataDir) {
+  return path.join(dataDir, "metis-update-job.json");
+}
+
+async function persistJob(job: UpdateJob) {
+  try {
+    await mkdir(config.dataDir, { recursive: true });
+    await writeFile(jobStorePath(), `${JSON.stringify(job)}\n`, { encoding: "utf8", mode: 0o600 });
+  } catch {
+    // Status polling can still recover from the installer log after a restart.
+  }
+}
+
+function parseStoredJob(raw: string): UpdateJob | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<UpdateJob>;
+    if (!parsed.jobId || (parsed.status !== "preparing" && parsed.status !== "ready" && parsed.status !== "failed")) return null;
+    return {
+      jobId: parsed.jobId,
+      status: parsed.status,
+      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : new Date().toISOString(),
+      ...(parsed.finishedAt ? { finishedAt: parsed.finishedAt } : {}),
+      ...(parsed.result ? { result: parsed.result } : {}),
+      ...(parsed.error ? { error: parsed.error } : {}),
+      logs: Array.isArray(parsed.logs) ? parsed.logs.map(String) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readPersistedJob(): Promise<UpdateJob | null> {
+  try {
+    return parseStoredJob(await readFile(jobStorePath(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function settleUpdateJobFromInstaller(
+  job: UpdateJob,
+  input: { installerRunning: boolean; logText: string; now?: string },
+): UpdateJob {
+  if (job.status !== "preparing") return job;
+  const logs = input.logText.trim() ? input.logText.trim().split(/\r?\n/) : job.logs;
+  if (input.installerRunning) return { ...job, logs };
+  const now = input.now || new Date().toISOString();
+  const last = logs.filter(Boolean).at(-1);
+  if (installerLogIndicatesFailure(input.logText)) {
+    return { ...job, status: "failed", error: last || "Installer update failed.", finishedAt: now, logs };
+  }
+  return {
+    ...job,
+    status: "ready",
+    finishedAt: now,
+    logs,
+    result: job.result || { tag: "latest", asset: "installer", method: "installer" },
+  };
+}
+
+async function applyInstallerState(job: UpdateJob) {
+  if (job.status !== "preparing") return job;
+  const [running, logs] = await Promise.all([
+    installerUpdateIsRunning(config.serviceName),
+    readInstallerUpdateLog(config.dataDir, 200),
+  ]);
+  const next = settleUpdateJobFromInstaller(job, { installerRunning: running, logText: logs.join("\n") });
+  jobs.set(next.jobId, next);
+  if (next.status !== "preparing") {
+    await persistJob(next);
+    await clearMaintenanceState();
+  } else if (next.logs !== job.logs) {
+    await persistJob(next);
+  }
+  return next;
+}
 
 async function startUpdateJob(
   prepare: (logger: (message: string) => void) => Promise<UpdateJobResult>,
@@ -34,23 +119,26 @@ async function startUpdateJob(
   log("Maintenance mode enabled.");
   await setMaintenanceState(job.jobId, reason);
   jobs.set(job.jobId, job);
+  await persistJob(job);
   void prepare(log).then(async (result) => {
     job.status = "ready";
     job.result = result;
     job.finishedAt = new Date().toISOString();
     log("Update prepared successfully.");
+    await persistJob(job);
     await clearMaintenanceState();
   }).catch(async (error) => {
     job.status = "failed";
     job.error = error instanceof Error ? error.message : String(error);
     job.finishedAt = new Date().toISOString();
     log(`Update failed: ${job.error}`);
+    await persistJob(job);
     await clearMaintenanceState();
   });
   return job;
 }
 
-export function startInstallerUpdateJob(input: InstallerUpdateInput & { commit?: string }) {
+export function startInstallerUpdateJob(input: InstallerUpdateInput) {
   return startUpdateJob(async (log) => {
     const result = await runInstallerUpdate(input, log);
     return { ...result, commit: input.commit };
@@ -59,4 +147,22 @@ export function startInstallerUpdateJob(input: InstallerUpdateInput & { commit?:
 
 export function getUpdateJob(jobId: string) {
   return jobs.get(jobId) || null;
+}
+
+export async function resolveUpdateJob(jobId: string): Promise<UpdateJob | null> {
+  const id = jobId.trim();
+  if (!id) return null;
+  const remembered = jobs.get(id) || (await readPersistedJob());
+  if (remembered && remembered.jobId === id) {
+    jobs.set(remembered.jobId, remembered);
+    return applyInstallerState(remembered);
+  }
+  const recovered: UpdateJob = {
+    jobId: id,
+    status: "preparing",
+    startedAt: new Date().toISOString(),
+    logs: ["Recovered update job after the installer restarted Metis."],
+  };
+  jobs.set(id, recovered);
+  return applyInstallerState(recovered);
 }

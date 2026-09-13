@@ -3,9 +3,11 @@ import { config } from "@/lib/config";
 import { isHostAdmin } from "@/lib/user-access";
 import {
   checkForUpdate,
+  fetchCommitBySha,
+  fetchReleaseByTag,
   type UpdateChannel,
 } from "@/lib/github-releases";
-import { getUpdateJob, startInstallerUpdateJob } from "@/lib/update-job";
+import { resolveUpdateJob, startInstallerUpdateJob } from "@/lib/update-job";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +27,7 @@ export async function GET(req: Request) {
     const searchParams = new URL(req.url).searchParams;
     const jobId = searchParams.get("job");
     if (jobId) {
-      const job = getUpdateJob(jobId);
+      const job = await resolveUpdateJob(jobId);
       if (!job) return Response.json({ error: "Update job not found. It may have expired after a service restart." }, { status: 404 });
       return Response.json(job, { headers: { "Cache-Control": "private, no-store" } });
     }
@@ -45,16 +47,48 @@ export async function POST(req: Request) {
   if ("response" in access) return access.response;
 
   let requestedTag: string | undefined;
+  let requestedCommit: string | undefined;
   let channel: UpdateChannel = "releases";
   try {
-    const body = await req.json().catch(() => ({})) as { tag?: unknown; channel?: unknown };
-    if (typeof body.tag === "string") requestedTag = body.tag;
+    const body = await req.json().catch(() => ({})) as { tag?: unknown; commit?: unknown; channel?: unknown };
+    if (typeof body.tag === "string") requestedTag = body.tag.trim();
+    if (typeof body.commit === "string") requestedCommit = body.commit.trim();
     if (body.channel === "commits") channel = "commits";
   } catch {
     requestedTag = undefined;
   }
 
   try {
+    if (requestedTag && requestedCommit) {
+      return Response.json({ error: "Choose a release tag or a commit SHA, not both." }, { status: 400 });
+    }
+    if (requestedTag || requestedCommit) {
+      if (config.docker && requestedCommit) {
+        return Response.json({ error: "Pinning a commit is only supported for native installs." }, { status: 409 });
+      }
+      const release = requestedTag ? await fetchReleaseByTag(requestedTag, fetch) : null;
+      const commit = requestedCommit ? await fetchCommitBySha(requestedCommit, fetch) : null;
+      const pinnedChannel: UpdateChannel = requestedCommit ? "commits" : "releases";
+      const job = await startInstallerUpdateJob({
+        root: config.root,
+        docker: config.docker,
+        channel: pinnedChannel,
+        tag: release ? (release.tag_name || requestedTag) : undefined,
+        commit: commit?.sha || requestedCommit,
+        serviceName: config.serviceName,
+        dataDir: config.dataDir,
+      });
+      const label = release?.tag_name || commit?.sha.slice(0, 12) || "the selected version";
+      return Response.json({
+        ok: true,
+        status: "preparing",
+        jobId: job.jobId,
+        latestTag: release?.tag_name,
+        latestCommit: commit?.sha,
+        message: `Installing ${label}. Metis will show the updating screen until the installer finishes and restarts the services.`,
+      }, { status: 202 });
+    }
+
     const update = await checkForUpdate(config.root, fetch, channel);
     if (!update.updateAvailable) {
       return Response.json({

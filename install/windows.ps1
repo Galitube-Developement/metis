@@ -13,6 +13,7 @@ param(
   [string]$ServiceName = "MetisAI",
   [string]$PublicUrl = "",
   [string]$Version = "",
+  [string]$Commit = "",
   [switch]$NonInteractive,
   [switch]$SkipRuntimeInstall,
   [switch]$Native,
@@ -35,7 +36,7 @@ This script must be invoked with powershell -File. Do not pipe it to iex;
 use install.ps1 for the one-line installer.
 
 Options: -InstallDir, -DataDir, -AgentCwd, -Port, -Host, -McpPort,
-         -Username, -Password, -PasswordFile, -ServiceName, -PublicUrl, -Version
+         -Username, -Password, -PasswordFile, -ServiceName, -PublicUrl, -Version, -Commit
          -NonInteractive, -SkipRuntimeInstall, -Native, -ReplaceExisting, -DryRun
          uninstall [-Yes] [-KeepData] [-InstallDir DIR]
 "@ | Write-Host
@@ -385,19 +386,25 @@ Require-Command git
 if (-not $useDocker -and (Get-NodeMajor) -lt 22) { throw "Node.js 22 or newer is required." }
 
 if (Test-Path (Join-Path $InstallDir ".git")) {
-  git -C $InstallDir pull --ff-only
+  git -C $InstallDir fetch --force origin
+  git -C $InstallDir fetch --tags --force
 } elseif ((Test-Path $InstallDir) -and (Get-ChildItem -Force $InstallDir | Select-Object -First 1)) {
   throw "Installation directory exists and is not a Metis AI checkout: $InstallDir"
 } else {
   New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir) | Out-Null
   git clone $RepoUrl $InstallDir
 }
-if ($Version -and $Version -ne "latest") {
+if ($Commit) {
+  if ($Commit -notmatch '^[0-9a-fA-F]{7,40}$') { throw "Commit must be a git SHA." }
+  if ($Version -and $Version -ne "latest") { throw "Use either -Version or -Commit, not both." }
+  git -C $InstallDir checkout --force -B master $Commit
+} elseif ($Version -and $Version -ne "latest") {
   if ($Version -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
     throw "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
   }
-  git -C $InstallDir fetch --tags --force
   git -C $InstallDir checkout --force $Version
+} else {
+  git -C $InstallDir pull --ff-only
 }
 Restore-StashedData $dataDir
 
