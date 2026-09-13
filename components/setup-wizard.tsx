@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { HandsStage } from "@/components/hands-stage";
 import { ProviderSetupDialog } from "@/components/provider-setup-dialog";
+import { resolveSetupStep, type SetupStep } from "@/lib/setup-step";
 
 type OsPlatform = "linux" | "darwin" | "win32";
 type OsUser = { username: string; home?: string };
 type CreatedUser = { id: string; username: string; isAdmin: boolean };
-type Step = "welcome" | "people" | "provider" | "ready";
+const SETUP_STEP_STORAGE_KEY = "metis-setup-step";
 
 function platformLabel(platform: OsPlatform) {
   return platform === "win32" ? "Windows user" : platform === "darwin" ? "Mac user" : "Linux user";
@@ -26,7 +27,7 @@ export function SetupWizard({
   hasUsers: boolean;
   onFinished: () => void;
 }) {
-  const [step, setStep] = useState<Step>(hasUsers ? "people" : "welcome");
+  const [step, setStep] = useState<SetupStep>(hasUsers ? "people" : "welcome");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [makeAdmin, setMakeAdmin] = useState(false);
@@ -40,8 +41,15 @@ export function SetupWizard({
 
   useEffect(() => {
     if (!open) return;
-    setStep(hasUsers ? "people" : "welcome");
+    let savedStep: string | null = null;
+    try { savedStep = window.sessionStorage.getItem(SETUP_STEP_STORAGE_KEY); } catch { /* ignore */ }
+    setStep((current) => resolveSetupStep(hasUsers, savedStep || current));
   }, [open, hasUsers]);
+
+  function goToStep(nextStep: SetupStep) {
+    try { window.sessionStorage.setItem(SETUP_STEP_STORAGE_KEY, nextStep); } catch { /* ignore */ }
+    setStep(nextStep);
+  }
 
   useEffect(() => {
     if (!open || step !== "people") return;
@@ -157,6 +165,7 @@ export function SetupWizard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "complete" }),
     }).catch(() => undefined);
+    try { window.sessionStorage.removeItem(SETUP_STEP_STORAGE_KEY); } catch { /* ignore */ }
     onFinished();
   }
 
@@ -198,7 +207,7 @@ export function SetupWizard({
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {step === "welcome" ? (
-        <Button type="button" className="h-11 min-h-11 rounded-xl" onClick={() => setStep("people")}>
+        <Button type="button" className="h-11 min-h-11 rounded-xl" onClick={() => goToStep("people")}>
           Continue <ArrowRight className="size-4" />
         </Button>
       ) : null}
@@ -260,7 +269,7 @@ export function SetupWizard({
                 {busy ? <LoaderCircle className="size-4 animate-spin" /> : users.length ? <><Plus className="size-4" /> Add person</> : <>Create admin <ArrowRight className="size-4" /></>}
               </Button>
               {users.length ? (
-                <Button type="button" variant="secondary" className="h-11 min-h-11 rounded-xl" disabled={busy} onClick={() => setStep("provider")}>
+                <Button type="button" variant="secondary" className="h-11 min-h-11 rounded-xl" disabled={busy} onClick={() => goToStep("provider")}>
                   Continue <ArrowRight className="size-4" />
                 </Button>
               ) : null}
@@ -275,9 +284,9 @@ export function SetupWizard({
             open
             embedded
             onOpenChange={() => undefined}
-            onConnected={() => setStep("ready")}
-            onStartChat={() => setStep("ready")}
-            onSkip={() => setStep("ready")}
+            onConnected={() => goToStep("ready")}
+            onStartChat={() => goToStep("ready")}
+            onSkip={() => goToStep("ready")}
           />
         </div>
       ) : null}

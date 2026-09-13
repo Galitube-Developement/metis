@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resolveSetupStep } from "../lib/setup-step";
 
 const root = path.join(import.meta.dirname, "..");
 const dataDir = mkdtempSync(path.join(os.tmpdir(), "metis-onboard-"));
@@ -41,6 +42,17 @@ test("onboarding uses the update-screen hands and four real steps", () => {
   assert.match(wizard, /Admin/);
   assert.match(wizard, /\/api\/admin\/users/);
   assert.match(wizard, /isAdmin: makeAdmin/);
+});
+
+test("provider onboarding survives the account status changing while it is open", () => {
+  assert.equal(resolveSetupStep(true, "provider"), "provider");
+  assert.equal(resolveSetupStep(true, "ready"), "ready");
+  assert.equal(resolveSetupStep(true, "welcome"), "people");
+  assert.equal(resolveSetupStep(false, "provider"), "welcome");
+
+  const wizard = readFileSync(path.join(root, "components/setup-wizard.tsx"), "utf8");
+  assert.match(wizard, /sessionStorage\.setItem\(SETUP_STEP_STORAGE_KEY, nextStep\)/);
+  assert.doesNotMatch(wizard, /setStep\(hasUsers \? "people" : "welcome"\)/);
 });
 
 test("status API exposes setup so first-run can skip Sign-In", () => {
