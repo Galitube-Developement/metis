@@ -3,6 +3,22 @@
 # Prefer: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)"
 set -Eeuo pipefail
 
+# LaunchAgents and other non-login environments can omit HOME.
+if [[ -z "${HOME:-}" ]]; then
+  HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+  if [[ -z "$HOME" ]]; then
+    HOME="$(eval echo "~$(id -un)" 2>/dev/null || true)"
+  fi
+  if [[ -z "$HOME" ]]; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+      HOME="/var/root"
+    else
+      HOME="/tmp"
+    fi
+  fi
+  export HOME
+fi
+
 REPO_URL="${METIS_AI_REPO_URL:-https://github.com/f1shyondrugs/metis-ai.git}"
 DEFAULT_DIR="${METIS_AI_INSTALL_DIR:-$HOME/metis-ai}"
 

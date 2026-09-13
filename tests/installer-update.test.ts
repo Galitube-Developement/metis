@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildInstallerUpdatePlan } from "../lib/installer-update";
+import { buildInstallerUpdatePlan, installerLogIndicatesFailure, installerSystemdEnvironment } from "../lib/installer-update";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -90,4 +90,17 @@ test("macOS and Windows plans use the platform installer files", () => {
   assert.equal(win.scriptSource, path.join(root, "install", "windows.ps1"));
   assert.equal(win.args.includes("-Version"), true);
   assert.equal(win.args.includes("v1.0.5"), true);
+});
+
+test("systemd-run environment always includes HOME", () => {
+  const args = installerSystemdEnvironment({ PATH: "/bin", USER: "root" });
+  assert.equal(args.some((value) => value.startsWith("--setenv=HOME=") && value.length > "--setenv=HOME=".length), true);
+  assert.equal(args.includes("--setenv=USER=root"), true);
+  assert.equal(args.includes("--setenv=PATH=/bin"), true);
+});
+
+test("installer logs detect the HOME unbound failure", () => {
+  assert.equal(installerLogIndicatesFailure("/tmp/metis-ai-update.sh: line 9: HOME: unbound variable"), true);
+  assert.equal(installerLogIndicatesFailure("Error: git pull failed"), true);
+  assert.equal(installerLogIndicatesFailure("Installing packages..."), false);
 });

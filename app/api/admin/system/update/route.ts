@@ -45,12 +45,10 @@ export async function POST(req: Request) {
   if ("response" in access) return access.response;
 
   let requestedTag: string | undefined;
-  let action: "prepare" | "activate" = "prepare";
   let channel: UpdateChannel = "releases";
   try {
-    const body = await req.json().catch(() => ({})) as { tag?: unknown; action?: unknown; channel?: unknown };
+    const body = await req.json().catch(() => ({})) as { tag?: unknown; channel?: unknown };
     if (typeof body.tag === "string") requestedTag = body.tag;
-    if (body.action === "activate") action = "activate";
     if (body.channel === "commits") channel = "commits";
   } catch {
     requestedTag = undefined;
@@ -71,15 +69,6 @@ export async function POST(req: Request) {
     }
     if (channel === "commits" && !update.latestCommit) {
       throw new Error("GitHub did not return a master commit SHA.");
-    }
-    if (action === "activate") {
-      return Response.json({
-        ok: true,
-        status: "activating",
-        latestTag: update.latestTag,
-        latestCommit: update.latestCommit,
-        message: "Updates now run the installer in one step. If an update is already running, keep this page open.",
-      }, { status: 202 });
     }
 
     const job = await startInstallerUpdateJob({

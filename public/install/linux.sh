@@ -3,6 +3,23 @@
 # Prefer: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)"
 set -Eeuo pipefail
 
+# systemd-run and other non-login environments omit HOME. `set -u` then
+# dies on DEFAULT_DIR="$HOME/metis-ai" before --install-dir is parsed.
+if [[ -z "${HOME:-}" ]]; then
+  HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+  if [[ -z "$HOME" ]]; then
+    HOME="$(eval echo "~$(id -un)" 2>/dev/null || true)"
+  fi
+  if [[ -z "$HOME" ]]; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+      HOME="/root"
+    else
+      HOME="/tmp"
+    fi
+  fi
+  export HOME
+fi
+
 APP_NAME="Metis AI"
 REPO_URL="${METIS_AI_REPO_URL:-https://github.com/f1shyondrugs/metis-ai.git}"
 NODE_VERSION="${METIS_NODE_VERSION:-22.16.0}"

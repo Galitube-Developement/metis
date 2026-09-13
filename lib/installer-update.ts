@@ -36,6 +36,22 @@ export type InstallerUpdateResult = {
   asset: string;
 };
 
+export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
+  const home = env.HOME?.trim() || os.homedir();
+  const pathEnv = env.PATH?.trim() || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  let user = env.USER?.trim() || env.LOGNAME?.trim() || "";
+  if (!user) {
+    try { user = os.userInfo().username; } catch { user = ""; }
+  }
+  const args = [`--setenv=HOME=${home}`, `--setenv=PATH=${pathEnv}`];
+  if (user) args.push(`--setenv=USER=${user}`);
+  return args;
+}
+
+export function installerLogIndicatesFailure(text: string): boolean {
+  return /unbound variable|^Error:|\bError: /m.test(text);
+}
+
 function platformOf(value: NodeJS.Platform | undefined): "linux" | "darwin" | "win32" {
   if (value === "darwin") return "darwin";
   if (value === "win32") return "win32";
@@ -195,11 +211,11 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], lo
   }
   await execFileAsync("systemd-run", [
     `--unit=${unit}`,
-    "--collect",
     "--no-block",
     "--description=Metis AI installer update",
     `--property=StandardOutput=append:${plan.logFile}`,
     `--property=StandardError=append:${plan.logFile}`,
+    ...installerSystemdEnvironment(),
     plan.command,
     ...args,
   ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
@@ -226,7 +242,16 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], lo
       throw new Error(`Installer update failed (systemd result=${result || active}, status=${code || "unknown"}).`);
     }
     if (active === "inactive" || active === "dead") {
+      await flushNewLogLines(plan.logFile, offset, log);
+      const logText = await readFile(plan.logFile, "utf8").catch(() => "");
       if (code && code !== "0") throw new Error(`Installer update exited with status ${code}.`);
+      if (installerLogIndicatesFailure(logText)) {
+        const last = logText.trim().split(/\r?\n/).filter(Boolean).at(-1) || "see installer log";
+        throw new Error(`Installer update failed. ${last}`);
+      }
+      if (!code && !logText.trim()) {
+        throw new Error("Installer update finished without a systemd status or log.");
+      }
       log("Installer finished.");
       return;
     }
