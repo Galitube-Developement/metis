@@ -143,7 +143,7 @@ import {
   shouldIgnoreComposerEnter,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
-import { pinScrollTop, shouldPinOpenedChat, transcriptScrollAction } from "@/lib/chat-scroll";
+import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
   clearClientChatSnapshots,
@@ -2274,6 +2274,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const programmaticScrollRef = useRef(false);
   const programmaticUntilRef = useRef(0);
   const userDetachedFromBottomRef = useRef(false);
+  const expandFromBottomRef = useRef(0);
+  const transcriptWasPinnedRef = useRef(true);
   const userScrollInputRef = useRef(false);
   const userScrollInputTimerRef = useRef<number | null>(null);
   const lastMessageScrollTopRef = useRef(0);
@@ -5432,6 +5434,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       enteringChatRef.current = false;
       userDetachedFromBottomRef.current = true;
       stickToBottomRef.current = false;
+      expandFromBottomRef.current = distanceFromBottom();
       setShowScrollDown(true);
     };
     const attachToBottom = () => {
@@ -5522,6 +5525,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
     };
   }, [paneKey, loadingChatId]);
+
+  useLayoutEffect(() => {
+    const el = messagesScrollRef.current;
+    const pinned = !showScrollDown;
+    if (el && transcriptWasPinnedRef.current && !pinned) {
+      const fromBottom = expandFromBottomRef.current;
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - fromBottom);
+    }
+    transcriptWasPinnedRef.current = pinned;
+  }, [showScrollDown, messages.length]);
 
   useEffect(() => {
     if (!highlightedMessageId) return;
@@ -5631,7 +5644,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const observer = new ResizeObserver(updateComposerSpace);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [isEmpty, queuedMessages.length, liveStatus, input, referenceText, pendingFiles.length]);
+  }, [isEmpty, queuedMessages.length, liveStatus, referenceText, pendingFiles.length]);
 
   async function login(e: FormEvent) {
     e.preventDefault();
@@ -7851,6 +7864,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   const canSend = Boolean(input.trim() || pendingFiles.length);
+  const transcriptPinned = !showScrollDown;
+  const transcriptMessages = visibleTranscriptMessages(messages, transcriptPinned);
+  const hiddenTranscriptCount = hiddenTranscriptMessageCount(messages.length, transcriptMessages.length);
   const hasConnectedProvider = Boolean(
     status?.cursorSdkConfigured ||
     status?.providers?.some((provider) => provider.enabled && provider.hasSecret),
@@ -9736,8 +9752,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <>
             <div
               ref={messagesScrollRef}
-              className="messages-composer-mask min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
-              style={{ ["--composer-mask-size" as string]: `${Math.max(88, composerHeight + 28)}px` }}
+              className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
               onMouseUp={() => {
                 const selection = window.getSelection();
                 const text = selection?.toString().trim() || "";
@@ -9775,12 +9790,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     </div>
                   </div>
                 ) : null}
-                {hasEarlierMessages || loadingEarlierMessages ? (
+                {hasEarlierMessages || loadingEarlierMessages || hiddenTranscriptCount > 0 ? (
                   <div className="text-center text-xs text-muted-foreground">
                     {loadingEarlierMessages ? "Loading more messages…" : "Scroll up for older messages"}
                   </div>
                 ) : null}
-                {messages.map((m) => {
+                {transcriptMessages.map((m) => {
                   const canRevert = m.role === "user";
                   const sourceLinks = m.role === "assistant" && !m.streaming
                     ? extractMessageSources(m)
@@ -9790,14 +9805,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     key={m.id}
                     data-message-id={m.id}
                     className={cn(
-                      "w-full transition-colors",
+                      "chat-transcript-message w-full transition-colors",
                       highlightedMessageId === m.id && [
                         "-mx-2 -my-1 px-2 py-1",
                         "bg-primary/10 ring-1 ring-primary/30",
                         "animate-[pulse_1.4s_ease-in-out_2]",
                       ],
                     )}
-                    style={{ contentVisibility: "auto", containIntrinsicSize: "240px" }}
                   >
                     {m.role === "user" ? (
                       <div className="flex flex-col items-end gap-1">

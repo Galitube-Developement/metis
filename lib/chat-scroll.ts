@@ -48,3 +48,18 @@ export function transcriptScrollAction(options: {
   }
   return "ignore";
 }
+
+export const PINNED_TRANSCRIPT_MESSAGE_LIMIT = 40;
+
+export function visibleTranscriptMessages<T>(
+  messages: T[],
+  pinnedToBottom: boolean,
+  limit = PINNED_TRANSCRIPT_MESSAGE_LIMIT,
+): T[] {
+  if (!pinnedToBottom || messages.length <= limit) return messages;
+  return messages.slice(-limit);
+}
+
+export function hiddenTranscriptMessageCount(total: number, visible: number) {
+  return Math.max(0, total - visible);
+}

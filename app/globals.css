@@ -652,6 +652,11 @@
   mask-size: 100% 100%;
 }
 
+.chat-transcript-message {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
 .user-message-collapse-mask {
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3.25rem), transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3.25rem), transparent 100%);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pinScrollTop, shouldPinOpenedChat, transcriptScrollAction } from "../lib/chat-scroll";
+import { pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages, hiddenTranscriptMessageCount } from "../lib/chat-scroll";
 
 test("pinScrollTop lands on the last visible page", () => {
   assert.equal(pinScrollTop(2000, 600), 1400);
@@ -56,4 +56,12 @@ test("layout growth after open re-pins instead of treating the top as a user det
     layoutResetToTop: false,
     stickToBottom: true,
   }), "detach");
+});
+
+test("pinned transcripts keep only the newest page in the DOM", () => {
+  const messages = Array.from({ length: 80 }, (_, index) => index);
+  assert.deepEqual(visibleTranscriptMessages(messages, true), messages.slice(-40));
+  assert.equal(visibleTranscriptMessages(messages, false), messages);
+  assert.equal(visibleTranscriptMessages(messages.slice(-10), true).length, 10);
+  assert.equal(hiddenTranscriptMessageCount(80, 40), 40);
 });

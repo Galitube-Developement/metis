@@ -80,6 +80,9 @@ test("opening a chat pins the transcript to the bottom and does not page history
   assert.match(shell, /}, \[activeChatId, paneKey, loadingChatId\]\)/);
   assert.doesNotMatch(shell, /}, \[activeChatId, paneKey, loadingChatId, messages\]\)/);
   assert.match(shell, /if \(enteringChatRef\.current\) return/);
+  assert.match(shell, /visibleTranscriptMessages\(messages, transcriptPinned\)/);
+  assert.match(shell, /chat-transcript-message/);
+  assert.doesNotMatch(shell, /className="messages-composer-mask min-h-0 flex-1 overflow-y-auto/);
 });
 
 test("completed and stale historical subagents are not shown as still running", () => {
