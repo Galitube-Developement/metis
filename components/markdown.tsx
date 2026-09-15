@@ -3,6 +3,7 @@
 import {
   memo,
   useEffect,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type HTMLAttributes,
@@ -26,6 +27,7 @@ import { isGraphSource } from "@/lib/graph-spec";
 import { isMermaidSource, wrapBareMermaid } from "@/lib/mermaid";
 import { ExternalLink, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STREAMING_RENDER_INTERVAL_MS, shouldFlushStreamingRender } from "@/lib/streaming-render";
 
 export { normalizeMath, splitStreamingMath } from "@/lib/math";
 
@@ -388,5 +390,35 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
   content: string;
   thinkingDurationMs?: number;
 }) {
-  return <Markdown content={content} streaming thinkingDurationMs={thinkingDurationMs} />;
+  const [shown, setShown] = useState(content);
+  const latestRef = useRef(content);
+  const shownRef = useRef(shown);
+  const timerRef = useRef<number | null>(null);
+  latestRef.current = content;
+  shownRef.current = shown;
+
+  useEffect(() => {
+    const next = latestRef.current;
+    const current = shownRef.current;
+    if (next === current) return;
+    if (shouldFlushStreamingRender(current, next)) {
+      if (timerRef.current != null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setShown(next);
+      return;
+    }
+    if (timerRef.current != null) return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setShown(latestRef.current);
+    }, STREAMING_RENDER_INTERVAL_MS);
+  }, [content]);
+
+  useEffect(() => () => {
+    if (timerRef.current != null) window.clearTimeout(timerRef.current);
+  }, []);
+
+  return <Markdown content={shown} streaming thinkingDurationMs={thinkingDurationMs} />;
 });

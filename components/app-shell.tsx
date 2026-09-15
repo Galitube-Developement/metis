@@ -100,6 +100,7 @@ import { RichUserText } from "@/components/rich-user-text";
 import { ProviderSetupDialog } from "@/components/provider-setup-dialog";
 import { SetupWizard } from "@/components/setup-wizard";
 import { BrowserSettingsControls } from "@/components/browser-settings-controls";
+import { BrowserPageEmpty, BrowserPageSkeleton } from "@/components/browser-page-skeleton";
 import { UpdateStatusProbe } from "@/components/update-channel-nav";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
 import { CommandPalette } from "@/components/command-palette";
@@ -152,6 +153,8 @@ import {
   writeClientChatSnapshot,
 } from "@/lib/client-chat-cache";
 import { CHAT_LIST_POLL_ACTIVE_MS, CHAT_LIST_POLL_IDLE_MS } from "@/lib/chat-list-poll";
+import { createStreamTextBatcher } from "@/lib/stream-ui-batch";
+import { browserFrameVisible, browserViewportPhase } from "@/lib/browser-viewport-phase";
 import {
   installGlobalClientTelemetry,
   reportClientError,
@@ -1967,6 +1970,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ]);
   const [activeBrowserTabId, setActiveBrowserTabId] = useState("browser-1");
   const [browserLoading, setBrowserLoading] = useState(false);
+  const [browserHasFrame, setBrowserHasFrame] = useState(false);
+  const browserHasFrameRef = useRef(false);
+  const browserLoadingRef = useRef(false);
+  const browserUrlRef = useRef("");
 
   useEffect(() => {
     if (!modelId) return;
@@ -2064,15 +2071,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const [input, setInput] = useState("");
   const setInputGuarded = useCallback((value: string, reason?: "submitted" | "queued") => {
-    setInput((prev) => {
-      if (prev && !value && !reason) {
-        reportUxEvent("composer_reset_while_nonempty", {
-          prevLength: prev.length,
-          busy: busyRef.current,
-        });
-      }
-      return value;
-    });
+    const apply = () => {
+      setInput((prev) => {
+        if (prev && !value && !reason) {
+          reportUxEvent("composer_reset_while_nonempty", {
+            prevLength: prev.length,
+            busy: busyRef.current,
+          });
+        }
+        return value;
+      });
+    };
+    if (reason) apply();
+    else startTransition(apply);
   }, []);
   const busyRef = useRef(false);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
@@ -2490,7 +2501,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
     activeBrowserTabIdRef.current = activeBrowserTabId;
-  }, [activeChatId, activeBrowserTabId]);
+    browserUrlRef.current = browserUrl;
+    browserLoadingRef.current = browserLoading;
+    browserHasFrameRef.current = browserHasFrame;
+  }, [activeBrowserTabId, activeChatId, browserHasFrame, browserLoading, browserUrl]);
 
   useEffect(() => {
     if (!editingMessageId) return;
@@ -3049,6 +3063,30 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return () => window.removeEventListener("ai-chat:open-subagent", openSubagent);
   }, [subagentOutputs]);
 
+  function markBrowserFrameVisible() {
+    if (!browserHasFrameRef.current) {
+      browserHasFrameRef.current = true;
+      setBrowserHasFrame(true);
+    }
+    if (browserLoadingRef.current) {
+      browserLoadingRef.current = false;
+      setBrowserLoading(false);
+    }
+  }
+
+  function beginBrowserLoading() {
+    browserLoadingRef.current = true;
+    setBrowserLoading(true);
+    setBrowserError("");
+  }
+
+  function clearBrowserFrame() {
+    if (browserHasFrameRef.current) {
+      browserHasFrameRef.current = false;
+      setBrowserHasFrame(false);
+    }
+  }
+
   function sendBrowserStreamAction(action: string, extra: Record<string, unknown> = {}) {
     if (loadingChatId || !activeChatId) return false;
     const socket = browserSocketRef.current;
@@ -3064,11 +3102,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     if (browserScreenshotRef.current) {
       browserScreenshotRef.current.src = source;
-      browserScreenshotRef.current.style.display = "block";
     }
-    if (browserScreenshotPlaceholderRef.current) {
-      browserScreenshotPlaceholderRef.current.style.display = "none";
-    }
+    markBrowserFrameVisible();
   }
 
   function showBrowserStreamFrame(blob: Blob) {
@@ -3091,10 +3126,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     image.onload = releasePrevious;
     image.onerror = releasePrevious;
     image.src = nextUrl;
-    image.style.display = "block";
-    if (browserScreenshotPlaceholderRef.current) {
-      browserScreenshotPlaceholderRef.current.style.display = "none";
-    }
+    markBrowserFrameVisible();
   }
 
   async function performBrowserAction(action: string, extra: Record<string, unknown> = {}) {
@@ -3152,7 +3184,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         : `https://www.google.com/search?q=${encodeURIComponent(rawUrl)}`;
     browserInputDirtyRef.current = false;
     browserNavigationVersionRef.current += 1;
-    setBrowserError("");
+    beginBrowserLoading();
     if (!sendBrowserStreamAction("navigate", { url: nextUrl })) {
       void performBrowserAction("navigate", { url: nextUrl });
     }
@@ -3274,10 +3306,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (workspaceTab !== "browser" || !browserEnabled || !activeChatId || loadingChatId) return;
     let reconnectTimer: number | null = null;
     let disposed = false;
-    const screenshotNode = browserScreenshotRef.current;
-    const placeholderNode = browserScreenshotPlaceholderRef.current;
     const connect = () => {
       if (disposed) return;
+      if (browserUrlRef.current.trim()) beginBrowserLoading();
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const query = new URLSearchParams({
         chatId: activeChatId,
@@ -3296,19 +3327,45 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           try {
             const message = JSON.parse(event.data) as { type?: string; url?: string; tabId?: string; activeTabId?: string; title?: string; viewport?: { width: number; height: number }; tabs?: BrowserTab[]; message?: string };
             if (message.type === "meta") {
-              const url = message.url || "";
-              setBrowserUrl(url);
-              if (!browserInputDirtyRef.current) setBrowserInput(url);
-              if (message.activeTabId) setActiveBrowserTabId(message.activeTabId);
-              else if (message.tabId) setActiveBrowserTabId(message.tabId);
-              if (message.title && message.tabId) setBrowserTabs((current) => current.map((tab) => tab.id === message.tabId ? { ...tab, title: message.title!, url } : tab));
-              if (message.tabs) setBrowserTabs(message.tabs);
-              if (message.viewport) {
-                setBrowserViewport(message.viewport);
-                setBrowserWidthInput(String(message.viewport.width));
-                setBrowserHeightInput(String(message.viewport.height));
+              const url = message.url === "about:blank" ? "" : (message.url || "");
+              if (url !== browserUrlRef.current) {
+                browserUrlRef.current = url;
+                setBrowserUrl(url);
               }
-            } else if (message.type === "error") setBrowserError(message.message || "Browser stream failed");
+              if (!browserInputDirtyRef.current) {
+                setBrowserInput((current) => current === url ? current : url);
+              }
+              const nextTabId = message.activeTabId || message.tabId;
+              if (nextTabId && nextTabId !== activeBrowserTabIdRef.current) {
+                setActiveBrowserTabId(nextTabId);
+              }
+              if (message.tabs) {
+                setBrowserTabs((current) => {
+                  if (
+                    current.length === message.tabs!.length &&
+                    current.every((tab, index) => {
+                      const next = message.tabs![index];
+                      return tab.id === next.id && tab.url === next.url && tab.title === next.title;
+                    })
+                  ) return current;
+                  return message.tabs!;
+                });
+              } else if (message.title && message.tabId) {
+                setBrowserTabs((current) => current.map((tab) => tab.id === message.tabId ? { ...tab, title: message.title!, url } : tab));
+              }
+              if (message.viewport) {
+                const viewport = message.viewport;
+                setBrowserViewport((current) =>
+                  current.width === viewport.width && current.height === viewport.height ? current : viewport,
+                );
+                setBrowserWidthInput((current) => current === String(viewport.width) ? current : String(viewport.width));
+                setBrowserHeightInput((current) => current === String(viewport.height) ? current : String(viewport.height));
+              }
+            } else if (message.type === "error") {
+              setBrowserError(message.message || "Browser stream failed");
+              browserLoadingRef.current = false;
+              setBrowserLoading(false);
+            }
           } catch { /* Ignore malformed stream metadata. */ }
           return;
         }
@@ -3328,11 +3385,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       browserSocketRef.current = null;
       if (browserStreamObjectUrlRef.current) URL.revokeObjectURL(browserStreamObjectUrlRef.current);
       browserStreamObjectUrlRef.current = null;
+      const screenshotNode = browserScreenshotRef.current;
       if (screenshotNode) {
         screenshotNode.removeAttribute("src");
         screenshotNode.style.display = "none";
       }
-      if (placeholderNode) placeholderNode.style.display = "flex";
+      clearBrowserFrame();
+      browserLoadingRef.current = false;
+      setBrowserLoading(false);
     };
   }, [workspaceTab, activeChatId, activeBrowserTabId, browserDefaultViewport, loadingChatId, browserEnabled, browserRealtime, browserFps]);
 
@@ -4857,8 +4917,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         if (!res.ok || activeChatIdRef.current !== activeChatId) return;
         const data = (await res.json()) as { chat: Chat };
         if (!acceptServerSnapshot(activeChatId, data.chat.updatedAt)) return;
-        setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessages(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
         const liveRun = runtimeRef.current.has(activeChatId);
         if (data.chat.modelId && !liveRun) {
           setModelId(data.chat.modelId);
@@ -4868,6 +4926,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               : data.chat.modelParams ?? [],
           );
         }
+        if (!liveRun) {
+          setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
+        }
+        applyServerQueuedMessages(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setModeId(serverModeId);
         if (typeof window !== "undefined") localStorage.setItem(MODE_STORAGE_KEY, serverModeId);
@@ -6982,6 +7044,41 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         return false;
       };
 
+      let lastStreamSequence = 0;
+      const applyStreamText = (chunk: string) => {
+        const id = asstId;
+        const sequence = lastStreamSequence;
+        startTransition(() => {
+          setMessages((m) =>
+            m.map((x) => {
+              if (x.id !== id) return x;
+              const parts = [...(x.parts ?? partsFromFlat(x))];
+              for (let i = 0; i < parts.length; i++) {
+                const p = parts[i];
+                if (p.type === "thinking" && !p.done) {
+                  parts[i] = { ...p, done: true };
+                }
+              }
+              const last = parts[parts.length - 1];
+              if (last?.type === "text") {
+                parts[parts.length - 1] = {
+                  type: "text",
+                  content: last.content + chunk,
+                };
+              } else {
+                parts.push({ type: "text", content: chunk });
+              }
+              return {
+                ...x,
+                ...withSyncedFlat(parts, { thinkingDone: true }),
+                ...(sequence > 0 && (x.serverSequence || 0) < sequence ? { serverSequence: sequence } : {}),
+              };
+            }),
+          );
+        });
+      };
+      const textBatcher = createStreamTextBatcher(applyStreamText);
+
       while (true) {
         let readResult: ReadableStreamReadResult<Uint8Array>;
         try {
@@ -7023,15 +7120,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           if (eventId > lastEventId) lastEventId = eventId;
           const sequence = typeof payload.sequence === "number" ? payload.sequence : eventId;
           const isActiveChat = activeChatIdRef.current === chatId;
-          if (sequence > 0 && isActiveChat && runtimeRef.current.get(chatId)?.generation === generation) {
-            setMessages((messages) =>
-              messages.map((message) =>
-                message.id === asstId && (message.serverSequence || 0) < sequence
-                  ? { ...message, serverSequence: sequence }
-                  : message,
-              ),
-            );
-          }
+          if (sequence > 0) lastStreamSequence = sequence;
           if (event === "done" || event === "error") terminalEventSeen = true;
           if (runtimeRef.current.get(chatId)?.generation !== generation) continue;
 
@@ -7047,6 +7136,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           if (!isActiveChat && event !== "question") continue;
 
           if (event === "assistantId" && typeof payload.messageId === "string") {
+            textBatcher.flush();
             const serverMessageId = payload.messageId;
             setMessages((messages) =>
               messages.map((message) =>
@@ -7057,38 +7147,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             );
             asstId = serverMessageId;
           } else if (event === "text" && typeof payload.text === "string") {
-            const chunk = payload.text;
-            startTransition(() => {
-              setMessages((m) =>
-                m.map((x) => {
-                  if (x.id !== asstId) return x;
-                  const parts = [...(x.parts ?? partsFromFlat(x))];
-                  for (let i = 0; i < parts.length; i++) {
-                    const p = parts[i];
-                    if (p.type === "thinking" && !p.done) {
-                      parts[i] = { ...p, done: true };
-                    }
-                  }
-                  const last = parts[parts.length - 1];
-                  if (last?.type === "text") {
-                    parts[parts.length - 1] = {
-                      type: "text",
-                      content: last.content + chunk,
-                    };
-                  } else {
-                    parts.push({ type: "text", content: chunk });
-                  }
-                  return {
-                    ...x,
-                    ...withSyncedFlat(parts, { thinkingDone: true }),
-                  };
-                }),
-              );
-            });
+            textBatcher.push(payload.text);
           } else if (
             event === "suggestions" &&
             Array.isArray(payload.suggestions)
           ) {
+            textBatcher.flush();
             const nextSuggestions = normalizeSuggestions(payload.suggestions);
             setMessages((m) =>
               m.map((x) =>
@@ -7098,6 +7162,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               ),
             );
           } else if (event === "text-reset") {
+            textBatcher.clear();
             // Refusal-retry: drop any streamed text so the retried
             // answer replaces the refused response instead of appending to it.
             setMessages((m) =>
@@ -7113,6 +7178,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               }),
             );
           } else if (event === "thinking") {
+            textBatcher.flush();
+            startTransition(() => {
             setMessages((m) =>
               m.map((x) => {
                 if (x.id !== asstId) return x;
@@ -7175,7 +7242,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 };
               }),
             );
+            });
           } else if (event === "compaction") {
+            textBatcher.flush();
             const status = payload.status === "error"
               ? "error"
               : payload.status === "completed"
@@ -7204,6 +7273,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             event === "tool" &&
             (typeof payload.callId === "string" || typeof payload.call_id === "string")
           ) {
+            textBatcher.flush();
             const callId =
               typeof payload.callId === "string" ? payload.callId : String(payload.call_id);
             const name =
@@ -7524,6 +7594,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             event === "error" &&
             typeof payload.message === "string"
           ) {
+            textBatcher.flush();
             const errMsg = payload.message;
             setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
             setChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, badge: "red" } : chat));
@@ -7545,6 +7616,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               }),
             );
           } else if (event === "done") {
+            textBatcher.flush();
             playFinishSound();
             // A completed run may have consumed provider quota. Refresh once here
             // instead of waiting for the background poll so the footer reflects
@@ -7588,6 +7660,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           }
         }
       }
+      textBatcher.flush();
       if (terminalEventSeen && activeChatIdRef.current === chatId) {
         void loadChat(chatId, { skipNav: true });
       }
@@ -7872,6 +7945,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     status?.providers?.some((provider) => provider.enabled && provider.hasSecret),
   );
   const providerSetupRequired = modelsLoaded && status !== null && !hasConnectedProvider;
+  const browserPhase = browserViewportPhase({
+    loading: browserLoading,
+    hasFrame: browserHasFrame,
+    url: browserUrl,
+  });
+  const showBrowserFrame = browserFrameVisible({
+    loading: browserLoading,
+    hasFrame: browserHasFrame,
+    url: browserUrl,
+  });
 
   function handleComposerInputChange(value: string, cursorPosition: number) {
     const previousValue = previousComposerInputRef.current;
@@ -10751,6 +10834,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           setActiveBrowserTabId(tab.id);
                           setBrowserUrl(tab.url);
                           setBrowserInput(tab.url);
+                          if (tab.url.trim()) beginBrowserLoading();
+                          else {
+                            browserLoadingRef.current = false;
+                            setBrowserLoading(false);
+                            clearBrowserFrame();
+                          }
                           if (!sendBrowserStreamAction("select_tab", { tabId: tab.id })) {
                             void performBrowserAction("select_tab", { tabId: tab.id });
                           }
@@ -10897,6 +10986,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   role="application"
                   aria-label="Embedded browser viewport. Click the page, then type or use keyboard shortcuts."
                   data-browser-viewport
+                  data-browser-phase={browserPhase}
                   className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-border/45 bg-[#090a0b] p-1.5 outline-none shadow-inner focus-visible:ring-2 focus-visible:ring-primary/45"
                   onKeyDown={pressBrowserKey}
                   onWheel={(event) => {
@@ -10914,7 +11004,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ref={browserScreenshotRef}
                       alt="Server browser page"
                       draggable={false}
-                      className="metis-browser-page-surface absolute inset-0 hidden h-full w-full object-fill cursor-default"
+                      className={cn(
+                        "metis-browser-page-surface absolute inset-0 h-full w-full object-fill cursor-default",
+                        showBrowserFrame ? "block" : "hidden",
+                      )}
                       onPointerDown={beginBrowserPointer}
                       onPointerMove={moveBrowserPointer}
                       onPointerUp={endBrowserPointer}
@@ -10928,12 +11021,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         <BrowserAgentCursor kind={agentPointer.kind} />
                       </span>
                     ) : null}
-                    <div
-                      ref={browserScreenshotPlaceholderRef}
-                      className="absolute inset-0 flex items-center justify-center bg-[#0d0e10] px-8 text-center text-xs text-zinc-400"
-                    >
-                      Enter a URL to open it in the server browser.
-                    </div>
+                    {browserPhase === "loading" ? <BrowserPageSkeleton /> : null}
+                    {browserPhase === "empty" ? <BrowserPageEmpty /> : null}
                   </div>
                   <div className="pointer-events-none absolute bottom-2.5 left-2.5 flex max-w-[70%] items-center gap-1.5 rounded-full border border-white/10 bg-black/45 px-2 py-1 text-[10px] text-white/55 backdrop-blur-md">
                     <span className={cn("size-1.5 rounded-full", browserLoading ? "animate-pulse bg-amber-300/80" : "bg-emerald-300/70")} />

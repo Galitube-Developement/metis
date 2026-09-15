@@ -1374,7 +1374,7 @@ export function SettingsPanel({
               ]}
             />
           </div>
-          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-2 py-3 md:flex md:h-full md:min-h-0 md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:overflow-y-auto md:border-b-0 md:border-r md:px-2 md:py-4">
+          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 md:flex md:h-full md:min-h-0 md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:overflow-y-auto md:border-b-0 md:border-r md:px-3 md:py-4">
            {SETTINGS_TABS.map((tab) => {
            const Icon =
            tab.value === "general" ? Settings2
@@ -1392,7 +1392,7 @@ export function SettingsPanel({
            <TabsTrigger
              value={tab.value}
              className={cn(
-               "min-h-10 w-full justify-start px-2.5 py-2.5 md:h-auto md:flex-none",
+               "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 md:h-auto md:flex-none",
                tab.value === "updates" && updateAvailable && "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
              )}
            >
@@ -1405,7 +1405,7 @@ export function SettingsPanel({
             key={item.id}
             type="button"
             className={cn(
-            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 px-2.5 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground md:block",
+            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground md:block",
             item.id === "settings-browser-storage" && settingsPane === "browser-storage" && "bg-muted/60 text-foreground",
             )}
             onClick={() => {
