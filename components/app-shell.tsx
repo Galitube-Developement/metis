@@ -1083,11 +1083,16 @@ function contextSelectionLabel(model: ModelInfo, params: ModelParamSelection[]) 
 
 function runMatchesModel(
   run: RunMetadata,
-  selection: { providerKey: string; modelId: string; connectionId?: string },
+  selection: { providerKey: string; modelId: string; connectionId?: string; contextWindow?: number },
 ) {
   if (typeof run.modelId !== "string" || !run.modelId) return false;
   if (run.providerId && run.providerId !== selection.providerKey) return false;
   if (run.connectionId && selection.connectionId && run.connectionId !== selection.connectionId) return false;
+  if (
+    typeof run.contextWindow === "number" &&
+    typeof selection.contextWindow === "number" &&
+    run.contextWindow !== selection.contextWindow
+  ) return false;
   const runModelId = parseModelKey(run.modelId).modelId;
   return runModelId === selection.modelId || run.modelId === selection.modelId;
 }
@@ -7770,8 +7775,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         typeof message.runMetadata?.inputTokens === "number"),
     )
     .map((message) => message.runMetadata!);
-  const selectedRunUsage = measuredRuns.find((run) => runMatchesModel(run, selectedKey));
-  const latestUsage = selectedRunUsage || measuredRuns[0];
+  const selectedContextWindow = contextWindowForSelection(selectedModel, modelParams);
+  const selectedRunUsage = measuredRuns.find((run) =>
+    runMatchesModel(run, { ...selectedKey, contextWindow: selectedContextWindow }),
+  );
+  // Never display telemetry from another model or context tier after a switch.
+  // Its input count can be millions of tokens even though the newly selected
+  // model has a much smaller context window.
+  const latestUsage = selectedRunUsage;
   const estimatedContextTokens = messages.reduce(
     (total, message) =>
       total + estimateContextTokens({
@@ -7782,12 +7793,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     0,
   );
   const contextUsed = lastMeasuredInputTokens({
-    messages: messages.map((message) => ({
-      parts: message.parts,
-      runMetadata: message.runMetadata,
-    })),
+    messages: messages
+      .filter((message) =>
+        message.runMetadata &&
+        runMatchesModel(message.runMetadata, { ...selectedKey, contextWindow: selectedContextWindow }),
+      )
+      .map((message) => ({
+        parts: message.parts,
+        runMetadata: message.runMetadata,
+      })),
   }) ?? latestUsage?.contextUsedTokens ?? estimatedContextTokens;
-  const selectedContextWindow = contextWindowForSelection(selectedModel, modelParams);
   const contextTotal = resolveContextTotal(
     selectedContextWindow ?? latestUsage?.contextWindow,
     contextUsed,

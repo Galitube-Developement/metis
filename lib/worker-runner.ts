@@ -857,9 +857,28 @@ export async function runQueuedJob(job: AgentJob) {
       return recoveryBootstrapRecap;
     };
     const hasPriorNativeAgentId = Boolean(nativeAgentId);
+    const nativeContextPressure = typeof cursorBinding?.lastContextTokens === "number"
+      && typeof contextWindow === "number"
+      && cursorBinding.lastContextTokens / contextWindow >= 0.8;
+    const nativeContextWindowChanged = typeof cursorBinding?.lastContextWindow === "number"
+      && typeof contextWindow === "number"
+      && cursorBinding.lastContextWindow !== contextWindow;
+    const nativeModelChanged = Boolean(cursorBinding?.modelId && cursorBinding.modelId !== requestedModelId);
+    const shouldResumeNative = hasPriorNativeAgentId
+      && !nativeContextPressure
+      && !nativeContextWindowChanged
+      && !nativeModelChanged;
+
+    if (hasPriorNativeAgentId && !shouldResumeNative) {
+      appendRunEvent(job.id, job.chatId, job.userId, "info", {
+        message: "Native agent context changed or reached its compaction threshold; started a fresh session with compacted recovery context.",
+      });
+      updateChat(job.chatId, { agentId: null }, job.userId);
+      clearProviderSessionBinding(job.chatId, job.userId, "cursor-agent", cursorConnection.id);
+    }
 
     // Try to resume native Cursor session first (without Metis transcript replay).
-    if (hasPriorNativeAgentId) {
+    if (shouldResumeNative) {
       try {
         agent = await withTimeout(Agent.resume(nativeAgentId!, {
           apiKey,
