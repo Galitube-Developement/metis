@@ -4,6 +4,19 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## Unreleased — changes since v1.0.5
+
+- Improved browser loading, streaming rendering, and long-chat performance.
+- Hardened native Next updates, updater health checks, version selection, and
+  persisted update jobs.
+- Fixed Codex runs hanging after the last visible token.
+- Moved release publishing to the local account-based workflow; GitHub Actions
+  no longer publishes releases.
+- Fixed context usage leaking across model/context-tier switches and made native
+  sessions start fresh with compacted recovery context when required.
+- Fixed the sending device missing a persisted assistant response after a live
+  stream completed; it now reconciles with the durable server snapshot.
+
 ## v1.0.5 — 2026-09-12
 
 - Improved browser loading and streaming performance.
