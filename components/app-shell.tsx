@@ -7795,8 +7795,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const contextUsed = lastMeasuredInputTokens({
     messages: messages
       .filter((message) =>
-        message.runMetadata &&
-        runMatchesModel(message.runMetadata, { ...selectedKey, contextWindow: selectedContextWindow }),
+        (message.runMetadata &&
+          runMatchesModel(message.runMetadata, { ...selectedKey, contextWindow: selectedContextWindow })) ||
+        message.parts?.some((part) =>
+          part.type === "compaction" || part.kind === "compaction" || part.name === "context_compaction",
+        ),
       )
       .map((message) => ({
         parts: message.parts,
