@@ -32,6 +32,13 @@ package_version="$(node -p 'require("./package.json").version')"
 command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 2; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 gh auth status >/dev/null
+repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+owner="${repo%%/*}"
+login="$(gh api user --jq .login)"
+[[ "$login" == "$owner" ]] || {
+  echo "GitHub login $login does not match repository owner $owner" >&2
+  exit 2
+}
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Working tree must be clean before releasing." >&2
@@ -70,8 +77,6 @@ cp public/install/install.ps1 "$work_dir/metis-install.ps1"
 cp public/install/docker.sh "$work_dir/metis-docker-install.sh"
 sha256sum "$work_dir/metis-ai-${tag}.tar.gz" "$work_dir/metis-install.sh" "$work_dir/metis-install.ps1" "$work_dir/metis-docker-install.sh" > "$work_dir/SHA256SUMS"
 
-repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-owner="${repo%%/*}"
 image="ghcr.io/${repo,,}"
 gh auth token | docker login ghcr.io --username "$owner" --password-stdin >/dev/null
 docker buildx build --push \
