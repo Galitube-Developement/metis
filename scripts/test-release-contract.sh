@@ -9,16 +9,19 @@ work_dir="$(CDPATH= cd -- "$(mktemp -d "${TMPDIR:-/tmp}/metis-release-test.XXXXX
 trap 'rm -rf -- "$work_dir"' EXIT
 
 mkdir -p "$work_dir/dist"
+package_version="$(node -p 'require("./package.json").version')"
+release_tag="v${package_version}"
 NEXT_DIST_DIR="$work_dir/dist" \
-METIS_RELEASE_TAG=v1.0.0 \
-METIS_RELEASE_VERSION=1.0.0 \
+METIS_RELEASE_TAG="$release_tag" \
+METIS_RELEASE_VERSION="$package_version" \
 METIS_RELEASE_COMMIT=test-commit \
 pnpm exec tsx scripts/write-release-manifest.ts >/dev/null
 
+export EXPECTED_TAG="$release_tag" EXPECTED_VERSION="$package_version"
 node - "$work_dir/dist/release-manifest.json" <<'NODE'
 const fs = require("node:fs");
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (manifest.schemaVersion !== 1 || manifest.tag !== "v1.0.0" || manifest.version !== "1.0.0") {
+if (manifest.schemaVersion !== 1 || manifest.tag !== process.env.EXPECTED_TAG || manifest.version !== process.env.EXPECTED_VERSION) {
   throw new Error(`unexpected stable manifest: ${JSON.stringify(manifest)}`);
 }
 if (manifest.channel !== "stable" || manifest.isRelease !== true || manifest.commit !== "test-commit") {
@@ -28,11 +31,11 @@ console.log("STABLE_MANIFEST_OK");
 NODE
 
 bash public/install/docker.sh \
-  --version v1.0.0 \
+  --version "$release_tag" \
   --install-dir "$work_dir/install" \
   --data-dir "$work_dir/data" \
   --workspace "$work_dir/workspace" \
-  --dry-run | grep -F 'image:     ghcr.io/f1shyondrugs/metis-ai:v1.0.0'
+  --dry-run | grep -F "image:     ghcr.io/f1shyondrugs/metis-ai:${release_tag}"
 [[ ! -e "$work_dir/install/.env" && ! -e "$work_dir/install/docker-compose.yml" ]]
 echo "DOCKER_DRY_RUN_OK"
 
@@ -42,7 +45,7 @@ if bash public/install/docker.sh --version master --install-dir "$work_dir/inval
 fi
 echo "INVALID_VERSION_REJECTED"
 
-printf 'release payload for checksum test\n' > "$work_dir/metis-ai-v1.0.0.tar.gz"
-sha256sum "$work_dir/metis-ai-v1.0.0.tar.gz" > "$work_dir/SHA256SUMS"
+printf 'release payload for checksum test\n' > "$work_dir/metis-ai-${release_tag}.tar.gz"
+sha256sum "$work_dir/metis-ai-${release_tag}.tar.gz" > "$work_dir/SHA256SUMS"
 (cd "$work_dir" && sha256sum --check SHA256SUMS)
 echo "CHECKSUM_OK"

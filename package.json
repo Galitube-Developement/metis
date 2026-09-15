@@ -17,6 +17,7 @@
     "dev": "next dev",
     "build": "next build && tsx scripts/write-release-manifest.ts",
     "build:production": "bash scripts/build-production-slot.sh",
+    "release": "bash scripts/release.sh",
     "start": "tsx server.mjs",
     "lint": "eslint .",
     "test": "pnpm run test:providers && pnpm run test:shared && tsx --test scripts/security.test.ts tests/auth.test.ts tests/remote-approval.test.ts tests/installers.test.ts tests/tool-kind.test.ts tests/runtime-mode.test.ts tests/browser.test.ts tests/live-agent-events.test.ts tests/agent-identity.test.ts tests/worker-concurrency.test.ts tests/admin-users.test.ts tests/mermaid.test.ts tests/graph-spec.test.ts tests/graph-view.test.ts tests/graph-board.test.ts tests/chart-spec.test.ts tests/chart-board.test.ts tests/user-isolation.test.ts",
