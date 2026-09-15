@@ -7667,7 +7667,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       textBatcher.flush();
       if (terminalEventSeen && activeChatIdRef.current === chatId) {
-        void loadChat(chatId, { skipNav: true });
+        // Always reconcile the durable snapshot after a run. A dropped or
+        // delayed stream delta must not leave the sending device behind while
+        // another device already sees the persisted assistant response.
+        void loadChat(chatId, { skipNav: true, forceReload: true });
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {

@@ -108,6 +108,11 @@ test("live snapshots keep the optimistic model and merge queue tombstones", () =
   assert.doesNotMatch(shell, /if \(data\.chat\.modelId\) setModelId\(data\.chat\.modelId\)/);
 });
 
+test("terminal stream events force a durable chat refresh on the sending device", () => {
+  const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
+  assert.match(shell, /if \(terminalEventSeen && activeChatIdRef\.current === chatId\) \{[\s\S]*?loadChat\(chatId, \{ skipNav: true, forceReload: true \}\)/);
+});
+
 test("terminal events and chat state commit before the worker lease is released", () => {
   const provider = readFileSync(path.join(root, "lib", "providers", "runner.ts"), "utf8");
   const providerStart = provider.indexOf("const completedChat = updateChat(");
