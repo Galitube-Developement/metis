@@ -777,6 +777,7 @@ type ReferenceItem = {
 
 type StatusPayload = {
   authenticated: boolean;
+  username?: string;
   isHostAdmin?: boolean;
   agentCwd?: string;
   cursorSdkConfigured: boolean;
@@ -3652,6 +3653,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setStatus(data);
       authedRef.current = data.authenticated;
       setAuthed(data.authenticated);
+      if (data.authenticated && data.username?.trim()) {
+        setUsername(data.username.trim());
+      }
       if (data.setup) {
         setSetupStatus({ needed: Boolean(data.setup.needed), hasUsers: Boolean(data.setup.hasUsers) });
       }
@@ -7813,10 +7817,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       textBatcher.flush();
       if (terminalEventSeen && activeChatIdRef.current === chatId) {
-        // Always reconcile the durable snapshot after a run. A dropped or
-        // delayed stream delta must not leave the sending device behind while
-        // another device already sees the persisted assistant response.
-        void loadChat(chatId, { skipNav: true, forceReload: true });
+        // Reconcile the durable snapshot without clearing and rebuilding the
+        // active chat. mergeMessages fills any dropped stream delta in place.
+        void refreshActiveChatFromServer(chatId);
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {

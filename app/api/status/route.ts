@@ -1,4 +1,4 @@
-import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
 import { checkGatewayHealth } from "@/lib/mcp";
 import { listChatProviderConnections } from "@/lib/provider-connections";
 import { getUserAgentCwd } from "@/lib/mcp";
@@ -10,10 +10,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const authed = await isAuthenticated(req);
+  const user = await getAuthenticatedUser(req);
+  const authed = Boolean(user);
   const gateway = await checkGatewayHealth();
   const worker = readWorkerHeartbeat();
-  const ownerId = await getAuthenticatedUserId(req);
+  const ownerId = user?.id ?? null;
   const connections = ownerId ? listChatProviderConnections(ownerId) : [];
   const hasCursorSdkConnection = connections.some(
     (connection) => connection.providerKey === "cursor" && connection.enabled && connection.hasSecret,
@@ -21,6 +22,7 @@ export async function GET(req: Request) {
 
   return Response.json({
     authenticated: authed,
+    username: user?.username,
     agentCwd: ownerId ? getUserAgentCwd(ownerId) : undefined,
     cursorSdkConfigured: hasCursorSdkConnection,
     isHostAdmin: Boolean(ownerId && isHostAdmin(ownerId)),

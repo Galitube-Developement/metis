@@ -127,9 +127,24 @@ test("chat changes use durable SSE and keep snapshot sync running during a live 
   assert.match(store, /function persistAssistantMessage[\s\S]*?recordChatSyncEvent\(/);
 });
 
-test("terminal stream events force a durable chat refresh on the sending device", () => {
+test("terminal stream events reconcile the durable chat without reloading the view", () => {
   const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
-  assert.match(shell, /if \(terminalEventSeen && activeChatIdRef\.current === chatId\) \{[\s\S]*?loadChat\(chatId, \{ skipNav: true, forceReload: true \}\)/);
+  const terminalReconcile = shell.slice(
+    shell.indexOf("if (terminalEventSeen && activeChatIdRef.current === chatId)"),
+    shell.indexOf("} catch (err)", shell.indexOf("if (terminalEventSeen && activeChatIdRef.current === chatId)")),
+  );
+  assert.match(terminalReconcile, /refreshActiveChatFromServer\(chatId\)/);
+  assert.doesNotMatch(terminalReconcile, /loadChat\(/);
+  assert.doesNotMatch(terminalReconcile, /forceReload/);
+});
+
+test("the new-chat greeting uses the authenticated session username", () => {
+  const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
+  const statusRoute = readFileSync(path.join(root, "app", "api", "status", "route.ts"), "utf8");
+  assert.match(statusRoute, /const user = await getAuthenticatedUser\(req\)/);
+  assert.match(statusRoute, /username: user\?\.username/);
+  assert.match(shell, /type StatusPayload = \{[\s\S]*?username\?: string/);
+  assert.match(shell, /data\.authenticated && data\.username\?\.trim\(\)[\s\S]*?setUsername\(data\.username\.trim\(\)\)/);
 });
 
 test("terminal events and chat state commit before the worker lease is released", () => {
