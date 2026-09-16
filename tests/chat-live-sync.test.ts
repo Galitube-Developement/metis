@@ -31,7 +31,7 @@ after(async () => {
 
 test("chat sync events are owner-scoped, ordered, and survive chat deletion", async () => {
   const { createUser } = modules[0];
-  const { appendMessage, createChat, deleteChat } = modules[1];
+  const { appendMessage, createChat, deleteChat, upsertMessage } = modules[1];
   const { listChatSyncEvents, subscribeToDatabaseChanges } = modules[2];
   const owner = createUser("sync-owner", "secret");
   const other = createUser("sync-other", "secret");
@@ -61,8 +61,14 @@ test("chat sync events are owner-scoped, ordered, and survive chat deletion", as
   const changed = listChatSyncEvents(owner.id, created[0].id);
   assert.equal(changed.at(-1)?.kind, "updated");
   const lastId = changed.at(-1)?.id || 0;
+  const assistantId = randomUUID();
+  upsertMessage(chat.id, { id: assistantId, role: "assistant", content: "live checkpoint" });
+  const checkpointed = listChatSyncEvents(owner.id, lastId);
+  assert.equal(checkpointed.at(-1)?.kind, "updated");
+  assert.equal(checkpointed.at(-1)?.chatId, chat.id);
+  const afterCheckpoint = checkpointed.at(-1)?.id || lastId;
   assert.equal(deleteChat(chat.id, owner.id), true);
-  const deleted = listChatSyncEvents(owner.id, lastId);
+  const deleted = listChatSyncEvents(owner.id, afterCheckpoint);
   assert.equal(deleted.length, 1);
   assert.equal(deleted[0].kind, "deleted");
   assert.equal(deleted[0].chatId, chat.id);

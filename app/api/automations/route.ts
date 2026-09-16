@@ -2,6 +2,8 @@ import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import {
   createAutomation,
   listAutomations,
+  modelParamsPatchFromBody,
+  extendedModelParamsPatchFromBody,
   type AutomationSchedule,
 } from "@/lib/automations";
 
@@ -50,6 +52,8 @@ export async function POST(req: Request) {
       modeId: typeof body.modeId === "string" ? body.modeId : undefined,
       modelId: typeof body.modelId === "string" ? body.modelId : undefined,
       extendedModelId: typeof body.extendedModelId === "string" ? body.extendedModelId : undefined,
+      ...modelParamsPatchFromBody(body),
+      ...extendedModelParamsPatchFromBody(body),
       maxRunMinutes: typeof body.maxRunMinutes === "number" ? body.maxRunMinutes : undefined,
       schedule: scheduleFromBody(body),
       timezone: typeof body.timezone === "string" ? body.timezone : undefined,

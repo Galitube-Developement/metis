@@ -5,6 +5,8 @@ import {
   runAutomationNow,
   setAutomationStatus,
   updateAutomation,
+  modelParamsPatchFromBody,
+  extendedModelParamsPatchFromBody,
   type AutomationSchedule,
 } from "@/lib/automations";
 
@@ -72,6 +74,8 @@ export async function PATCH(req: Request, { params }: Params) {
           ...(typeof body.modeId === "string" ? { modeId: body.modeId } : {}),
           ...(typeof body.modelId === "string" ? { modelId: body.modelId } : {}),
           ...(typeof body.extendedModelId === "string" ? { extendedModelId: body.extendedModelId } : {}),
+          ...modelParamsPatchFromBody(body),
+          ...extendedModelParamsPatchFromBody(body),
           ...(typeof body.maxRunMinutes === "number" ? { maxRunMinutes: body.maxRunMinutes } : {}),
           ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}),
           ...(typeof body.timezone === "string" ? { timezone: body.timezone } : {}),

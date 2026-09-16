@@ -18,6 +18,10 @@ const automationsSource = readFileSync(
   new URL("../components/automations-panel.tsx", import.meta.url),
   "utf8",
 );
+const globalCssSource = readFileSync(
+  new URL("../app/globals.css", import.meta.url),
+  "utf8",
+);
 const chipSource = readFileSync(
   new URL("../components/tool-call-chip.tsx", import.meta.url),
   "utf8",
@@ -40,7 +44,9 @@ test("automation markdown links dispatch open-automations and the shell opens th
 
 test("automations panel can focus a linked automation by id", () => {
   assert.match(automationsSource, /id=\{`automation-\$\{automation\.id\}`\}/);
-  assert.match(automationsSource, /await loadDetail\(highlightId\)/);
+  assert.match(automationsSource, /handledHighlightRef\.current = highlightId/);
+  assert.match(automationsSource, /setSelectedId\(highlightId\)/);
+  assert.match(automationsSource, /SELECTED_AUTOMATION_KEY/);
 });
 
 test("voice composer exposes cancel via the plus button and drops stale waveform state", () => {
@@ -70,13 +76,52 @@ test("agent completion uses the bundled default sound unless a custom sound is s
   );
 });
 
-test("automations can be searched by project name like notes", () => {
-  const notesSource = readFileSync(new URL("../components/notes-void.tsx", import.meta.url), "utf8");
-  assert.match(notesSource, /projectName\?\.includes\(query\)/);
-  assert.match(automationsSource, /placeholder=\"Search automations\"/);
-  assert.match(automationsSource, /projectName\?\.includes\(query\)/);
-  assert.match(automationsSource, /NoteProjectMenu/);
-  assert.match(automationsSource, /projectId: formProjectId/);
+test("automations use the full-height demo split view without a composer or workspace panel", () => {
+  assert.match(automationsSource, /data-slot="automations-split-view"/);
+  assert.match(globalCssSource, /grid-template-columns: minmax\(220px, 38%\) minmax\(0, 1fr\)/);
+  assert.match(globalCssSource, /@media \(max-width: 900px\)[\s\S]*grid-template-rows: minmax\(210px, 36%\) minmax\(0, 1fr\)/);
+  assert.match(globalCssSource, /\.automation-detail-content \{[\s\S]*?max-width: none;/);
+  assert.match(globalCssSource, /\.automation-detail-content \{[\s\S]*?padding: 18px 12px 24px 18px;/);
+  assert.doesNotMatch(globalCssSource, /\.automation-detail-content \{[\s\S]*?max-width: 520px/);
+  assert.match(shellSource, /automationsOpen \? \([\s\S]*?h-full min-h-0 flex-1 overflow-hidden[\s\S]*?<AutomationsPanel/);
+  assert.match(shellSource, /!notesOpen && !automationsOpen && workspaceMounted/);
+  assert.doesNotMatch(automationsSource, /Search automations|AutomationGraphView|NoteProjectMenu/);
+});
+
+test("automation detail exposes live run, pause and resume actions", () => {
+  assert.match(automationsSource, /method: "PATCH"/);
+  assert.match(automationsSource, /JSON\.stringify\(\{ action \}\)/);
+  assert.match(automationsSource, /mutate\(currentDetail, "run"\)/);
+  assert.match(automationsSource, /currentDetail\.status === "active" \? "pause" : "resume"/);
+  assert.match(automationsSource, /automation-run-history/);
+});
+
+test("automation detail can edit and delete, and shows prompt and model under the stats grid", () => {
+  assert.match(automationsSource, /method: "DELETE"/);
+  assert.match(automationsSource, /beginEdit\(currentDetail\)/);
+  assert.match(automationsSource, /Save changes/);
+  assert.match(automationsSource, /Delete automation/);
+  assert.match(automationsSource, /automation-stats-grid[\s\S]*automation-facts[\s\S]*Prompt[\s\S]*Model/);
+  assert.match(automationsSource, /aria-label=\{`Edit \$\{automation\.name\}`\}/);
+  assert.match(automationsSource, /aria-label=\{`Delete \$\{automation\.name\}`\}/);
+  assert.match(shellSource, /models=\{models\}/);
+  assert.match(globalCssSource, /\.automation-facts \{/);
+  assert.match(globalCssSource, /\.automation-edit-form \{/);
+});
+
+test("automation edit form exposes reasoning, fast, and other model options", () => {
+  assert.match(automationsSource, /ModelPicker/);
+  assert.match(automationsSource, /ModelOptionsMenu/);
+  assert.match(automationsSource, /data-slot="automation-model-options"/);
+  assert.match(automationsSource, /modelParams: draft.modelParams/);
+  assert.match(automationsSource, /Use a standard model/);
+  assert.match(automationsSource, /Subagent model/);
+  assert.match(automationsSource, /extendedModelParams: draft.extendedModelParams/);
+  assert.match(automationsSource, /extendedModelOptionsLabel/);
+  assert.match(automationsSource, /favoriteModelKeys=\{favoriteModelKeys\}/);
+  assert.match(globalCssSource, /\.automation-model-picker \{/);
+  assert.match(globalCssSource, /\.automation-subagent-model \{/);
+  assert.match(shellSource, /onToggleFavoriteModel=\{toggleFavoriteModel\}/);
 });
 
 test("mobile chat actions are touch-sized, edit is reachable, and run status stays with the transcript", () => {

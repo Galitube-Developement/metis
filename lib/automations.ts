@@ -51,6 +51,8 @@ export type Automation = {
   modeId?: string;
   modelId?: string;
   extendedModelId?: string;
+  modelParams?: Array<{ id: string; value: string }>;
+  extendedModelParams?: Array<{ id: string; value: string }>;
   maxRunMinutes: number;
   graph: AutomationGraph;
   schedule: AutomationSchedule;
@@ -91,6 +93,8 @@ type AutomationRow = {
   mode_id: string | null;
   model_id: string | null;
   extended_model_id: string | null;
+  model_params_json?: string | null;
+  extended_model_params_json?: string | null;
   max_run_minutes?: number | null;
   graph_json?: string | null;
   schedule_kind: "once" | "interval";
@@ -106,6 +110,34 @@ type AutomationRow = {
 
 const iso = () => new Date().toISOString();
 
+export function parseAutomationModelParams(value: unknown, field = "modelParams"): Array<{ id: string; value: string }> {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array.`);
+  const seen = new Set<string>();
+  const result: Array<{ id: string; value: string }> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { id?: unknown; value?: unknown };
+    const id = typeof record.id === "string" ? record.id.trim().slice(0, 80) : "";
+    const paramValue = typeof record.value === "string" ? record.value.trim().slice(0, 120) : "";
+    if (!id || !paramValue || seen.has(id)) continue;
+    seen.add(id);
+    result.push({ id, value: paramValue });
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+export function modelParamsPatchFromBody(body: Record<string, unknown>) {
+  if (!Object.prototype.hasOwnProperty.call(body, "modelParams")) return {};
+  return { modelParams: parseAutomationModelParams(body.modelParams) };
+}
+
+export function extendedModelParamsPatchFromBody(body: Record<string, unknown>) {
+  if (!Object.prototype.hasOwnProperty.call(body, "extendedModelParams")) return {};
+  return { extendedModelParams: parseAutomationModelParams(body.extendedModelParams, "extendedModelParams") };
+}
+
 function scheduleLabel(schedule: AutomationSchedule) {
   if (schedule.kind === "once") return "One-time";
   if (schedule.kind === "days") return `Every ${schedule.everyDays} day${schedule.everyDays === 1 ? "" : "s"}`;
@@ -119,6 +151,8 @@ function defaultGraph(input: {
   modeId?: string;
   modelId?: string;
   extendedModelId?: string;
+  modelParams?: Array<{ id: string; value: string }>;
+  extendedModelParams?: Array<{ id: string; value: string }>;
   maxRunMinutes: number;
 }): AutomationGraph {
   return {
@@ -143,6 +177,8 @@ function defaultGraph(input: {
           modeId: input.modeId || "agent",
           modelId: input.modelId,
           extendedModelId: input.extendedModelId,
+          modelParams: input.modelParams,
+          extendedModelParams: input.extendedModelParams,
           maxRunMinutes: input.maxRunMinutes,
         },
       },
@@ -213,12 +249,20 @@ function normalizeMaxRunMinutes(value: unknown) {
 function rowToAutomation(row: AutomationRow): Automation {
   const schedule = scheduleFromStorage(row.schedule_kind, row.schedule_value);
   const maxRunMinutes = normalizeMaxRunMinutes(row.max_run_minutes);
+  let parsedParams: unknown;
+  try { parsedParams = row.model_params_json ? JSON.parse(row.model_params_json) : []; } catch { parsedParams = []; }
+  const modelParams = parseAutomationModelParams(parsedParams);
+  let parsedExtendedParams: unknown;
+  try { parsedExtendedParams = row.extended_model_params_json ? JSON.parse(row.extended_model_params_json) : []; } catch { parsedExtendedParams = []; }
+  const extendedModelParams = parseAutomationModelParams(parsedExtendedParams, "extendedModelParams");
   const fallbackGraph = defaultGraph({
     schedule,
     prompt: row.prompt,
     modeId: row.mode_id || undefined,
     modelId: row.model_id || undefined,
     extendedModelId: row.extended_model_id || undefined,
+    modelParams,
+    extendedModelParams,
     maxRunMinutes,
   });
   let parsedGraph: unknown;
@@ -235,6 +279,8 @@ function rowToAutomation(row: AutomationRow): Automation {
     ...(row.mode_id ? { modeId: row.mode_id } : {}),
     ...(row.model_id ? { modelId: row.model_id } : {}),
     ...(row.extended_model_id ? { extendedModelId: row.extended_model_id } : {}),
+    ...(modelParams.length ? { modelParams } : {}),
+    ...(extendedModelParams.length ? { extendedModelParams } : {}),
     maxRunMinutes,
     graph: normalizeGraph(parsedGraph, fallbackGraph),
     schedule,
@@ -338,6 +384,8 @@ export function createAutomation(input: {
   modeId?: string;
   modelId?: string;
   extendedModelId?: string;
+  modelParams?: Array<{ id: string; value: string }>;
+  extendedModelParams?: Array<{ id: string; value: string }>;
   maxRunMinutes?: number;
   graph?: AutomationGraph;
   schedule: AutomationSchedule;
@@ -360,20 +408,26 @@ export function createAutomation(input: {
   const modeId = input.modeId?.trim().slice(0, 100) || "agent";
   const modelId = input.modelId?.trim().slice(0, 300) || null;
   const extendedModelId = input.extendedModelId?.trim().slice(0, 300) || null;
+  const modelParams = parseAutomationModelParams(input.modelParams);
+  const extendedModelParams = extendedModelId
+    ? parseAutomationModelParams(input.extendedModelParams, "extendedModelParams")
+    : [];
   const fallbackGraph = defaultGraph({
     schedule,
     prompt,
     modeId,
     modelId: modelId || undefined,
     extendedModelId: extendedModelId || undefined,
+    modelParams,
+    extendedModelParams,
     maxRunMinutes,
   });
   const graph = normalizeGraph(input.graph, fallbackGraph);
   getDatabase().prepare(
     `INSERT INTO automations
       (id, owner_id, chat_id, project_id, name, prompt, creator, mode_id, model_id, extended_model_id,
-       max_run_minutes, graph_json, schedule_kind, schedule_value, timezone, status, next_run_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+       max_run_minutes, graph_json, model_params_json, extended_model_params_json, schedule_kind, schedule_value, timezone, status, next_run_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
   ).run(
     id,
     input.ownerId,
@@ -387,6 +441,8 @@ export function createAutomation(input: {
     extendedModelId,
     maxRunMinutes,
     JSON.stringify(graph),
+    JSON.stringify(modelParams),
+    JSON.stringify(extendedModelParams),
     storedSchedule.kind,
     storedSchedule.value,
     input.timezone?.trim().slice(0, 80) || "UTC",
@@ -427,7 +483,7 @@ export function listAutomations(ownerId: string) {
 export function updateAutomation(
   id: string,
   ownerId: string,
-  patch: Partial<Pick<Automation, "name" | "prompt" | "schedule" | "timezone" | "chatId" | "modeId" | "modelId" | "extendedModelId" | "maxRunMinutes" | "graph" | "projectId">>,
+  patch: Partial<Pick<Automation, "name" | "prompt" | "schedule" | "timezone" | "chatId" | "modeId" | "modelId" | "extendedModelId" | "modelParams" | "extendedModelParams" | "maxRunMinutes" | "graph" | "projectId">>,
 ) {
   const current = getAutomation(id, ownerId, false);
   if (!current) return null;
@@ -444,6 +500,12 @@ export function updateAutomation(
   const modeId = patch.modeId !== undefined ? patch.modeId.trim().slice(0, 100) || "agent" : current.modeId || "agent";
   const modelId = patch.modelId !== undefined ? patch.modelId.trim().slice(0, 300) || null : current.modelId || null;
   const extendedModelId = patch.extendedModelId !== undefined ? patch.extendedModelId.trim().slice(0, 300) || null : current.extendedModelId || null;
+  const modelParams = patch.modelParams !== undefined ? parseAutomationModelParams(patch.modelParams) : current.modelParams || [];
+  const extendedModelParams = !extendedModelId
+    ? []
+    : patch.extendedModelParams !== undefined
+      ? parseAutomationModelParams(patch.extendedModelParams, "extendedModelParams")
+      : current.extendedModelParams || [];
   const maxRunMinutes = patch.maxRunMinutes !== undefined ? normalizeMaxRunMinutes(patch.maxRunMinutes) : current.maxRunMinutes;
   const generatedGraph = defaultGraph({
     schedule,
@@ -451,6 +513,8 @@ export function updateAutomation(
     modeId,
     modelId: modelId || undefined,
     extendedModelId: extendedModelId || undefined,
+    modelParams,
+    extendedModelParams,
     maxRunMinutes,
   });
   const graph = patch.graph ? normalizeGraph(patch.graph, generatedGraph) : generatedGraph;
@@ -459,7 +523,7 @@ export function updateAutomation(
       : current.projectId || null;
   getDatabase().prepare(
     `UPDATE automations SET chat_id = ?, project_id = ?, name = ?, prompt = ?, mode_id = ?, model_id = ?, extended_model_id = ?,
-       max_run_minutes = ?, graph_json = ?, schedule_kind = ?, schedule_value = ?, timezone = ?, next_run_at = ?,
+       max_run_minutes = ?, graph_json = ?, model_params_json = ?, extended_model_params_json = ?, schedule_kind = ?, schedule_value = ?, timezone = ?, next_run_at = ?,
        status = CASE WHEN status IN ('completed', 'error') THEN 'active' ELSE status END,
        last_error = NULL, updated_at = ? WHERE id = ? AND owner_id = ?`,
   ).run(
@@ -472,6 +536,8 @@ export function updateAutomation(
     extendedModelId,
     maxRunMinutes,
     JSON.stringify(graph),
+    JSON.stringify(modelParams),
+    JSON.stringify(extendedModelParams),
     storedSchedule.kind,
     storedSchedule.value,
     patch.timezone?.trim().slice(0, 80) || current.timezone,
@@ -558,7 +624,7 @@ export function startAutomationRun(automation: Automation, trigger: AutomationRu
     runTitle(automation.name, now),
     sourceChat.browserContext ? { ...sourceChat.browserContext } : undefined,
     automation.ownerId,
-    automation.modelId ? { id: automation.modelId } : undefined,
+    automation.modelId ? { id: automation.modelId, params: automation.modelParams } : undefined,
   );
   runChat.automationId = automation.id;
   runChat.automationRunId = id;
@@ -615,6 +681,8 @@ export function queueAutomationRun(automation: Automation, trigger: AutomationRu
       modeId: automation.modeId || "agent",
       ...(automation.modelId ? { modelId: automation.modelId } : {}),
       ...(automation.extendedModelId ? { extendedModelId: automation.extendedModelId } : {}),
+      ...(automation.modelParams?.length ? { modelParams: automation.modelParams } : {}),
+      ...(automation.extendedModelParams?.length ? { extendedModelParams: automation.extendedModelParams } : {}),
       maxRuntimeMs: automation.maxRunMinutes * 60_000,
       automationId: automation.id,
       automationRunId: run.id,

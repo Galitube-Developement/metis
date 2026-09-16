@@ -22,6 +22,9 @@ export function ModelPicker({
   onToggleFavorite,
   disabled = false,
   className,
+  ariaLabel = "Default model",
+  placeholder = "Select a model",
+  noneLabel,
 }: {
   models: ModelInfo[];
   value: string;
@@ -30,6 +33,9 @@ export function ModelPicker({
   onToggleFavorite: (value: string) => void;
   disabled?: boolean;
   className?: string;
+  ariaLabel?: string;
+  placeholder?: string;
+  noneLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -108,12 +114,12 @@ export function ModelPicker({
           type="button"
           variant="outline"
           disabled={disabled || models.length === 0}
-          aria-label="Default model"
+          aria-label={ariaLabel}
           className={cn("h-10 w-full justify-between gap-2 text-left font-normal", className)}
         >
           <span className="flex min-w-0 items-center gap-2 truncate">
             <ProviderLogo providerId={selected?.providerId} />
-            <span className="truncate">{selected?.displayName || "Select a model"}</span>
+            <span className="truncate">{selected?.displayName || placeholder}</span>
             {selected?.providerName ? (
               <span className="truncate text-xs text-muted-foreground">· {selected.providerName}</span>
             ) : null}
@@ -153,6 +159,19 @@ export function ModelPicker({
           ))}
         </div>
         <div className="max-h-80 overflow-y-auto">
+          {noneLabel ? (
+            <DropdownMenuItem
+              onClick={() => {
+                onValueChange("");
+                setSearch("");
+                setOpen(false);
+              }}
+              className="gap-2"
+            >
+              <Check className={cn("size-3.5 shrink-0", value ? "opacity-0" : "opacity-100")} />
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{noneLabel}</span>
+            </DropdownMenuItem>
+          ) : null}
           {favorites.length ? (
             <div>
               <p className="flex items-center gap-1.5 px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

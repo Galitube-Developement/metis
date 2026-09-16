@@ -161,3 +161,42 @@ test("production mutating internal routes require the active run lease", async (
     else process.env.MCP_BEARER_TOKEN = previousToken;
   }
 });
+
+test("automation gateway forwards the active run lease", () => {
+  const source = readFileSync(path.join(import.meta.dirname, "../lib/mcp-core/gateway-core.mjs"), "utf8");
+  const automationStart = source.indexOf('"create_automation", "list_automations"');
+  const workspaceStart = source.indexOf('if (name === "list_workspaces"', automationStart);
+  assert.notEqual(automationStart, -1);
+  assert.notEqual(workspaceStart, -1);
+  const automationGateway = source.slice(automationStart, workspaceStart);
+  assert.match(automationGateway, /\.\.\.internalLeaseHeaders\(context\)/);
+});
+
+test("job-scoped internal gateway fetches forward the active run lease", () => {
+  const source = readFileSync(path.join(import.meta.dirname, "../lib/mcp-core/gateway-core.mjs"), "utf8");
+  const missing: string[] = [];
+  let searchFrom = 0;
+  while (searchFrom < source.length) {
+    const fetchAt = source.indexOf("await fetch(", searchFrom);
+    if (fetchAt === -1) break;
+    const headerStart = source.indexOf("headers:", fetchAt);
+    const nextFetch = source.indexOf("await fetch(", fetchAt + 1);
+    const headerEnd = headerStart === -1
+      ? -1
+      : source.indexOf("\n        });", headerStart);
+    const chunkEnd = Math.min(
+      fetchAt + 1_200,
+      nextFetch === -1 ? source.length : nextFetch,
+      headerEnd === -1 ? fetchAt + 1_200 : headerEnd + 20,
+    );
+    const chunk = source.slice(Math.max(0, fetchAt - 500), chunkEnd);
+    searchFrom = fetchAt + 12;
+    const urlLine = chunk.split("\n", 1)[0] || "";
+    if (!/INTERNAL_[A-Z_]+|baseUrl/.test(urlLine) && !/INTERNAL_URL\.replace/.test(chunk.slice(0, 160))) continue;
+    if (!/X-AI-Chat-Job-Id/.test(chunk)) continue;
+    if (!/internalLeaseHeaders\(context\)/.test(chunk) && !/X-AI-Chat-Lease-Token/.test(chunk)) {
+      missing.push(urlLine.replace(/\s+/g, " ").slice(0, 120));
+    }
+  }
+  assert.deepEqual(missing, []);
+});

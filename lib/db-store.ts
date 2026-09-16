@@ -249,6 +249,12 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
   for (const key of chatPageCache.keys()) {
     if (key.includes(`:${chat.id}:`)) chatPageCache.delete(key);
   }
+  recordChatSyncEvent({
+    ownerId: chat.ownerId,
+    chatId: chat.id,
+    kind: "updated",
+    chatUpdatedAt: updatedAt,
+  });
 }
 
 export function listChatsForUser(

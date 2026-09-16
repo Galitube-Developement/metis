@@ -39,6 +39,8 @@ export type AgentJob = {
   modelId?: string;
   extendedModelId?: string;
   modelParams?: Array<{ id: string; value: string }>;
+  /** Reasoning/Fast/other options for the delegated/extended model. */
+  extendedModelParams?: Array<{ id: string; value: string }>;
   /** Requested live model handoff for an already-running job. */
   pendingModelId?: string;
   pendingModelParams?: Array<{ id: string; value: string }>;

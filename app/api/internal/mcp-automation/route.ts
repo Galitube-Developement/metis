@@ -8,6 +8,8 @@ import {
   runAutomationNow,
   setAutomationStatus,
   updateAutomation,
+  modelParamsPatchFromBody,
+  extendedModelParamsPatchFromBody,
   type AutomationSchedule,
 } from "@/lib/automations";
 import { bearerTokenMatches } from "@/lib/security";
@@ -58,6 +60,8 @@ export async function POST(req: Request) {
         modeId: typeof body.modeId === "string" ? body.modeId : "agent",
         modelId: typeof body.modelId === "string" ? body.modelId : undefined,
         extendedModelId: typeof body.extendedModelId === "string" ? body.extendedModelId : undefined,
+        ...modelParamsPatchFromBody(body),
+        ...extendedModelParamsPatchFromBody(body),
         maxRunMinutes: typeof body.maxRunMinutes === "number" ? body.maxRunMinutes : undefined,
         schedule,
         timezone: typeof body.timezone === "string" ? body.timezone : undefined,
@@ -77,6 +81,8 @@ export async function POST(req: Request) {
         ...(typeof body.modeId === "string" ? { modeId: body.modeId } : {}),
         ...(typeof body.modelId === "string" ? { modelId: body.modelId } : {}),
         ...(typeof body.extendedModelId === "string" ? { extendedModelId: body.extendedModelId } : {}),
+        ...modelParamsPatchFromBody(body),
+        ...extendedModelParamsPatchFromBody(body),
         ...(typeof body.maxRunMinutes === "number" ? { maxRunMinutes: body.maxRunMinutes } : {}),
         ...(typeof body.timezone === "string" ? { timezone: body.timezone } : {}),
         ...(schedule ? { schedule } : {}),

@@ -700,7 +700,11 @@ export async function runQueuedJob(job: AgentJob) {
   const configuredSubagentModel = job.extendedModelId ||
     (globalModelSettings.subagentModelEnabled ? globalModelSettings.subagentModelId : undefined);
   const configuredSubagentModelParams = configuredSubagentModel
-    ? stripRemovedModelParams(globalModelSettings.modelParamsByModel?.[configuredSubagentModel] || []) || []
+    ? stripRemovedModelParams(
+      job.extendedModelParams?.length
+        ? job.extendedModelParams
+        : globalModelSettings.modelParamsByModel?.[configuredSubagentModel] || [],
+    ) || []
     : [];
   const customSubagentDefinitions = configuredSubagentModel
     ? Object.fromEntries(
@@ -1666,6 +1670,7 @@ export async function runQueuedJob(job: AgentJob) {
           modelId: job.modelId,
           extendedModelId: job.extendedModelId,
           modelParams: stripRemovedModelParams(job.modelParams),
+          extendedModelParams: stripRemovedModelParams(job.extendedModelParams),
         });
         createdChats.push({ id: child.id, title: child.title });
         emit("chat", {

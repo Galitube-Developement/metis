@@ -2267,7 +2267,7 @@ export function SettingsPanel({
                 <div>
                   <h3 id="settings-mcp" className="text-sm font-medium">Custom MCP servers</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Add remote HTTP or local stdio MCP servers. Secret values are write-only.
+                    Each account can add its own remote HTTP or local stdio MCP servers. They are not shared with other users. Secret values are write-only.
                   </p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">

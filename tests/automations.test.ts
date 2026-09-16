@@ -116,3 +116,104 @@ test("automation runs are isolated, durable, tool-capable jobs with long runtime
   assert.equal(getChat(queued.run.chatId, user.id), null, "deleting an automation removes its auxiliary run chats");
   assert.ok(getChat(contextChat.id, user.id), "the user-selected context chat is preserved");
 });
+
+test("automation model params persist and are copied onto isolated runs", () => {
+  const { createUser } = modules[0];
+  const { createChat, getChat } = modules[1];
+  const { createAutomation, queueAutomationRun, updateAutomation } = modules[2];
+  const { getJob } = modules[3];
+
+  const user = createUser("automation-params-owner", "test-password");
+  const contextChat = createChat("Params context", undefined, user.id);
+  const automation = createAutomation({
+    ownerId: user.id,
+    chatId: contextChat.id,
+    name: "Reasoning run",
+    prompt: "Think carefully.",
+    modelId: "gpt-5",
+    modelParams: [
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ],
+    schedule: { kind: "interval", everyMinutes: 60 },
+    timezone: "UTC",
+  });
+
+  assert.deepEqual(automation.modelParams, [
+    { id: "effort", value: "high" },
+    { id: "fast", value: "true" },
+  ]);
+  assert.deepEqual(
+    automation.graph.nodes.find((node) => node.kind === "agent")?.config?.modelParams,
+    automation.modelParams,
+  );
+
+  const queued = queueAutomationRun(automation, "manual");
+  const job = getJob(queued.job.id);
+  assert.deepEqual(job?.modelParams, automation.modelParams);
+  const runChat = getChat(queued.run.chatId, user.id);
+  assert.equal(runChat?.modelId, "gpt-5");
+  assert.deepEqual(runChat?.modelParams, automation.modelParams);
+
+  const updated = updateAutomation(automation.id, user.id, {
+    modelParams: [{ id: "effort", value: "low" }, { id: "fast", value: "false" }],
+  });
+  assert.deepEqual(updated?.modelParams, [
+    { id: "effort", value: "low" },
+    { id: "fast", value: "false" },
+  ]);
+});
+
+test("automation extended model params persist and are copied onto isolated runs", () => {
+  const { createUser } = modules[0];
+  const { createChat, getChat } = modules[1];
+  const { createAutomation, queueAutomationRun, updateAutomation } = modules[2];
+  const { getJob } = modules[3];
+
+  const user = createUser("automation-extended-params-owner", "test-password");
+  const contextChat = createChat("Extended params context", undefined, user.id);
+  const automation = createAutomation({
+    ownerId: user.id,
+    chatId: contextChat.id,
+    name: "Extended reasoning run",
+    prompt: "Delegate carefully.",
+    modelId: "gpt-5",
+    extendedModelId: "gpt-5.4",
+    modelParams: [{ id: "effort", value: "medium" }],
+    extendedModelParams: [
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ],
+    schedule: { kind: "interval", everyMinutes: 60 },
+    timezone: "UTC",
+  });
+
+  assert.deepEqual(automation.extendedModelParams, [
+    { id: "effort", value: "high" },
+    { id: "fast", value: "true" },
+  ]);
+  assert.deepEqual(
+    automation.graph.nodes.find((node) => node.kind === "agent")?.config?.extendedModelParams,
+    automation.extendedModelParams,
+  );
+
+  const queued = queueAutomationRun(automation, "manual");
+  const job = getJob(queued.job.id);
+  assert.equal(job?.extendedModelId, "gpt-5.4");
+  assert.deepEqual(job?.extendedModelParams, automation.extendedModelParams);
+  const runChat = getChat(queued.run.chatId, user.id);
+  assert.equal(runChat?.modelId, "gpt-5");
+  assert.deepEqual(runChat?.modelParams, automation.modelParams);
+
+  const updated = updateAutomation(automation.id, user.id, {
+    extendedModelParams: [{ id: "effort", value: "low" }, { id: "fast", value: "false" }],
+  });
+  assert.deepEqual(updated?.extendedModelParams, [
+    { id: "effort", value: "low" },
+    { id: "fast", value: "false" },
+  ]);
+
+  const cleared = updateAutomation(automation.id, user.id, { extendedModelId: "" });
+  assert.equal(cleared?.extendedModelId, undefined);
+  assert.equal(cleared?.extendedModelParams, undefined);
+});

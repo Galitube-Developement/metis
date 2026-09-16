@@ -4909,9 +4909,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [activeChatIncognito, authed, automationsOpen, loadChat, notesOpen, openDraft, routeChatId, routeView]);
 
   const refreshActiveChatFromServer = useCallback(async (chatId: string) => {
-      // The sending device owns the foreground stream. Other clients apply
-      // durable snapshots whenever the chat sync channel announces a change.
-      if (document.visibilityState === "hidden" || runtimeRef.current.has(chatId)) return;
+      // Durable checkpoints are the same path a reload uses. Keep applying them
+      // on the sending device too; mergeMessages preserves in-flight tokens.
+      if (document.visibilityState === "hidden") return;
       try {
         const res = await fetchReadWithRetry(
           `/api/chats/${chatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=0`,
@@ -4930,9 +4930,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           );
         }
         setChatTitle(data.chat.title);
-        if (!liveRun) {
-          setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        }
+        setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
         applyServerQueuedMessages(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setModeId(serverModeId);
@@ -5049,11 +5047,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (chat) => chat.id === activeChatId &&
         (chat.runStatus === "running" || chat.runStatus === "waiting_input" || chat.runStatus === "waiting_for_user"),
     );
+    const liveSnapshot =
+      currentChatRunsRemotely ||
+      busy ||
+      Boolean(activeChatId && runningChatIds.includes(activeChatId));
     const interval = window.setInterval(() => {
-      if (!chatSyncConnectedRef.current) void refreshActiveChatFromServer(activeChatId);
-    }, currentChatRunsRemotely || busy ? 2000 : 15000);
+      if (document.visibilityState === "hidden") return;
+      if (chatSyncConnectedRef.current && !liveSnapshot) return;
+      void refreshActiveChatFromServer(activeChatId);
+    }, liveSnapshot ? 2000 : 15000);
     return () => window.clearInterval(interval);
-  }, [activeChatId, authed, busy, chats, loadingChatId, refreshActiveChatFromServer]);
+  }, [activeChatId, authed, busy, chats, loadingChatId, refreshActiveChatFromServer, runningChatIds]);
 
   useEffect(() => {
     if (!authed) return;
@@ -6989,6 +6993,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       assistantMessageId: asstId,
       generation,
     });
+    void refreshActiveChatFromServer(chatId);
 
     try {
       let attachmentsPayload:
@@ -9776,9 +9781,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               {sidebarProjects.find((project) => project.id === projectHomeId)?.name || "Project"}
             </p>
           ) : automationsOpen ? (
-            <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm font-medium text-foreground md:text-left">
-              Automations
-            </p>
+            <div className="min-w-0 flex-1" aria-hidden="true" />
           ) : notesOpen ? (
             <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm font-medium text-foreground md:text-left">
               Shared Notes
@@ -9863,13 +9866,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           }}
           />
         ) : automationsOpen ? (
-          <div className="h-full min-h-0 flex-1 p-3 sm:p-5">
+          <div className="h-full min-h-0 flex-1 overflow-hidden">
             <AutomationsPanel
-              activeChatId={activeChatId}
-                activeProjectId={activeProjectId}
-              models={models}
               modes={modes}
-              selectedModelId={modelId}
+              models={models}
+              favoriteModelKeys={favoriteModelKeys}
+              onToggleFavoriteModel={toggleFavoriteModel}
               onOpenChat={(chatId) => void loadChat(chatId)}
               highlightId={focusedAutomationId}
             />
@@ -10794,10 +10796,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </div>
       </div>
 
-      {!notesOpen && workspaceMounted && workspaceFullscreen ? (
+      {!notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
         <div className="fixed inset-0 z-40 bg-background/55 backdrop-blur-[2px]" aria-hidden="true" />
       ) : null}
-      {!notesOpen && workspaceMounted ? (
+      {!notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",

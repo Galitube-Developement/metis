@@ -101,7 +101,7 @@ export function SkillsSettings() {
     <section className="flex flex-col gap-4">
       <div>
         <h3 className="flex items-center gap-2 text-sm font-medium"><Puzzle className="size-4" /> Skills</h3>
-        <p className="mt-1 text-xs text-muted-foreground">Installed skills from skills-lock.json. Open a skill to change Always on. Enabled skills stay available; Always on injects the skill into every chat.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Installed skills from skills-lock.json, plus skills you add for this account. Open a skill to change Always on. Enabled skills stay available; Always on injects the skill into every chat.</p>
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="grid gap-2 rounded-xl border border-border/60 p-3">

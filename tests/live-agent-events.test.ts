@@ -108,17 +108,23 @@ test("live snapshots keep the optimistic model and merge queue tombstones", () =
   assert.doesNotMatch(shell, /if \(data\.chat\.modelId\) setModelId\(data\.chat\.modelId\)/);
 });
 
-test("chat changes use durable SSE and polling only while disconnected", () => {
+test("chat changes use durable SSE and keep snapshot sync running during a live send", () => {
   const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
   const route = readFileSync(path.join(root, "app", "api", "chats", "events", "route.ts"), "utf8");
   const sync = readFileSync(path.join(root, "lib", "chat-sync.ts"), "utf8");
+  const store = readFileSync(path.join(root, "lib", "db-store.ts"), "utf8");
   assert.match(shell, /new EventSource\("\/api\/chats\/events"\)/);
-  assert.match(shell, /if \(!chatSyncConnectedRef\.current\) void refreshActiveChatFromServer/);
+  assert.match(shell, /markChatRunning\(chatId, \{[\s\S]*?void refreshActiveChatFromServer\(chatId\)/);
+  assert.match(shell, /if \(chatSyncConnectedRef\.current && !liveSnapshot\) return/);
+  assert.match(shell, /if \(document\.visibilityState === "hidden"\) return/);
+  assert.doesNotMatch(shell, /document\.visibilityState === "hidden" \|\| runtimeRef\.current\.has\(chatId\)/);
+  assert.match(shell, /setMessages\(\(current\) => mergeMessages\(current, mapApiMessages\(data\.chat\.messages, data\.chat\.runStatus\)\)\)/);
   assert.match(route, /Last-Event-ID/);
   assert.match(route, /subscribeToDatabaseChanges/);
   assert.match(route, /listChatSyncEvents/);
   assert.match(sync, /watch\(directory/);
   assert.match(sync, /chat_sync_events/);
+  assert.match(store, /function persistAssistantMessage[\s\S]*?recordChatSyncEvent\(/);
 });
 
 test("terminal stream events force a durable chat refresh on the sending device", () => {
