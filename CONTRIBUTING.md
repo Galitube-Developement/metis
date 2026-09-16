@@ -15,7 +15,7 @@ especially when they include tests or clear reproduction steps.
 ## Local setup
 
 ```bash
-git clone https://github.com/f1shyondrugs/metis-ai.git
+git clone https://github.com/f1shyondrugs/metis.git
 cd metis-ai
 pnpm install
 cp .env.example .env

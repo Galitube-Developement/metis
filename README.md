@@ -6,9 +6,9 @@ Conversations, tools, terminals, browser sessions, memories, workspaces and
 MCP servers — brought together in one self-hosted application.
 
 <p>
-  <a href="https://github.com/f1shyondrugs/metis-ai">Repository</a>
+  <a href="https://github.com/f1shyondrugs/metis">Repository</a>
   ·
-  <a href="https://github.com/f1shyondrugs/metis-ai/issues">Issues</a>
+  <a href="https://github.com/f1shyondrugs/metis/issues">Issues</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
   ·
@@ -76,7 +76,7 @@ Pfad. Er lädt ein unveränderliches Image aus GHCR, erstellt keine Git-Checkout
 Abhängigkeit und legt Daten sowie Workspace außerhalb des Containers ab.
 
 ```bash
-curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-docker-install.sh \\
+curl -fsSL https://github.com/f1shyondrugs/metis/releases/latest/download/metis-docker-install.sh \\
   -o metis-docker-install.sh
 bash metis-docker-install.sh --version latest
 ```
@@ -104,13 +104,13 @@ installer to a temp file and executes that file — it does not run the installe
 from a pipe.
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)"
 ```
 
 Uninstall with the same bootstrap:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)" -- uninstall --yes --keep-data
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- uninstall --yes --keep-data
 ```
 
 The same command works on macOS and Linux. Do not use `curl | bash` against
@@ -119,7 +119,7 @@ The same command works on macOS and Linux. Do not use `curl | bash` against
 The default path never creates an account or asks for credentials. Start the app and create the first account in the first-run UI. For agents and CI, pass optional configuration flags after `--`:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)" -- \
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- \
  --non-interactive --port 3100
 ```
 
@@ -130,14 +130,14 @@ On Windows, the one-liner is a bootstrap without a `param()` block so
 `-File`:
 
 ```powershell
-irm https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.ps1 | iex
 ```
 
 For a prompt-free Windows installation, download the platform script and pass
 named arguments:
 
 ```powershell
-irm https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install/windows.ps1 -OutFile install.ps1
+irm https://raw.githubusercontent.com/f1shyondrugs/metis/master/install/windows.ps1 -OutFile install.ps1
 .\install.ps1 -NonInteractive -PasswordFile .\metis-password.txt
 ```
 
@@ -201,7 +201,7 @@ removal when reviewing an existing installation.
 ### 1. Install
 
 ```bash
-git clone https://github.com/f1shyondrugs/metis-ai.git
+git clone https://github.com/f1shyondrugs/metis.git
 cd metis-ai
 pnpm install
 ```
