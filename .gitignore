@@ -30,3 +30,4 @@ data/artifacts/
 *.env.bak*
 config.yaml.bak*
 .research/
+.venv*/

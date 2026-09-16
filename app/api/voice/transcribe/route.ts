@@ -7,6 +7,7 @@ import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { featureFlags } from "@/lib/feature-flags";
 import { findActiveConnection, getProviderConnectionSecret } from "@/lib/provider-connections";
+import { fetchWithValidatedRedirects, privateUrlAllowlist } from "@/lib/url-security";
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   createVoiceJob,
@@ -35,34 +36,35 @@ async function openAiTranscription(
   endpoint?: string,
   connectionId?: string,
 ) {
-  let apiKey = process.env.OPENAI_API_KEY?.trim();
-  let baseUrl: string | undefined;
+  let connectionSecret: ReturnType<typeof getProviderConnectionSecret> | null = null;
   if (ownerId) {
-    const connection = connectionId
+    connectionSecret = connectionId
       ? getProviderConnectionSecret(connectionId, ownerId)
       : findActiveConnection(ownerId, "openai")
         ? getProviderConnectionSecret(findActiveConnection(ownerId, "openai")!.id, ownerId)
         : null;
-    if (connection) {
-      apiKey = connection.secret || apiKey;
-      baseUrl = connection.baseUrl;
-    }
   }
-  const unauthenticatedEndpoint = endpoint && /^https?:\/\//i.test(endpoint)
-    && !/^(https?:\/\/)?(169\.254\.169\.254|metadata\.google\.internal|metadata\.google)(\/|$)/i.test(endpoint);
-  if (!apiKey && !unauthenticatedEndpoint) throw new Error("No transcription connection is configured.");
+  const requestedEndpoint = endpoint?.trim() || undefined;
+  const baseUrl = connectionSecret?.baseUrl || requestedEndpoint;
+  // A request-controlled endpoint must never receive the process-wide OpenAI
+  // key. Custom authenticated endpoints use their stored connection secret.
+  const apiKey = connectionSecret?.secret || (!requestedEndpoint ? process.env.OPENAI_API_KEY?.trim() : undefined);
+  if (!apiKey && !baseUrl) throw new Error("No transcription connection is configured.");
   const form = new FormData();
   form.append("file", file, file.name || `recording-${randomUUID()}.webm`);
   form.append("model", modelId.trim() || process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || "whisper-1");
   form.append("response_format", "json");
   if (language?.trim()) form.append("language", language.trim().slice(0, 20));
-  const response = await fetch(transcriptionEndpoint(endpoint || baseUrl), {
+  const { response } = await fetchWithValidatedRedirects(transcriptionEndpoint(baseUrl), {
     method: "POST",
     headers: {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
     body: form,
     signal: AbortSignal.timeout(10 * 60 * 1000),
+  }, {
+    maxRedirects: 2,
+    allowPrivateUrl: privateUrlAllowlist(),
   });
   const body = await response.json().catch(() => ({})) as { text?: unknown; error?: { message?: unknown } };
   if (!response.ok) throw new Error(typeof body.error?.message === "string" ? body.error.message : `Transcription failed (HTTP ${response.status}).`);

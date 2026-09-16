@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import { AudioLines, ChevronDown, ClipboardList, FileText, Image as ImageIcon, Link2, LockKeyhole, LogIn, MessageSquareShare, Palette, Video } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Markdown } from "@/components/markdown";
@@ -306,7 +306,7 @@ function ShareView() {
   const [selectedAttachment, setSelectedAttachment] = useState<{ attachment: SharedAttachment; url: string } | null>(null);
   const [selectedWorkspace, setSelectedWorkspace] = useState<SharedWorkspace | null>(null);
 
-  async function loadShare(nextPassword?: string) {
+  const loadShare = useCallback(async (nextPassword?: string) => {
     setLoading(true);
     setError("");
     try {
@@ -333,7 +333,7 @@ function ShareView() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [shareId]);
 
   useEffect(() => {
     if (shareId) void loadShare();
@@ -341,7 +341,7 @@ function ShareView() {
       setError("Missing share link.");
       setLoading(false);
     }
-  }, [shareId]);
+  }, [loadShare, shareId]);
 
   useEffect(() => {
     void fetch("/api/status", { cache: "no-store" })

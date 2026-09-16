@@ -23,7 +23,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
   const resizeRef = useRef<{ id: string; edge: ResizeEdge; startWidth: number; startHeight: number; pointerX: number; pointerY: number } | null>(null);
   const saveTimers = useRef(new Map<string, number>());
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!chatId) return;
     const response = await fetch(`/api/context/pins?chatId=${encodeURIComponent(chatId)}`, { cache: "no-store" });
     if (!response.ok) return;
@@ -35,11 +35,11 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
     setNotes(data.notes || []);
     setChatIds(data.chatNoteIds || []);
     setPinnedIds(data.pinnedNoteIds || []);
-  }
+  }, [chatId]);
 
   useEffect(() => {
     void load();
-  }, [chatId]);
+  }, [load]);
 
   useEffect(() => {
     if (!chatId) return;

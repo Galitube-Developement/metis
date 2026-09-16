@@ -319,8 +319,8 @@ test("installers merge a previous .env on replace and upgrade", () => {
 
 test("README documents the bootstrap one-liner rather than curling platform scripts into bash", () => {
   const readme = readFileSync(path.join(root, "README.md"), "utf8");
-  assert.match(readme, /\/bin\/bash -c "\$\(curl -fsSL https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis-ai\/master\/install\.sh\)"/);
-  assert.match(readme, /irm https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis-ai\/master\/install\.ps1 \| iex/);
+  assert.match(readme, /\/bin\/bash -c "\$\(curl -fsSL https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis\/master\/install\.sh\)"/);
+  assert.match(readme, /irm https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis\/master\/install\.ps1 \| iex/);
   assert.doesNotMatch(readme, /install\/linux\.sh \| bash/);
   assert.doesNotMatch(readme, /install\/macos\.sh \| bash/);
   assert.doesNotMatch(readme, /install\/windows\.ps1 \| iex/);
@@ -372,7 +372,7 @@ test("platform installers accept uninstall and pin a release with --version", ()
 });
 
 test("linux and macos installers start when HOME is unset", () => {
-  const env = { PATH: process.env.PATH || "/usr/bin:/bin" };
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH || "/usr/bin:/bin", NODE_ENV: "test" };
   for (const file of ["linux.sh", "macos.sh"]) {
     const output = execFileSync("/bin/bash", [path.join(root, "install", file), "--help"], {
       encoding: "utf8",

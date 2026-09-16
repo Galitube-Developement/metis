@@ -321,7 +321,17 @@ settings are:
 | `MCP_ALLOW_REMOTE_ADMIN` | Allow remote administrative operations | `false` |
 | `MCP_ENABLE_REMOTE_SERVERS` | Enable remote MCP servers | `false` |
 | `MCP_ENABLE_OPTIONAL_SERVERS` | Enable optional integrations | `false` |
-| `MCP_LOCAL_SEARCH_URL` | Local SearXNG JSON endpoint used before remote search | Unset |
+| `MCP_LOCAL_SCRAPER_URL` | Local Scrapling fetch endpoint | `http://127.0.0.1:8890/fetch` |
+| `MCP_LOCAL_SEARCH_URL` | Optional SearXNG JSON endpoint tried before Scrapling search | `http://127.0.0.1:8888/search` |
+| `MCP_LOCAL_SCRAPER_SEARCH_URL` | Scrapling search fallback used when SearXNG is unavailable | `http://127.0.0.1:8890/search` |
+| `VOICE_TRANSCRIPTION_PRIVATE_BASE_URLS` | Host-admin allowlist for exact private/local voice-provider URL prefixes | Unset |
+
+Production installs should run the static-only Scrapling service from
+`deploy/systemd/metis-scraper.service.template`. SearXNG is optional: search
+uses SearXNG first, then the local Scrapling public-search parser, then the
+configured Exa child server. Page fetches use Scrapling first and Exa only for
+failed or incomplete public-page extraction. Interactive, authenticated, or
+challenge pages belong in the persistent browser instead.
 
 <p align="center">
   <img src="./public/development.png" alt="Development" width="100%">

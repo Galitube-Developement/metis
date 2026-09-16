@@ -42,6 +42,10 @@ export function RemoteTerminal({ cwd, sessionId, onSessionIdChange }: RemoteTerm
   const terminalRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const fitAddonRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const requestedSessionIdRef = useRef(sessionId);
+  const onSessionIdChangeRef = useRef(onSessionIdChange);
+  requestedSessionIdRef.current = sessionId;
+  onSessionIdChangeRef.current = onSessionIdChange;
   const cursorRef = useRef(0);
   const [starting, setStarting] = useState(true);
   const [error, setError] = useState("");
@@ -96,11 +100,12 @@ export function RemoteTerminal({ cwd, sessionId, onSessionIdChange }: RemoteTerm
 
       const size = { cols: terminal.cols, rows: terminal.rows };
       const remoteClientId = target === "server" ? undefined : target;
-      let response = sessionId && !remoteClientId
+      const requestedSessionId = requestedSessionIdRef.current;
+      let response = requestedSessionId && !remoteClientId
         ? await fetch("/api/remote", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "pty-attach", sessionId, cwd, ...size }),
+            body: JSON.stringify({ action: "pty-attach", sessionId: requestedSessionId, cwd, ...size }),
           })
         : null;
       if (!response?.ok) {
@@ -113,7 +118,7 @@ export function RemoteTerminal({ cwd, sessionId, onSessionIdChange }: RemoteTerm
       const data = await readRemoteResponse<{ sessionId?: string }>(response);
       if (!data.sessionId) throw new Error("Remote terminal did not return a session ID");
       sessionIdRef.current = data.sessionId;
-      onSessionIdChange(data.sessionId);
+      onSessionIdChangeRef.current(data.sessionId);
       setStarting(false);
 
       dataDisposable = terminal.onData((input) => {

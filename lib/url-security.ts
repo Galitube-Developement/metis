@@ -3,42 +3,118 @@ import net from "node:net";
 
 export type UrlLookup = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 export type FetchLike = (input: URL, init?: RequestInit) => Promise<Response>;
+export type PrivateUrlPolicy = (url: URL) => boolean;
+
+const BLOCKED_METADATA_HOSTS = new Set([
+  "169.254.169.254",
+  "metadata.google",
+  "metadata.google.internal",
+]);
+
+function ipv4Number(address: string) {
+  if (!net.isIPv4(address)) return null;
+  return address.split(".").reduce((value, octet) => (value << 8) + Number(octet), 0) >>> 0;
+}
+
+function inIpv4Range(value: number, network: string, prefix: number) {
+  const base = ipv4Number(network);
+  if (base === null) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (value & mask) === (base & mask);
+}
+
+function ipv6Bytes(address: string) {
+  let value = address.toLowerCase().split("%", 1)[0];
+  const dotted = value.match(/(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (dotted) {
+    const ipv4 = ipv4Number(dotted);
+    if (ipv4 === null) return null;
+    value = `${value.slice(0, -dotted.length)}${((ipv4 >>> 16) & 0xffff).toString(16)}:${(ipv4 & 0xffff).toString(16)}`;
+  }
+  if (!net.isIPv6(value) || value.split("::").length > 2) return null;
+  const [leftRaw, rightRaw = ""] = value.split("::");
+  const left = leftRaw ? leftRaw.split(":") : [];
+  const right = rightRaw ? rightRaw.split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (!value.includes("::") && missing !== 0)) return null;
+  const parts = [...left, ...Array(missing).fill("0"), ...right];
+  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+  return parts.flatMap((part) => {
+    const word = Number.parseInt(part, 16);
+    return [word >>> 8, word & 0xff];
+  });
+}
 
 export function isPrivateAddress(address: string) {
-  const normalized = address.toLowerCase();
-  if (normalized.includes(".")) {
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-    if (mapped) return isPrivateAddress(mapped);
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, "");
+  const ipv4 = ipv4Number(normalized);
+  if (ipv4 !== null) {
+    return [
+      ["0.0.0.0", 8],
+      ["10.0.0.0", 8],
+      ["100.64.0.0", 10],
+      ["127.0.0.0", 8],
+      ["169.254.0.0", 16],
+      ["172.16.0.0", 12],
+      ["192.0.0.0", 24],
+      ["192.0.2.0", 24],
+      ["192.31.196.0", 24],
+      ["192.52.193.0", 24],
+      ["192.88.99.0", 24],
+      ["192.168.0.0", 16],
+      ["192.175.48.0", 24],
+      ["198.18.0.0", 15],
+      ["198.51.100.0", 24],
+      ["203.0.113.0", 24],
+      ["224.0.0.0", 4],
+      ["240.0.0.0", 4],
+    ].some(([network, prefix]) => inIpv4Range(ipv4, network as string, prefix as number));
   }
-  if (net.isIPv4(normalized)) {
-    const [first, second] = normalized.split(".").map(Number);
-    return first === 0
-      || first === 10
-      || first === 100 && second >= 64 && second <= 127
-      || first === 127
-      || first === 169 && second === 254
-      || first === 172 && second >= 16 && second <= 31
-      || first === 192 && second === 0
-      || first === 192 && second === 168
-      || first >= 224;
+
+  const bytes = ipv6Bytes(normalized);
+  if (!bytes) return false;
+  const allZero = bytes.every((byte) => byte === 0);
+  const loopback = bytes.slice(0, 15).every((byte) => byte === 0) && bytes[15] === 1;
+  const embeddedIpv4 = bytes.slice(0, 12).every((byte) => byte === 0)
+    || bytes.slice(0, 10).every((byte) => byte === 0) && bytes[10] === 0xff && bytes[11] === 0xff;
+  if (embeddedIpv4) {
+    const embedded = `${bytes[12]}.${bytes[13]}.${bytes[14]}.${bytes[15]}`;
+    if (isPrivateAddress(embedded)) return true;
   }
-  if (!net.isIPv6(normalized)) return false;
-  return normalized === "::"
-    || normalized === "::1"
-    || normalized.startsWith("fc")
-    || normalized.startsWith("fd")
-    || normalized.startsWith("fe8")
-    || normalized.startsWith("fe9")
-    || normalized.startsWith("fea")
-    || normalized.startsWith("feb")
-    || normalized.startsWith("ff");
+  return allZero
+    || loopback
+    || (bytes[0] & 0xfe) === 0xfc
+    || bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80
+    || bytes[0] === 0xff
+    || bytes[0] === 0x01 && bytes.slice(1, 8).every((byte) => byte === 0)
+    || bytes[0] === 0x00 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b
+    || bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] <= 0x01
+    || bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8
+    || bytes[0] === 0x20 && bytes[1] === 0x02;
+}
+
+export function privateUrlAllowlist(raw = process.env.VOICE_TRANSCRIPTION_PRIVATE_BASE_URLS || ""): PrivateUrlPolicy {
+  const allowed = raw.split(/[\n,]/).map((entry) => entry.trim()).filter(Boolean).flatMap((entry) => {
+    try {
+      const url = new URL(entry);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return [];
+      return [url];
+    } catch {
+      return [];
+    }
+  });
+  return (target) => allowed.some((base) => {
+    if (target.origin !== base.origin) return false;
+    const prefix = base.pathname.replace(/\/+$/, "") || "/";
+    return prefix === "/" || target.pathname === prefix || target.pathname.startsWith(`${prefix}/`);
+  });
 }
 
 export async function assertPublicHttpUrl(
   rawUrl: string,
   options: {
     lookup?: UrlLookup;
-    allowLocalhost?: boolean;
+    allowPrivateUrl?: PrivateUrlPolicy;
     requireHttps?: boolean;
   } = {},
 ) {
@@ -51,18 +127,19 @@ export async function assertPublicHttpUrl(
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("Only HTTP and HTTPS URLs are allowed");
   }
+  if (url.username || url.password) throw new Error("Credentials in URLs are not allowed");
 
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const localhost = hostname === "localhost" || hostname === "localhost.localdomain";
+  if (BLOCKED_METADATA_HOSTS.has(hostname)) throw new Error("Private URL");
+  const allowPrivate = options.allowPrivateUrl?.(url) === true;
   const lookup = options.lookup || ((name) => dns.lookup(name, { all: true }));
-  if (localhost && options.allowLocalhost) return url;
-  if (options.requireHttps && url.protocol !== "https:") {
+  if (options.requireHttps && url.protocol !== "https:" && !allowPrivate) {
     throw new Error("External URLs must use HTTPS");
   }
-  if (isPrivateAddress(hostname)) throw new Error("Private URL");
+  if (isPrivateAddress(hostname) && !allowPrivate) throw new Error("Private URL");
 
   const addresses = await lookup(hostname);
-  if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+  if (!addresses.length || !allowPrivate && addresses.some(({ address }) => isPrivateAddress(address))) {
     throw new Error("Private URL");
   }
   return url;
@@ -92,12 +169,21 @@ export async function readResponseTextBounded(response: Response, maxBytes: numb
 export async function fetchWithValidatedRedirects(
   rawUrl: string,
   init: RequestInit = {},
-  options: { lookup?: UrlLookup; maxRedirects?: number; fetcher?: FetchLike } = {},
+  options: { lookup?: UrlLookup; maxRedirects?: number; fetcher?: FetchLike; allowPrivateUrl?: PrivateUrlPolicy } = {},
 ) {
   const fetcher = options.fetcher || fetch;
   const maxRedirects = options.maxRedirects ?? 4;
-  let target = await assertPublicHttpUrl(rawUrl, { lookup: options.lookup });
+  let target = await assertPublicHttpUrl(rawUrl, {
+    lookup: options.lookup,
+    allowPrivateUrl: options.allowPrivateUrl,
+  });
   for (let redirects = 0; ; redirects += 1) {
+    // Resolve again immediately before every connection. This narrows the DNS
+    // rebinding window and ensures every redirect hop gets a fresh policy check.
+    target = await assertPublicHttpUrl(target.toString(), {
+      lookup: options.lookup,
+      allowPrivateUrl: options.allowPrivateUrl,
+    });
     const response = await fetcher(target, { ...init, redirect: "manual" });
     if (![301, 302, 303, 307, 308].includes(response.status)) {
       return { response, url: target };
@@ -105,6 +191,12 @@ export async function fetchWithValidatedRedirects(
     if (redirects >= maxRedirects) throw new Error("Too many redirects");
     const location = response.headers.get("location");
     if (!location) throw new Error("Redirect without location");
-    target = await assertPublicHttpUrl(new URL(location, target).toString(), { lookup: options.lookup });
+    const redirected = new URL(location, target);
+    const validatedRedirect = await assertPublicHttpUrl(redirected.toString(), {
+      lookup: options.lookup,
+      allowPrivateUrl: options.allowPrivateUrl,
+    });
+    if (validatedRedirect.origin !== target.origin) throw new Error("Cross-origin redirects are not allowed");
+    target = validatedRedirect;
   }
 }

@@ -41,6 +41,13 @@ type JxgObject = {
   on?: (event: string, handler: () => void) => void;
   setAttribute?: (attrs: Record<string, unknown>) => void;
 };
+type JxgFactory = {
+  initBoard: (boxId: string, options: Record<string, unknown>) => JxgBoard;
+};
+type JxgModule = {
+  default?: { JSXGraph?: JxgFactory };
+  JSXGraph?: JxgFactory;
+};
 
 function structureKey(spec: GraphBoardSpec) {
   return spec.elements.map((element) => {
@@ -387,6 +394,8 @@ function InteractiveBoard({
     }
   }, [scopeAt]);
 
+  const graphStructure = structureKey(spec);
+
   useEffect(() => {
     const host = hostRef.current;
     const surface = surfaceRef.current;
@@ -398,8 +407,8 @@ function InteractiveBoard({
 
     void (async () => {
       try {
-        const mod = await import("jsxgraph") as { default?: { JSXGraph: { initBoard: Function } }; JSXGraph?: { initBoard: Function } };
-        const JXG = mod.default || mod;
+        const mod = await import("jsxgraph") as unknown as JxgModule;
+        const JXG = mod.default?.JSXGraph ? mod.default : mod;
         if (!JXG.JSXGraph) throw new Error("JSXGraph failed to load.");
         if (cancelled || !hostRef.current) return;
         host.innerHTML = "";
@@ -420,7 +429,7 @@ function InteractiveBoard({
           keepAspectRatio: false,
           pan: { enabled: false },
           zoom: { enabled: false, wheel: false, pinch: false },
-        }) as JxgBoard;
+        });
         if (current.axis !== false) {
           created.create("axis", [[0, 0], [1, 0]], axisStyle(axisColor));
           created.create("axis", [[0, 0], [0, 1]], axisStyle(axisColor));
@@ -531,7 +540,7 @@ function InteractiveBoard({
       try { board?.free(); } catch { /* board already gone */ }
       if (boardRef.current === board) boardRef.current = null;
     };
-  }, [boardId, structureKey(spec), applyWindow, scopeAt, paintSelection]);
+  }, [boardId, graphStructure, applyWindow, scopeAt, paintSelection]);
 
   useEffect(() => {
     const surface = surfaceRef.current;

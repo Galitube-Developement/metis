@@ -15,6 +15,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   ArrowUp,
   ArrowDown,
@@ -87,33 +88,23 @@ import { toast } from "sonner";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { RichComposerInput } from "@/components/rich-composer-input";
-import { RemoteFileEditor } from "@/components/remote-file-editor";
-import { RemoteTerminal } from "@/components/remote-terminal";
-import { AutomationsPanel } from "@/components/automations-panel";
-import { NotesVoid } from "@/components/notes-void";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
-import { ProjectHome } from "@/components/project-home";
 import { VoiceInput } from "@/components/voice-input";
-import { SubagentChatView } from "@/components/subagent-chat-view";
 import { RichUserText } from "@/components/rich-user-text";
-import { ProviderSetupDialog } from "@/components/provider-setup-dialog";
-import { SetupWizard } from "@/components/setup-wizard";
 import { BrowserSettingsControls } from "@/components/browser-settings-controls";
 import { BrowserPageEmpty, BrowserPageSkeleton } from "@/components/browser-page-skeleton";
 import { UpdateStatusProbe } from "@/components/update-channel-nav";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
-import { CommandPalette } from "@/components/command-palette";
 import type { MemoryItem } from "@/components/memories-panel";
 import type { ChatLogEntry, ChatLogCategory } from "@/lib/chat-logs";
 import { ApprovalPanel, type ApprovalDecisionValue, type PendingApprovalView } from "@/components/approval-panel";
 import { ProviderLogo } from "@/components/provider-logo";
 import { ModelOptionsMenu } from "@/components/model-options-menu";
-import {
-  SettingsPanel,
-  type FinishSound,
-  type ModelInfo,
-  type ModelParamSelection,
+import type {
+  FinishSound,
+  ModelInfo,
+  ModelParamSelection,
 } from "@/components/settings-panel";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { ContextUsageText, PlanUsageGauge, usePlanUsageSnapshot, usageForSelectedProvider } from "@/components/quota-gauges";
@@ -212,6 +203,23 @@ import {
   workspaceCrowdsSidebar,
   workspaceWidthAfterReopeningSidebar,
 } from "@/lib/workspace-layout";
+
+const AutomationsPanel = dynamic(() => import("@/components/automations-panel").then((mod) => mod.AutomationsPanel));
+const CommandPalette = dynamic(() => import("@/components/command-palette").then((mod) => mod.CommandPalette));
+const NotesVoid = dynamic(() => import("@/components/notes-void").then((mod) => mod.NotesVoid));
+const ProjectHome = dynamic(() => import("@/components/project-home").then((mod) => mod.ProjectHome));
+const ProviderSetupDialog = dynamic(() => import("@/components/provider-setup-dialog").then((mod) => mod.ProviderSetupDialog));
+const RemoteFileEditor = dynamic(
+  () => import("@/components/remote-file-editor").then((mod) => mod.RemoteFileEditor),
+  { ssr: false },
+);
+const RemoteTerminal = dynamic(
+  () => import("@/components/remote-terminal").then((mod) => mod.RemoteTerminal),
+  { ssr: false },
+);
+const SettingsPanel = dynamic(() => import("@/components/settings-panel").then((mod) => mod.SettingsPanel));
+const SetupWizard = dynamic(() => import("@/components/setup-wizard").then((mod) => mod.SetupWizard));
+const SubagentChatView = dynamic(() => import("@/components/subagent-chat-view").then((mod) => mod.SubagentChatView));
 
 type Role = "user" | "assistant" | "system";
 
@@ -1200,6 +1208,8 @@ function BrowserTabIcon({ tab }: { tab: BrowserTab }) {
     <span className="relative size-3.5 shrink-0" aria-hidden="true">
       <Globe2 className="absolute inset-0 size-3.5 text-muted-foreground" />
       {tab.favicon ? (
+        // Remote favicons may be data URLs; Next Image optimization is not applicable.
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={tab.favicon}
           alt=""
@@ -2309,6 +2319,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const chatSyncConnectedRef = useRef(false);
   const chatSyncRefreshTimerRef = useRef<number | null>(null);
   const pendingChatSyncRef = useRef<Map<string, "created" | "updated" | "deleted">>(new Map());
+  const showBrowserStreamFrameRef = useRef<(blob: Blob) => void>(() => {});
+  const openBrowserTabRef = useRef<(url?: string) => void>(() => {});
+  const navigateBrowserRef = useRef<(url: string) => void>(() => {});
+  const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
+  const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
+  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[]) => void>(() => {});
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -3158,6 +3174,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     image.src = nextUrl;
     markBrowserFrameVisible();
   }
+  showBrowserStreamFrameRef.current = showBrowserStreamFrame;
 
   async function performBrowserAction(action: string, extra: Record<string, unknown> = {}) {
     const chatId = activeChatId;
@@ -3219,6 +3236,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       void performBrowserAction("navigate", { url: nextUrl });
     }
   }
+  navigateBrowserRef.current = navigateBrowser;
 
   function resizeBrowser() {
     const width = Math.max(320, Math.min(2560, Number(browserWidthInput) || 1280));
@@ -3236,6 +3254,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       else void performBrowserAction("screenshot", { tabId: result.tabId });
     });
   }
+  openBrowserTabRef.current = openBrowserTab;
 
   function closeBrowserTab(tabId: string) {
     if (browserTabs.length <= 1) return;
@@ -3334,6 +3353,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (workspaceTab !== "browser" || !browserEnabled || !activeChatId || loadingChatId) return;
+    const screenshotNode = browserScreenshotRef.current;
     let reconnectTimer: number | null = null;
     let disposed = false;
     const connect = () => {
@@ -3400,7 +3420,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           return;
         }
         const blob = event.data instanceof Blob ? event.data : new Blob([event.data], { type: "image/jpeg" });
-        showBrowserStreamFrame(blob);
+        showBrowserStreamFrameRef.current(blob);
       };
       socket.onclose = () => {
         if (browserSocketRef.current === socket) browserSocketRef.current = null;
@@ -3415,7 +3435,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       browserSocketRef.current = null;
       if (browserStreamObjectUrlRef.current) URL.revokeObjectURL(browserStreamObjectUrlRef.current);
       browserStreamObjectUrlRef.current = null;
-      const screenshotNode = browserScreenshotRef.current;
       if (screenshotNode) {
         screenshotNode.removeAttribute("src");
         screenshotNode.style.display = "none";
@@ -3622,6 +3641,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     });
     notifyUser("Agent needs your input", body, chatId);
   }
+  notifyAttentionRef.current = notifyAttention;
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -3681,14 +3701,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         const body = question.questions.length === 1
           ? question.questions[0].question
           : `${question.questions.length} questions need your input.`;
-        notifyAttention(chat.id, question.questionId, body);
+        notifyAttentionRef.current(chat.id, question.questionId, body);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load chats");
     } finally {
       setChatsLoaded(true);
     }
-  }, [markUnread, navigateChat]);
+  }, [markUnread]);
 
   const loadMemories = useCallback(async () => {
     const res = await fetch("/api/memories", { cache: "no-store" });
@@ -3736,6 +3756,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
     }
   }
+  selectModeRef.current = selectMode;
 
   async function selectRuntimeMode(nextRuntimeMode: RuntimeMode) {
     if (!RUNTIME_MODES.includes(nextRuntimeMode)) return;
@@ -4221,7 +4242,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setQuestionCustom(snap.pendingQuestion?.questions.map(() => "") ?? []);
     setQuestionCustomActive(snap.pendingQuestion?.questions.map(() => false) ?? []);
     setPaneKey((k) => k + 1);
-  }, [acceptServerSnapshot, clearUnread, modelParamsByModel]);
+  }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, workspaceDefaultCwd]);
 
   const openDraft = useCallback(
     (opts?: { skipNav?: boolean; projectId?: string | null }) => {
@@ -4285,7 +4306,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       const nextNewChatParams =
         stateRef.current.modelId === nextNewChatModelId && stateRef.current.modelParams.length
           ? stateRef.current.modelParams
-          : rememberedParamsForModel(nextNewChatModelId);
+          : Object.prototype.hasOwnProperty.call(modelParamsByModel, nextNewChatModelId)
+            ? modelParamsByModel[nextNewChatModelId] || []
+            : models.find((model) => model.id === nextNewChatModelId)?.defaultParams ?? [];
       if (nextNewChatModelId && nextNewChatParams.length) {
         const nextParamMap = { ...modelParamsByModel, [nextNewChatModelId]: nextNewChatParams };
         persistModelParamsByModel(nextParamMap);
@@ -4322,7 +4345,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setLiveStatus("");
       setPaneKey((k) => k + 1);
     },
-    [activeChatIncognito, navigateChat, persistActiveSnapshot],
+    [activeChatIncognito, modelParamsByModel, models, navigateChat, persistActiveSnapshot, setBusySynced],
   );
 
   const prefetchChat = useCallback(async (id: string) => {
@@ -4544,7 +4567,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             // is still applying deltas. Keep that live state instead of
             // replacing it with the older durable snapshot.
             setMessages(() => messages);
-            applyServerQueuedMessages(next.queuedMessages);
+            applyServerQueuedMessagesRef.current(next.queuedMessages);
             setWorkspaces(next.workspaces);
             setBrowserTabs(next.browserContext.tabs);
             setActiveBrowserTabId(next.browserContext.activeTabId);
@@ -4671,7 +4694,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
       }
     },
-    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot],
+    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, workspaceDefaultCwd],
   );
 
   useEffect(() => {
@@ -4758,7 +4781,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return () => {
       cancelled = true;
     };
-  }, [activeChatId, loadingChatId]);
+  }, [activeChatId, hasEarlierMessages, loadingChatId, messageOffset, messages.length]);
 
   async function openSearchResult(chatId: string, messageId?: string) {
     setHighlightedMessageId(messageId || null);
@@ -4959,7 +4982,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         openDraft({ skipNav: true });
       }
     }
-  }, [activeChatIncognito, authed, automationsOpen, loadChat, notesOpen, openDraft, routeChatId, routeView]);
+  }, [activeChatIncognito, authed, automationsOpen, loadChat, notesOpen, openDraft, persistActiveSnapshot, routeChatId, routeView]);
 
   const refreshActiveChatFromServer = useCallback(async (chatId: string) => {
       // Durable checkpoints are the same path a reload uses. Keep applying them
@@ -4984,7 +5007,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         setChatTitle(data.chat.title);
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessages(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
+        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setModeId(serverModeId);
         if (typeof window !== "undefined") localStorage.setItem(MODE_STORAGE_KEY, serverModeId);
@@ -5026,7 +5049,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             notifiedQuestionRef.current !== data.chat.pendingQuestion.questionId) {
           notifiedQuestionRef.current = data.chat.pendingQuestion.questionId;
           const questions = data.chat.pendingQuestion.questions;
-          notifyAttention(
+          notifyAttentionRef.current(
             chatId,
             data.chat.pendingQuestion.questionId,
             questions.length === 1
@@ -5037,17 +5060,18 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       } catch {
         /* EventSource replay or the disconnected fallback will retry. */
       }
-  }, [acceptServerSnapshot, modelParamsByModel]);
+  }, [acceptServerSnapshot, modelParamsByModel, setBusySynced]);
 
   useEffect(() => {
     if (!authed) return;
+    const pendingChatSync = pendingChatSyncRef.current;
     const source = new EventSource("/api/chats/events");
     const scheduleRefresh = () => {
       if (chatSyncRefreshTimerRef.current !== null) return;
       chatSyncRefreshTimerRef.current = window.setTimeout(() => {
         chatSyncRefreshTimerRef.current = null;
-        const pending = new Map(pendingChatSyncRef.current);
-        pendingChatSyncRef.current.clear();
+        const pending = new Map(pendingChatSync);
+        pendingChatSync.clear();
         void loadChats();
         const current = activeChatIdRef.current;
         if (!current) return;
@@ -5063,7 +5087,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const onReady = () => {
       chatSyncConnectedRef.current = true;
       const current = activeChatIdRef.current;
-      if (current) pendingChatSyncRef.current.set(current, "updated");
+      if (current) pendingChatSync.set(current, "updated");
       scheduleRefresh();
     };
     const onChat = (raw: Event) => {
@@ -5073,7 +5097,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           kind?: "created" | "updated" | "deleted";
         };
         if (!payload.chatId) return;
-        pendingChatSyncRef.current.set(payload.chatId, payload.kind || "updated");
+        pendingChatSync.set(payload.chatId, payload.kind || "updated");
         scheduleRefresh();
       } catch {
         // A malformed event is ignored; its durable cursor will still advance.
@@ -5090,7 +5114,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         window.clearTimeout(chatSyncRefreshTimerRef.current);
         chatSyncRefreshTimerRef.current = null;
       }
-      pendingChatSyncRef.current.clear();
+      pendingChatSync.clear();
     };
   }, [authed, loadChats, openDraft, refreshActiveChatFromServer]);
 
@@ -5145,7 +5169,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (!browserEnabled) return;
       setWorkspaceTab("browser");
       setWorkspaceOpen(true);
-      openBrowserTab(url);
+      openBrowserTabRef.current(url);
     };
     const openLinkedReference = async (event: Event) => {
       const reference = (event as CustomEvent<ReferenceItem>).detail;
@@ -5176,7 +5200,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       if (reference.kind === "browser" && reference.path) {
         if (!browserEnabled) return;
-        navigateBrowser(reference.path);
+        navigateBrowserRef.current(reference.path);
         setWorkspaceTab("browser");
         setWorkspaceOpen(true);
         return;
@@ -5270,7 +5294,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       window.removeEventListener("ai-chat:open-note", openLinkedNote);
       window.removeEventListener("ai-chat:open-automations", openLinkedAutomation);
     };
-  }, [activeChatId, browserEnabled, loadChat, messageOffset, navigateBrowser, navigateChat, openDraft, terminalTabs, workspaces]);
+  }, [activeChatId, browserEnabled, loadChat, messageOffset, navigateChat, openDraft, persistActiveSnapshot, terminalTabs, workspaces]);
 
   useEffect(() => {
     if (!authed) return;
@@ -5290,7 +5314,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  if (modes.length) {
  const index = Math.max(0, modes.findIndex((mode) => mode.id === modeId));
  const nextMode = modes[(index + 1) % modes.length];
- if (nextMode) void selectMode(nextMode.id);
+ if (nextMode) void selectModeRef.current(nextMode.id);
  }
  return;
  }
@@ -6570,6 +6594,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       { consumedIds: consumed, removedIds: removedIdsFor(chatId) },
     ));
   }
+  applyServerQueuedMessagesRef.current = applyServerQueuedMessages;
 
   function persistQueuedFollowUps(items: QueuedMessage[]) {
     const chatId = activeChatIdRef.current;
@@ -11147,6 +11172,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ? { width: `${browserFrameSize.width}px`, height: `${browserFrameSize.height}px` }
                       : { width: "100%", aspectRatio: `${browserViewport.width} / ${browserViewport.height}` }}
                   >
+                    {/* The browser stream mutates src with short-lived blob URLs frame by frame. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       ref={browserScreenshotRef}
                       alt="Server browser page"

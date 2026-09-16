@@ -138,10 +138,11 @@ test("chat list poll is 30s idle and 10s while a run is active", () => {
 });
 
 test("production mutating internal routes require the active run lease", async () => {
-  const previousNodeEnv = process.env.NODE_ENV;
-  const previousToken = process.env.MCP_BEARER_TOKEN;
-  process.env.NODE_ENV = "production";
-  process.env.MCP_BEARER_TOKEN = "production-audit-token";
+  const mutableEnv = process.env as unknown as Record<string, string | undefined>;
+  const previousNodeEnv = mutableEnv.NODE_ENV;
+  const previousToken = mutableEnv.MCP_BEARER_TOKEN;
+  mutableEnv.NODE_ENV = "production";
+  mutableEnv.MCP_BEARER_TOKEN = "production-audit-token";
   try {
     const { POST } = await import("../app/api/internal/mcp-file/route");
     const response = await POST(new Request("http://localhost/api/internal/mcp-file", {
@@ -155,10 +156,10 @@ test("production mutating internal routes require the active run lease", async (
     }));
     assert.equal(response.status, 401);
   } finally {
-    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = previousNodeEnv;
-    if (previousToken === undefined) delete process.env.MCP_BEARER_TOKEN;
-    else process.env.MCP_BEARER_TOKEN = previousToken;
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV;
+    else mutableEnv.NODE_ENV = previousNodeEnv;
+    if (previousToken === undefined) delete mutableEnv.MCP_BEARER_TOKEN;
+    else mutableEnv.MCP_BEARER_TOKEN = previousToken;
   }
 });
 

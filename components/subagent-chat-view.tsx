@@ -30,7 +30,9 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
   const [leaving, setLeaving] = useState(false);
   const [ready, setReady] = useState(!tool.subagent?.chatId);
   const onBackRef = useRef(onBack);
+  const toolRef = useRef(tool);
   onBackRef.current = onBack;
+  toolRef.current = tool;
 
   const requestClose = () => {
     if (leaving) return;
@@ -78,11 +80,12 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
           return [{ role, text, ...(message.createdAt ? { timestamp: message.createdAt } : {}) }];
         });
         const childTools = (chat.messages || []).flatMap((message) => message.tools || []);
+        const currentTool = toolRef.current;
         setLiveTool({
-          ...tool,
-          status: active ? "running" : chat.runStatus || tool.status,
+          ...currentTool,
+          status: active ? "running" : chat.runStatus || currentTool.status,
           subagent: {
-            ...tool.subagent,
+            ...currentTool.subagent,
             ...(childMessages.length ? { messages: childMessages } : {}),
             ...(childTools.length ? { tools: childTools } : {}),
           },
@@ -97,7 +100,7 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [tool.id, tool.status, tool.subagent?.chatId]);
+  }, [tool.subagent?.chatId]);
 
   const displayedTool = liveTool || tool;
   const title = displayedTool.subagent?.title || displayedTool.subagent?.prompt || "Subagent chat";

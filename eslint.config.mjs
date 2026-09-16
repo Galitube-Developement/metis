@@ -7,10 +7,19 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   {
     ignores: [
-      ".next/**",
-      ".next-a/**",
-      ".next-b/**",
-      ".next-staging/**",
+      ".next*/**",
+      ".research/**",
+      ".venv*/**",
+      ".agents/**",
+      ".ai-chat-uploads/**",
+      ".codex-tasks/**",
+      ".runtime/**",
+      ".cache/**",
+      "coverage/**",
+      "dist/**",
+      "out/**",
+      "tmp/**",
+      "workspaces/**",
       "node_modules/**",
       "data/**",
       "public/**",

@@ -46,7 +46,7 @@ export function NotePinDialog({
         setChatIds(isEverywhere ? [] : data?.configuredChatIds || []);
       })
       .catch(() => setChats([]));
-  }, [open]);
+  }, [note, open]);
 
   function toggleChat(id: string) {
     setChatIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);

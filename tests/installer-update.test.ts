@@ -106,7 +106,7 @@ test("macOS and Windows plans use the platform installer files", () => {
 });
 
 test("systemd-run environment always includes HOME", () => {
-  const args = installerSystemdEnvironment({ PATH: "/bin", USER: "root" });
+  const args = installerSystemdEnvironment({ PATH: "/bin", USER: "root", NODE_ENV: "test" });
   assert.equal(args.some((value) => value.startsWith("--setenv=HOME=") && value.length > "--setenv=HOME=".length), true);
   assert.equal(args.includes("--setenv=USER=root"), true);
   assert.equal(args.includes("--setenv=PATH=/bin"), true);
