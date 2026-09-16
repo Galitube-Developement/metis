@@ -608,6 +608,16 @@ export function getDatabase(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS chat_list_owner_sidebar
       ON chat_list(owner_id, incognito, automation_run_id, archived, pinned, last_message_sent);
+    CREATE TABLE IF NOT EXISTS chat_sync_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('created', 'updated', 'deleted')),
+      chat_updated_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS chat_sync_events_owner_id
+      ON chat_sync_events(owner_id, id);
   `);
   database.exec(`
     INSERT OR REPLACE INTO chat_list (

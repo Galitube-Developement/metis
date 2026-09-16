@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { getUserAgentCwd } from "@/lib/mcp";
 import { isInsideWorkspace } from "@/lib/user-isolation";
 import { isHostAdmin, requireUserExecutionIdentity } from "@/lib/user-access";
+import { stripReadFileLinePrefixes } from "@/lib/remote-file-content";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,26 +34,6 @@ function isInside(root: string, candidate: string) {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-function readContent(raw: string) {
-  // The gateway may add source line prefixes such as `     123 content`,
-  // `123|content`, or `L123:content`.
-  // Keep Monaco's own line-number gutter; only strip prefixes from the content.
-  const withoutGatewayPrefixes = raw.replace(/^\s*L?\d+(?:\s+|\s*[|:]\s*)/gm, "");
-  const lines = withoutGatewayPrefixes.split(/\r?\n/);
-  let expected = 1;
-  let foundSequentialPrefixes = false;
-  const isSequentiallyNumbered = lines.every((line) => {
-    if (!line.trim()) return true;
-    const match = line.match(/^\s*(\d+)[\t ]+/);
-    if (!match || Number(match[1]) !== expected) return false;
-    expected += 1;
-    foundSequentialPrefixes = true;
-    return true;
-  });
-  if (!isSequentiallyNumbered || !foundSequentialPrefixes) return withoutGatewayPrefixes;
-  return lines.map((line) => line.replace(/^\s*\d+[\t ]+/, "")).join("\n");
 }
 
 function sessionFor(sessionId: string | null, ownerId?: string) {
@@ -275,7 +256,7 @@ export async function POST(req: Request) {
         offset: 1,
         limit: 5000,
       }, isolation);
-      return Response.json({ path: targetPath, content: readContent(output) });
+      return Response.json({ path: targetPath, content: stripReadFileLinePrefixes(output) });
     }
     if (body.action === "write") {
       if (typeof body.content !== "string") {

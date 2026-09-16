@@ -31,16 +31,33 @@ test("settings subsection links match the heading order in each tab", () => {
     "settings-browser",
     "settings-browser-storage",
     "settings-session",
+    "settings-links",
   ]);
   for (const tab of Object.keys(sections)) {
     assert.deepEqual(headingIdsInTab(settingsSource, tab), sections[tab], tab);
   }
 });
 
+test("General settings end with external Website and GitHub links", () => {
+  const general = settingsSource.slice(
+    settingsSource.indexOf('<TabsContent value="general"'),
+    settingsSource.indexOf("</TabsContent>", settingsSource.indexOf('<TabsContent value="general"')),
+  );
+  assert.ok(general.indexOf('id="settings-links"') > general.indexOf('id="settings-session"'));
+  assert.match(general, /href="https:\/\/metis\.f1shy312\.com" target="_blank" rel="noopener noreferrer"/);
+  assert.match(general, /href="https:\/\/github\.com\/f1shyondrugs\/metis-ai" target="_blank" rel="noopener noreferrer"/);
+});
+
 test("General settings no longer expose a Default model control", () => {
   assert.doesNotMatch(settingsSource, /Default model/);
   assert.doesNotMatch(settingsSource, /settings-default-model/);
   assert.doesNotMatch(settingsSource, /Choose the model used for new chats/);
+});
+
+test("remote client removal uses the shared confirmation dialog", () => {
+  assert.doesNotMatch(settingsSource, /window\.confirm/);
+  assert.match(settingsSource, /remoteClientDeleteTarget/);
+  assert.match(settingsSource, /title="Remove remote client\?"/);
 });
 
 test("browser storage uses a dedicated manager instead of an inline origin list on General", () => {

@@ -34,6 +34,11 @@ import { persistToolsForMessage } from "@/lib/tool-persistence";
 import { recordSignal } from "@/lib/model-telemetry";
 import { providerModelsForConnection } from "@/lib/providers/discovery";
 import { contextWindowForSelection } from "@/lib/context-window";
+import {
+  clearProviderSessionBinding,
+  getProviderSessionBinding,
+  providerSessionNeedsCompaction,
+} from "@/lib/providers/session-bindings";
 
 async function runProvider(context: ProviderContext): Promise<ProviderResult> {
   const providerKey =
@@ -309,6 +314,26 @@ export async function runAlternativeProviderJob(
   );
 
   try {
+    const execution = providerExecution(parsed.providerKey);
+    const adapter = providerAdapterForExecution(execution);
+    if (adapter.capabilities.contextOwner === "native") {
+      const binding = getProviderSessionBinding(chat, execution, credential.id);
+      const selectedModel = providerModelsForConnection(credential)
+        .find((candidate) => candidate.id === parsed.modelId);
+      const contextWindow = contextWindowForSelection(
+        selectedModel || { id: parsed.modelId, providerId: definition.key },
+        job.modelParams?.length ? job.modelParams : chat.modelParams,
+      );
+      if (binding?.lastKnownGoodCursor && providerSessionNeedsCompaction(binding, contextWindow)) {
+        emit("status", {
+          status: "compacting",
+          message: "Native provider context reached the compaction threshold; continuing in a fresh compacted session.",
+        });
+        clearProviderSessionBinding(job.chatId, job.userId, execution, credential.id);
+        updateChat(job.chatId, { agentId: null }, job.userId);
+        chat = getChat(job.chatId, job.userId) || chat;
+      }
+    }
     const result = await runProvider({
       job,
       chat,

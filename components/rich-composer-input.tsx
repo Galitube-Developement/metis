@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -83,26 +84,47 @@ function caretOffset(element: HTMLDivElement) {
   return before.toString().length;
 }
 
-function restoreCaret(element: HTMLDivElement, offset: number) {
+type ComposerSelection = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+function selectionOffsets(element: HTMLDivElement): Omit<ComposerSelection, "text"> | null {
   const selection = window.getSelection();
-  if (!selection) return;
-  const range = document.createRange();
-  let remaining = offset;
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return null;
+
+  const startRange = range.cloneRange();
+  startRange.selectNodeContents(element);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const endRange = range.cloneRange();
+  endRange.selectNodeContents(element);
+  endRange.setEnd(range.endContainer, range.endOffset);
+  return { start: startRange.toString().length, end: endRange.toString().length };
+}
+
+function pointAtOffset(element: HTMLDivElement, offset: number) {
+  let remaining = Math.max(0, offset);
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let node: Node | null;
   while ((node = walker.nextNode())) {
     const length = node.textContent?.length || 0;
-    if (remaining <= length) {
-      range.setStart(node, remaining);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
-    }
+    if (remaining <= length) return { node, offset: remaining };
     remaining -= length;
   }
-  range.selectNodeContents(element);
-  range.collapse(false);
+  return { node: element as Node, offset: element.childNodes.length };
+}
+
+function restoreSelection(element: HTMLDivElement, offsets: Omit<ComposerSelection, "text">) {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  const start = pointAtOffset(element, offsets.start);
+  const end = pointAtOffset(element, Math.max(offsets.start, offsets.end));
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -125,13 +147,31 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
     ref,
   ) {
     const editorRef = useRef<HTMLDivElement>(null);
+    const selectionRef = useRef<ComposerSelection | null>(null);
     useImperativeHandle(ref, () => editorRef.current as HTMLDivElement);
+
+    const captureSelection = () => {
+      const element = editorRef.current;
+      if (!element) return;
+      const offsets = selectionOffsets(element);
+      if (!offsets) return;
+      selectionRef.current = { ...offsets, text: composerPlainText(element) };
+    };
+
+    useEffect(() => {
+      const handleSelectionChange = () => {
+        if (document.activeElement === editorRef.current) captureSelection();
+      };
+      document.addEventListener("selectionchange", handleSelectionChange);
+      return () => document.removeEventListener("selectionchange", handleSelectionChange);
+    }, []);
 
     useLayoutEffect(() => {
       const element = editorRef.current;
       if (!element) return;
       const current = composerPlainText(element);
       if (!shouldSyncComposerDom(current, value, document.activeElement === element)) return;
+      if (selectionRef.current?.text !== value) selectionRef.current = null;
       element.textContent = value;
       if (value) formatText(element, mentionLabels);
     }, [mentionLabels, value]);
@@ -154,13 +194,27 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
         onInput={(event) => {
           const element = event.currentTarget;
           const cursor = caretOffset(element);
-          onChange(composerPlainText(element), cursor);
+          const text = composerPlainText(element);
+          const offsets = selectionOffsets(element) || { start: cursor, end: cursor };
+          selectionRef.current = { ...offsets, text };
+          onChange(text, cursor);
         }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        onFocus={onFocus}
+        onFocus={(event) => {
+          onFocus?.(event);
+          const saved = selectionRef.current;
+          const element = event.currentTarget;
+          if (!saved || saved.text !== composerPlainText(element)) return;
+          window.requestAnimationFrame(() => {
+            if (document.activeElement === element && saved.text === composerPlainText(element)) {
+              restoreSelection(element, saved);
+            }
+          });
+        }}
         onBlur={(event) => {
           const element = event.currentTarget;
+          captureSelection();
           formatText(element, mentionLabels);
           onBlur?.(event);
         }}

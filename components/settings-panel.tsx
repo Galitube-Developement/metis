@@ -10,6 +10,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ExternalLink,
   Globe2,
   KeyRound,
   Link2,
@@ -29,7 +30,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Apple as AppleLogo, Microsoft as MicrosoftLogo } from "@lobehub/icons";
+import { Apple as AppleLogo, Github as GithubLogo, Microsoft as MicrosoftLogo } from "@lobehub/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -359,6 +360,7 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
     { id: "settings-browser", label: "Browser" },
     { id: "settings-browser-storage", label: "Browser storage" },
     { id: "settings-session", label: "Session" },
+    { id: "settings-links", label: "Links" },
   ],
   models: [
     { id: "settings-usage", label: "Usage" },
@@ -499,6 +501,7 @@ export function SettingsPanel({
   const [remotePairStep, setRemotePairStep] = useState<"idle" | "os" | "install" | "finish">("idle");
   const [remotePairExistingIds, setRemotePairExistingIds] = useState<string[]>([]);
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteClientDeleteTarget, setRemoteClientDeleteTarget] = useState<RemoteClient | null>(null);
   const [voiceApiKey, setVoiceApiKey] = useState("");
   const [voiceKeyBusy, setVoiceKeyBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
@@ -684,7 +687,6 @@ export function SettingsPanel({
   }, [loadRemoteClients]);
 
   const revokeRemoteClient = useCallback(async (client: RemoteClient) => {
-    if (!window.confirm(`Remove ${client.name} from this dashboard? The local client must still be uninstalled separately.`)) return;
     const response = await fetch(`/api/remote-clients/${encodeURIComponent(client.id)}`, { method: "DELETE" });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as { error?: string };
@@ -1922,6 +1924,35 @@ export function SettingsPanel({
                 
               </section>
 
+              <section className="flex flex-col gap-3">
+                <div>
+                  <h3 id="settings-links" className="text-sm font-medium">Links</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Visit the Metis website or view the source code on GitHub.
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
+                    <a href="https://metis.f1shy312.com" target="_blank" rel="noopener noreferrer">
+                      <span className="flex items-center gap-2">
+                        <Globe2 className="size-4" aria-hidden="true" />
+                        Website
+                      </span>
+                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    </a>
+                  </Button>
+                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
+                    <a href="https://github.com/f1shyondrugs/metis-ai" target="_blank" rel="noopener noreferrer">
+                      <span className="flex items-center gap-2">
+                        <GithubLogo className="size-4" aria-hidden="true" />
+                        GitHub
+                      </span>
+                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    </a>
+                  </Button>
+                </div>
+              </section>
+
  </TabsContent>
 <TabsContent value="models" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8 min-w-0">
 
@@ -2473,7 +2504,7 @@ export function SettingsPanel({
                               <DropdownMenuItem onClick={() => void updateRemotePolicy(client, client.policy.mode === "full_access" ? "restricted" : "full_access")}>
                                 {client.policy.mode === "full_access" ? "Switch to restricted" : "Enable approval policy"}
                               </DropdownMenuItem>
-                              <DropdownMenuItem className="text-destructive" onClick={() => void revokeRemoteClient(client)}>Remove client</DropdownMenuItem>
+                              <DropdownMenuItem className="text-destructive" onClick={() => setRemoteClientDeleteTarget(client)}>Remove client</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -2698,6 +2729,14 @@ export function SettingsPanel({
           </div>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(remoteClientDeleteTarget)}
+        onOpenChange={(open) => !open && setRemoteClientDeleteTarget(null)}
+        title="Remove remote client?"
+        description={remoteClientDeleteTarget ? `Remove “${remoteClientDeleteTarget.name}” from this dashboard? The local client must still be uninstalled separately.` : ""}
+        confirmLabel="Remove client"
+        onConfirm={() => remoteClientDeleteTarget ? revokeRemoteClient(remoteClientDeleteTarget) : undefined}
+      />
       <ConfirmDialog
       open={Boolean(deleteTarget)}
       onOpenChange={(open) => !open && setDeleteTarget(null)}

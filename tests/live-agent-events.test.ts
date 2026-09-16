@@ -104,8 +104,21 @@ test("completed runs hand the durable queue back to the server scheduler", () =>
 test("live snapshots keep the optimistic model and merge queue tombstones", () => {
   const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
   assert.match(shell, /if \(!runtimeRef\.current\.has\(id\)\) \{[\s\S]*?setModelId\(next\.modelId\)/);
-  assert.match(shell, /const liveRun = runtimeRef\.current\.has\(activeChatId\);\s*if \(data\.chat\.modelId && !liveRun\)/);
+  assert.match(shell, /const liveRun = runtimeRef\.current\.has\(chatId\);\s*if \(data\.chat\.modelId && !liveRun\)/);
   assert.doesNotMatch(shell, /if \(data\.chat\.modelId\) setModelId\(data\.chat\.modelId\)/);
+});
+
+test("chat changes use durable SSE and polling only while disconnected", () => {
+  const shell = readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
+  const route = readFileSync(path.join(root, "app", "api", "chats", "events", "route.ts"), "utf8");
+  const sync = readFileSync(path.join(root, "lib", "chat-sync.ts"), "utf8");
+  assert.match(shell, /new EventSource\("\/api\/chats\/events"\)/);
+  assert.match(shell, /if \(!chatSyncConnectedRef\.current\) void refreshActiveChatFromServer/);
+  assert.match(route, /Last-Event-ID/);
+  assert.match(route, /subscribeToDatabaseChanges/);
+  assert.match(route, /listChatSyncEvents/);
+  assert.match(sync, /watch\(directory/);
+  assert.match(sync, /chat_sync_events/);
 });
 
 test("terminal stream events force a durable chat refresh on the sending device", () => {

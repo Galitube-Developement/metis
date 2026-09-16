@@ -1,6 +1,7 @@
 import { getChat, updateChat } from "@/lib/db-store";
 import type { Chat, ProviderSessionBinding } from "@/lib/store";
 import type { ProviderExecution } from "@/lib/providers/run-kind";
+import { CONTEXT_COMPACT_RATIO } from "@/lib/context-window";
 
 export function providerSessionKey(execution: ProviderExecution, connectionId: string) {
   return `${execution}:${connectionId}`;
@@ -12,6 +13,16 @@ export function getProviderSessionBinding(
   connectionId: string,
 ): ProviderSessionBinding | undefined {
   return chat?.sessionState?.providerSessions?.[providerSessionKey(execution, connectionId)];
+}
+
+export function providerSessionNeedsCompaction(
+  binding: Pick<ProviderSessionBinding, "lastContextTokens"> | null | undefined,
+  contextWindow: number | undefined,
+) {
+  return typeof binding?.lastContextTokens === "number"
+    && typeof contextWindow === "number"
+    && contextWindow > 0
+    && binding.lastContextTokens / contextWindow >= CONTEXT_COMPACT_RATIO;
 }
 
 export function updateProviderSessionBinding(input: {

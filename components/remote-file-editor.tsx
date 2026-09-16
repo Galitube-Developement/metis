@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import Editor from "@monaco-editor/react";
 import { createPortal } from "react-dom";
 import { ChevronRight, File, Folder, Fullscreen, LoaderCircle, Minimize2, Pencil, Plus, Save, Trash2 } from "lucide-react";
@@ -57,6 +57,8 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
   const [dragging, setDragging] = useState(false);
   const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState("");
+  const [entryDialogMode, setEntryDialogMode] = useState<"create-folder" | "rename" | null>(null);
+  const [entryDialogName, setEntryDialogName] = useState("");
   const pendingActionRef = useRef<(() => void) | null>(null);
   const dragStartRef = useRef<{ pointerX: number; width: number } | null>(null);
   const dirty = Boolean(selectedPath) && content !== savedContent;
@@ -179,12 +181,48 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
     runAfterUnsavedCheck(() => void action());
   }
 
-  async function createFolder() {
-    const name = window.prompt("Name des neuen Ordners");
-    if (!name?.trim()) return;
+  function openCreateFolderDialog() {
+    setEntryDialogName("");
+    setEntryDialogMode("create-folder");
+  }
+
+  function openRenameDialog() {
+    if (!selectedEntryPath) return;
+    setEntryDialogName(selectedEntryPath.split("/").pop() || "");
+    setEntryDialogMode("rename");
+  }
+
+  function closeEntryDialog() {
+    setEntryDialogMode(null);
+    setEntryDialogName("");
+  }
+
+  function submitEntryDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const mode = entryDialogMode;
+    const name = entryDialogName.trim();
+    if (!mode || !name) return;
+
+    if (mode === "create-folder") {
+      closeEntryDialog();
+      createFolder(name);
+      return;
+    }
+
+    const path = selectedEntryPath;
+    const currentName = path.split("/").pop() || "";
+    if (!path || name === currentName) {
+      closeEntryDialog();
+      return;
+    }
+    closeEntryDialog();
+    renameSelected(path, currentName, name);
+  }
+
+  function createFolder(name: string) {
     const action = async () => {
       try {
-        await request({ action: "mkdir", path: `${cwd.replace(/\/$/, "")}/${name.trim()}`, cwd });
+        await request({ action: "mkdir", path: `${cwd.replace(/\/$/, "")}/${name}`, cwd });
         await loadDirectory(cwd);
         toast.success("Ordner erstellt");
       } catch (nextError) {
@@ -194,14 +232,10 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
     runAfterUnsavedCheck(() => void action());
   }
 
-  async function renameSelected() {
-    if (!selectedEntryPath) return;
-    const currentName = selectedEntryPath.split("/").pop() || "";
-    const name = window.prompt("Neuer Name", currentName);
-    if (!name?.trim() || name.trim() === currentName) return;
+  function renameSelected(path: string, currentName: string, name: string) {
     const action = async () => {
       try {
-        await request({ action: "rename", path: selectedEntryPath, newPath: `${selectedEntryPath.slice(0, -currentName.length)}${name.trim()}`, cwd });
+        await request({ action: "rename", path, newPath: `${path.slice(0, -currentName.length)}${name}`, cwd });
         setSelectedEntryPath("");
         setSelectedPath("");
         setContent("");
@@ -307,19 +341,44 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
           <div className="flex items-center gap-1">
             <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="New file…" className="h-8 min-w-0 flex-1 text-xs" />
             <Button type="button" size="icon-sm" variant="ghost" disabled={!newName.trim()} onClick={() => void createFile()} aria-label="Create file"><Plus className="size-3.5" /></Button>
-            <Button type="button" size="icon-sm" variant="ghost" onClick={() => void createFolder()} aria-label="Create folder"><Folder className="size-3.5" /></Button>
-            <Button type="button" size="icon-sm" variant="ghost" disabled={!selectedEntryPath} onClick={() => void renameSelected()} aria-label="Rename entry"><Pencil className="size-3.5" /></Button>
+            <Button type="button" size="icon-sm" variant="ghost" onClick={openCreateFolderDialog} aria-label="Create folder"><Folder className="size-3.5" /></Button>
+            <Button type="button" size="icon-sm" variant="ghost" disabled={!selectedEntryPath} onClick={openRenameDialog} aria-label="Rename entry"><Pencil className="size-3.5" /></Button>
             <Button type="button" size="icon-sm" variant="ghost" disabled={!selectedEntryPath} onClick={() => setDeleteTarget(selectedEntryPath)} aria-label="Delete entry"><Trash2 className="size-3.5" /></Button>
             {!fullscreen ? <Button type="button" size="sm" variant="outline" disabled={!selectedPath} onClick={() => setFullscreen(true)} aria-label="Open file fullscreen" title="Open file fullscreen"><Fullscreen className="size-3.5" />Fullscreen</Button> : null}
             {!fullscreen ? <Button type="button" size="icon-sm" disabled={!selectedPath || saving} onClick={() => void save()} aria-label="Save file" title="Save file">{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}</Button> : null}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/40">
-            <Editor height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ automaticLayout: true, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
+            <Editor height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
           </div>
         </div>
       </div>
       {selectedPath ? <p className="truncate text-[11px] text-muted-foreground">{dirty ? "Unsaved changes · " : ""}{selectedPath}</p> : null}
       {error ? <p className="whitespace-pre-wrap text-xs text-destructive">{error}</p> : null}
+      <Dialog open={entryDialogMode !== null} onOpenChange={(open) => { if (!open) closeEntryDialog(); }}>
+        <DialogContent className="sm:max-w-sm">
+          <form onSubmit={submitEntryDialog} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>{entryDialogMode === "rename" ? "Rename entry" : "Create folder"}</DialogTitle>
+              <DialogDescription>
+                {entryDialogMode === "rename" ? "Enter a new name for the selected file or folder." : "Enter a name for the new folder."}
+              </DialogDescription>
+            </DialogHeader>
+            <Input
+              autoFocus
+              value={entryDialogName}
+              onChange={(event) => setEntryDialogName(event.target.value)}
+              aria-label={entryDialogMode === "rename" ? "New entry name" : "Folder name"}
+              placeholder={entryDialogMode === "rename" ? "New name" : "Folder name"}
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={closeEntryDialog}>Cancel</Button>
+              <Button type="submit" disabled={!entryDialogName.trim()}>
+                {entryDialogMode === "rename" ? "Rename" : "Create folder"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={unsavedDialogOpen} onOpenChange={(open) => { if (!open) cancelUnsavedChanges(); }}>
         <DialogContent>
           <DialogHeader>

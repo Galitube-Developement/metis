@@ -2297,6 +2297,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const lastMessageScrollTopRef = useRef(0);
   const enteringChatRef = useRef(false);
   const runtimeRef = useRef<Map<string, ChatRuntime>>(new Map());
+  const chatSyncConnectedRef = useRef(false);
+  const chatSyncRefreshTimerRef = useRef<number | null>(null);
+  const pendingChatSyncRef = useRef<Map<string, "created" | "updated" | "deleted">>(new Map());
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -4905,24 +4908,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }, [activeChatIncognito, authed, automationsOpen, loadChat, notesOpen, openDraft, routeChatId, routeView]);
 
-  useEffect(() => {
-    if (!authed || !activeChatId || loadingChatId) {
-      return;
-    }
-    const refreshBackgroundRun = async () => {
-      // The foreground send stream already carries text/tool/status deltas.
-      // Polling the same chat in parallel used to repeatedly deserialize the
-      // entire latest page and could overwrite fresher optimistic state.
-      if (document.visibilityState === "hidden") return;
+  const refreshActiveChatFromServer = useCallback(async (chatId: string) => {
+      // The sending device owns the foreground stream. Other clients apply
+      // durable snapshots whenever the chat sync channel announces a change.
+      if (document.visibilityState === "hidden" || runtimeRef.current.has(chatId)) return;
       try {
         const res = await fetchReadWithRetry(
-          `/api/chats/${activeChatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=0`,
+          `/api/chats/${chatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=0`,
           { cache: "no-store" },
         );
-        if (!res.ok || activeChatIdRef.current !== activeChatId) return;
+        if (!res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
-        if (!acceptServerSnapshot(activeChatId, data.chat.updatedAt)) return;
-        const liveRun = runtimeRef.current.has(activeChatId);
+        if (!acceptServerSnapshot(chatId, data.chat.updatedAt)) return;
+        const liveRun = runtimeRef.current.has(chatId);
         if (data.chat.modelId && !liveRun) {
           setModelId(data.chat.modelId);
           setModelParams(
@@ -4931,6 +4929,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               : data.chat.modelParams ?? [],
           );
         }
+        setChatTitle(data.chat.title);
         if (!liveRun) {
           setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
         }
@@ -4952,12 +4951,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           data.chat.runStatus === "waiting_input" ||
           data.chat.runStatus === "waiting_for_user" ||
           Boolean(data.chat.pendingQuestion || data.chat.pendingApproval);
+        const previousQuestionId = pendingQuestionIdRef.current;
         pendingQuestionIdRef.current = data.chat.pendingQuestion?.questionId ?? null;
         setPendingQuestion(data.chat.pendingQuestion ?? null);
         setPendingApproval(data.chat.pendingApproval ?? null);
         if (
           data.chat.pendingQuestion &&
-          data.chat.pendingQuestion.questionId !== pendingQuestion?.questionId
+          data.chat.pendingQuestion.questionId !== previousQuestionId
         ) {
           setQuestionAnswers(data.chat.pendingQuestion.questions.map(() => ""));
           setQuestionCustom(data.chat.pendingQuestion.questions.map(() => ""));
@@ -4966,7 +4966,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           );
         }
         setBusySynced(
-          runtimeRef.current.has(activeChatId) ||
+          runtimeRef.current.has(chatId) ||
             data.chat.runStatus === "running" ||
             waitingForInput,
         );
@@ -4976,29 +4976,84 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           notifiedQuestionRef.current = data.chat.pendingQuestion.questionId;
           const questions = data.chat.pendingQuestion.questions;
           notifyAttention(
-            activeChatId,
+            chatId,
             data.chat.pendingQuestion.questionId,
             questions.length === 1
               ? questions[0].question
               : `${questions.length} questions need your input.`,
           );
         }
-        if (!["running", "waiting_input", "waiting_for_user"].includes(data.chat.runStatus || "")) {
-          await loadChats();
-        }
       } catch {
-        /* retry on the next interval */
+        /* EventSource replay or the disconnected fallback will retry. */
+      }
+  }, [acceptServerSnapshot, modelParamsByModel]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const source = new EventSource("/api/chats/events");
+    const scheduleRefresh = () => {
+      if (chatSyncRefreshTimerRef.current !== null) return;
+      chatSyncRefreshTimerRef.current = window.setTimeout(() => {
+        chatSyncRefreshTimerRef.current = null;
+        const pending = new Map(pendingChatSyncRef.current);
+        pendingChatSyncRef.current.clear();
+        void loadChats();
+        const current = activeChatIdRef.current;
+        if (!current) return;
+        const kind = pending.get(current);
+        if (!kind) return;
+        if (kind === "deleted") {
+          void openDraft();
+          return;
+        }
+        void refreshActiveChatFromServer(current);
+      }, 80);
+    };
+    const onReady = () => {
+      chatSyncConnectedRef.current = true;
+      const current = activeChatIdRef.current;
+      if (current) pendingChatSyncRef.current.set(current, "updated");
+      scheduleRefresh();
+    };
+    const onChat = (raw: Event) => {
+      try {
+        const payload = JSON.parse((raw as MessageEvent<string>).data) as {
+          chatId?: string;
+          kind?: "created" | "updated" | "deleted";
+        };
+        if (!payload.chatId) return;
+        pendingChatSyncRef.current.set(payload.chatId, payload.kind || "updated");
+        scheduleRefresh();
+      } catch {
+        // A malformed event is ignored; its durable cursor will still advance.
       }
     };
+    source.onopen = () => { chatSyncConnectedRef.current = true; };
+    source.onerror = () => { chatSyncConnectedRef.current = false; };
+    source.addEventListener("ready", onReady);
+    source.addEventListener("chat", onChat);
+    return () => {
+      chatSyncConnectedRef.current = false;
+      source.close();
+      if (chatSyncRefreshTimerRef.current !== null) {
+        window.clearTimeout(chatSyncRefreshTimerRef.current);
+        chatSyncRefreshTimerRef.current = null;
+      }
+      pendingChatSyncRef.current.clear();
+    };
+  }, [authed, loadChats, openDraft, refreshActiveChatFromServer]);
+
+  useEffect(() => {
+    if (!authed || !activeChatId || loadingChatId) return;
     const currentChatRunsRemotely = chats.some(
       (chat) => chat.id === activeChatId &&
         (chat.runStatus === "running" || chat.runStatus === "waiting_input" || chat.runStatus === "waiting_for_user"),
     );
     const interval = window.setInterval(() => {
-      void refreshBackgroundRun();
+      if (!chatSyncConnectedRef.current) void refreshActiveChatFromServer(activeChatId);
     }, currentChatRunsRemotely || busy ? 2000 : 15000);
     return () => window.clearInterval(interval);
-  }, [acceptServerSnapshot, activeChatId, authed, busy, chats, loadChats, loadingChatId, modelParamsByModel, pendingQuestion]);
+  }, [activeChatId, authed, busy, chats, loadingChatId, refreshActiveChatFromServer]);
 
   useEffect(() => {
     if (!authed) return;
@@ -5020,6 +5075,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     );
     const interval = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
+      if (chatSyncConnectedRef.current) return;
       void loadChats();
     }, hasActiveRun ? CHAT_LIST_POLL_ACTIVE_MS : CHAT_LIST_POLL_IDLE_MS);
     return () => window.clearInterval(interval);
@@ -7801,7 +7857,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         (message.runMetadata &&
           runMatchesModel(message.runMetadata, { ...selectedKey, contextWindow: selectedContextWindow })) ||
         message.parts?.some((part) =>
-          part.type === "compaction" || part.kind === "compaction" || part.name === "context_compaction",
+          part.type === "compaction" ||
+          (part.type === "tool" && (part.kind === "compaction" || part.name === "context_compaction")),
         ),
       )
       .map((message) => ({
@@ -9086,7 +9143,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           aria-hidden="true"
           className="absolute left-0 z-10 h-9 w-auto max-w-[5rem] object-contain"
         />
-        <span className="relative z-20 text-[13px] font-semibold tracking-[-0.01em] text-foreground/90">Metis</span>
+        <span lang="grc" className="metis-wordmark relative z-20 text-foreground/90">Μῆτις</span>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/hand-right.png"

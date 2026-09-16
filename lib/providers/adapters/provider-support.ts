@@ -540,6 +540,7 @@ export function nativeRecoveryPrompt(context: ProviderContext, maxChars = 120_00
     excludeMessageId: context.job.messageId,
     contextWindow: resolvedContextWindow(context),
     contextMode: contextModeOf(effectiveModelParams(context.chat, context.job)),
+    onCompaction: context.onCompaction,
     maxChars,
   });
   if (!compacted.text.trim()) return providerCurrentTurnPrompt(context);
@@ -558,6 +559,7 @@ export function providerConversationPrompt(context: ProviderContext): string {
     context.job,
     contextWindow,
     contextModeOf(effectiveModelParams(context.chat, context.job)),
+    context.onCompaction,
   );
   const history = messages
     .map((message) => `${message.role}: ${modelMessageText(message)}`)

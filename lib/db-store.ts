@@ -21,6 +21,7 @@ import type {
 } from "@/lib/store";
 import { chatUploadDir, resolveUploadPath } from "@/lib/uploads";
 import { RUNTIME_MODES } from "@/lib/runtime-mode";
+import { recordChatSyncEvent, type ChatSyncEventKind } from "@/lib/chat-sync";
 
 const now = () => new Date().toISOString();
 
@@ -506,7 +507,7 @@ export function getChatPage(
   }
 }
 
-function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean }) {
+function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; syncKind?: ChatSyncEventKind }) {
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
@@ -526,6 +527,12 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean }) {
       updated.updatedAt,
     );
   syncChatList(updated);
+  recordChatSyncEvent({
+    ownerId: updated.ownerId,
+    chatId: updated.id,
+    kind: options?.syncKind || "updated",
+    chatUpdatedAt: updated.updatedAt,
+  });
   chatCache.set(updated.id, { updatedAt: updated.updatedAt, chat: updated });
   for (const key of chatPageCache.keys()) {
     if (key.includes(`:${updated.id}:`)) chatPageCache.delete(key);
@@ -562,7 +569,7 @@ export function createChat(
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    saveChatInternal(chat);
+    saveChatInternal(chat, { syncKind: "created" });
     return chat;
   });
 }
@@ -835,7 +842,14 @@ export function canTransitionRunStatus(from: ChatRunStatus, to: ChatRunStatus) {
 
 export function deleteChat(id: string, ownerId?: string) {
   return transaction(() => {
-    if (!getChat(id, ownerId)) return false;
+    const chat = getChat(id, ownerId);
+    if (!chat) return false;
+    recordChatSyncEvent({
+      ownerId: chat.ownerId,
+      chatId: id,
+      kind: "deleted",
+      chatUpdatedAt: now(),
+    });
     const deleted = getDatabase().prepare("DELETE FROM chats WHERE id = ?").run(id).changes > 0;
     if (deleted) {
       chatCache.delete(id);

@@ -9,6 +9,8 @@ import {
   contextWindowForSelection,
 } from "../lib/context-window";
 import { compactChatHistoryForPrompt, compactProviderMessages, codexReasoningEffortForSelection } from "../lib/providers/runner";
+import { nativeRecoveryPrompt, providerConversationPrompt, type ProviderContext } from "../lib/providers/adapters/provider-support";
+import { providerSessionNeedsCompaction } from "../lib/providers/session-bindings";
 import { readFileSync } from "node:fs";
 import type { Chat } from "../lib/store";
 
@@ -59,6 +61,12 @@ test("compaction is deterministic and idempotent", () => {
 test("limited mode reduces the effective budget explicitly", () => {
   assert.equal(contextModeOf([{ id: "contextMode", value: "limited" }]), "limited");
   assert.ok(effectiveContextBudget(200_000, "limited") < effectiveContextBudget(200_000, "normal"));
+});
+
+test("native provider sessions rotate into managed compaction at the shared threshold", () => {
+  assert.equal(providerSessionNeedsCompaction({ lastContextTokens: 7_999 }, 10_000), false);
+  assert.equal(providerSessionNeedsCompaction({ lastContextTokens: 8_000 }, 10_000), true);
+  assert.equal(providerSessionNeedsCompaction({ lastContextTokens: 80_000 }, undefined), false);
 });
 
 test("compaction triggers at exactly 80% of the actual context window", () => {
@@ -113,6 +121,60 @@ test("compaction emits a structured start and completion event", () => {
   assert.equal(events[0]?.status, "started");
   assert.equal(events.at(-1)?.status, "completed");
   assert.equal(typeof events.at(-1)?.afterTokens, "number");
+});
+
+function managedProviderContext(events: Array<Record<string, unknown>>): ProviderContext {
+  return {
+    chat: {
+      id: "provider-compaction-chat",
+      modelParams: [{ id: "context", value: "4k" }],
+      messages: [
+        { id: "u1", role: "user", content: "x".repeat(20_000), createdAt: "t" },
+        { id: "a1", role: "assistant", content: "Keep the latest state.", createdAt: "t" },
+        { id: "live", role: "user", content: "Continue.", createdAt: "t" },
+      ],
+    },
+    job: {
+      id: "provider-compaction-job",
+      chatId: "provider-compaction-chat",
+      messageId: "live",
+      message: "Continue.",
+      modelId: "openai:test:gpt-5",
+      modelParams: [{ id: "context", value: "4k" }],
+    },
+    connection: {
+      id: "test",
+      providerKey: "openai",
+      label: "Test",
+      enabled: true,
+      authType: "api_key",
+      secret: "test",
+      config: {},
+    },
+    modelId: "gpt-5",
+    signal: new AbortController().signal,
+    onText: () => undefined,
+    onTool: () => undefined,
+    onThinking: () => undefined,
+    onStream: () => undefined,
+    onCompaction: (event: Parameters<ProviderContext["onCompaction"]>[0]) => {
+      events.push(event);
+    },
+  } as unknown as ProviderContext;
+}
+
+test("native provider recovery surfaces managed compaction events", () => {
+  const events: Array<Record<string, unknown>> = [];
+  nativeRecoveryPrompt(managedProviderContext(events));
+  assert.equal(events[0]?.status, "started");
+  assert.equal(events.at(-1)?.status, "completed");
+});
+
+test("stateless provider prompts surface managed compaction events", () => {
+  const events: Array<Record<string, unknown>> = [];
+  providerConversationPrompt(managedProviderContext(events));
+  assert.equal(events[0]?.status, "started");
+  assert.equal(events.at(-1)?.status, "completed");
 });
 
 test("Codex reasoning effort accepts only supported values", () => {
@@ -211,4 +273,3 @@ test("Cursor send includes native vision images and persists queued follow-ups s
   assert.match(shell, /pagehide/);
   assert.doesNotMatch(shell, /shouldAutoDrainQueue\(\{/);
 });
-
