@@ -27,6 +27,24 @@ export function shouldAcceptRemoteComposerInput(options: {
   return true;
 }
 
+export const COMPOSER_DIRTY_MS = 1500;
+
+export function shouldPersistComposerSession(options: {
+  chatId: string | null | undefined;
+  persistChatId: string | null | undefined;
+  incognito?: boolean;
+}) {
+  if (!options.chatId || options.incognito) return false;
+  return options.persistChatId === options.chatId;
+}
+
+export function composerUserEditMeta(now = Date.now()) {
+  return {
+    updatedAt: new Date(now).toISOString(),
+    dirtyUntil: now + COMPOSER_DIRTY_MS,
+  };
+}
+
 export function shouldIgnoreComposerEnter(event: {
   key: string;
   shiftKey: boolean;

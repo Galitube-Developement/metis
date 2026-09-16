@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const apiKey = process.env.OPENAI_API_KEY || process.env.AI_GATEWAY_API_KEY;
     const modelId = process.env.OPENAI_MODEL || process.env.AI_MODEL;
     if (!apiKey || !modelId) {
-      return Response.json({ error: "Für Prozess A fehlt noch OPENAI_API_KEY und OPENAI_MODEL in der Umgebung." }, { status: 503 });
+      return Response.json({ error: "Process A is missing OPENAI_API_KEY and OPENAI_MODEL in the environment." }, { status: 503 });
     }
 
     const provider = createOpenAI({ apiKey, baseURL: process.env.OPENAI_BASE_URL });
@@ -27,12 +27,12 @@ export async function POST(request: Request) {
       model: provider(modelId),
       schema: resultSchema,
       temperature: 0.8,
-      prompt: `Du bist ein Spezialist für YouTube-Suchintentionen. Erstelle exakt 200 unterschiedliche, natürliche Suchanfragen zum Thema "${input.topic}". Schreibe jede Original-Suchanfrage auf Deutsch. Sie muss so klingen, wie ein echter Nutzer sie in die YouTube-Suche eingeben würde: konkrete Fragen, Vergleiche, Anleitungen, Erfahrungen, Fehler, Empfehlungen und aktuelle Aspekte. Keine Nummerierung, keine Duplikate, keine Hashtags und keine erfundenen Fakten. Übersetze danach jede Suchanfrage sinngemäß in diese Zielsprachen: ${input.languages.join(", ")}. Verwende in translations für jede Sprache exakt ihren Sprachcode als Schlüssel. Wenn Deutsch gewählt ist, ist die deutsche Fassung die Übersetzung unter "de".`,
+      prompt: `You are a specialist for YouTube search intent. Create exactly 200 distinct, natural search queries about "${input.topic}". Write each original search query in German. It must sound like a real person typing into YouTube search: concrete questions, comparisons, how-tos, experiences, mistakes, recommendations, and current angles. No numbering, no duplicates, no hashtags, and no invented facts. Then translate each query into these target languages: ${input.languages.join(", ")}. In translations, use each language's exact language code as the key. If German is selected, the German version is the translation under "de".`,
     });
     return Response.json(object);
   } catch (error) {
-    if (error instanceof z.ZodError) return Response.json({ error: "Bitte gib ein Thema und mindestens eine Zielsprache an." }, { status: 400 });
+    if (error instanceof z.ZodError) return Response.json({ error: "Provide a topic and at least one target language." }, { status: 400 });
     console.error("Process A failed", error);
-    return Response.json({ error: "Die Generierung ist fehlgeschlagen. Prüfe Modell und API-Zugang." }, { status: 500 });
+    return Response.json({ error: "Generation failed. Check the model and API access." }, { status: 500 });
   }
 }

@@ -318,9 +318,9 @@ export function authorizeRemoteAction(client: RemoteClient, action: RemoteAction
   if (client.permissionMode === "user" && !safety.allowed) return { allowed: false, requiresApproval: false, reason: safety.reason };
   const mutatesFiles = action === "write_file" || action === "edit_file" || action === "delete_file";
   if (client.permissionMode === "user" && action === "execute_command" && !client.policy.allowlist.some((entry) => (command || "").trim() === entry || (command || "").trim().startsWith(`${entry} `))) {
-    return { allowed: false, requiresApproval: false, reason: "Befehl steht nicht auf der Benutzer-Allowlist" };
+    return { allowed: false, requiresApproval: false, reason: "Command is not on the user allowlist" };
   }
-  if (mode === "full_access" && client.permissionMode === "admin") return { allowed: true, requiresApproval: true, reason: "Administratoraktion benötigt Bestätigung" };
+  if (mode === "full_access" && client.permissionMode === "admin") return { allowed: true, requiresApproval: true, reason: "Admin action requires confirmation" };
   if (mutatesFiles) {
     return { allowed: false, requiresApproval: false, reason: "File changes are disabled by the client restricted policy" };
   }

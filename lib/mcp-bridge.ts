@@ -247,6 +247,8 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "ledger_review",
   "audio_fingerprint",
   "write_todos",
+  "update_chat_title",
+  "update_chat_keywords",
   "create_plan",
   "edit_plan",
   "list_workspaces",

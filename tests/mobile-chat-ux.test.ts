@@ -13,6 +13,7 @@ const layout = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8
 test("agent and runtime mode controls are not rendered in the normal mobile composer row", () => {
   assert.match(shell, /aria-label=\{`Agent mode:.*className="hidden[^\"]*md:flex"/s);
   assert.match(shell, /aria-label=\{`Runtime permissions:.*className="hidden[^\"]*md:flex/s);
+  assert.match(shell, /mobileComposerControls=\{\{\s*modes,/);
 });
 
 test("opening a chat on mobile dismisses composer focus instead of opening the keyboard", () => {

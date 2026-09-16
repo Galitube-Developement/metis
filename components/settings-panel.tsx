@@ -2456,7 +2456,7 @@ export function SettingsPanel({
                   <div>
                     <h3 id="settings-remote-clients" className="text-sm font-medium">Remote Clients</h3>
                     <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-                      Clients use an outbound encrypted connection. New clients start in Benutzerzugriff; administrative capabilities are never implicit.
+                      Clients use an outbound encrypted connection. New clients start in user access; administrative capabilities are never implicit.
                     </p>
                   </div>
                   <Button type="button" size="sm" onClick={() => setRemotePairStep("os")} disabled={remoteBusy}>
@@ -2489,8 +2489,8 @@ export function SettingsPanel({
                                 : ""}
                             >
                               {client.permissionMode === "admin"
-                                ? "Systemzugriff / Administrator · Bestätigung erforderlich"
-                                : "Benutzerzugriff · keine Administratorrechte"}
+                                ? "Admin / system access · confirmation required"
+                                : "User access · no administrator rights"}
                             </Badge>
                           </div>
                           </div>
@@ -2675,9 +2675,9 @@ export function SettingsPanel({
           {remotePairStep === "os" ? (
             <div className="space-y-4 pt-1">
               <div className="space-y-2" role="radiogroup" aria-label="Permission mode">
-                <p className="text-sm font-medium">Berechtigungsmodus</p>
+                <p className="text-sm font-medium">Permission mode</p>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {([["user", "Benutzerzugriff", "Nur Benutzerdateien, -prozesse und erlaubte Verzeichnisse. Keine UAC-Abfrage."], ["admin", "Systemzugriff / Administrator", "Für alle Benutzer. UAC erforderlich; Systemfunktionen bleiben capability- und bestätigungspflichtig."]] as const).map(([value, label, description]) => (
+                  {([["user", "User access", "User files, processes, and allowed directories only. No UAC prompt."], ["admin", "Admin / system access", "For all users. UAC required; system actions stay capability-gated and confirmation-gated."]] as const).map(([value, label, description]) => (
                     <button key={value} type="button" role="radio" aria-checked={remotePermissionMode === value} onClick={() => setRemotePermissionMode(value)} className={cn("rounded-xl border p-3 text-left transition-colors", remotePermissionMode === value ? "border-primary bg-primary/5" : "border-border/60 hover:bg-muted/50")}>
                       <span className="block text-sm font-medium">{label}</span><span className="mt-1 block text-xs text-muted-foreground">{description}</span>
                     </button>

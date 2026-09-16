@@ -137,11 +137,13 @@ import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
 import {
   composerLiveText,
+  composerUserEditMeta,
   decideComposerSend,
   isDuplicateComposerSend,
   mergeQueuedFollowUps,
   shouldAcceptRemoteComposerInput,
   shouldIgnoreComposerEnter,
+  shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
@@ -1999,6 +2001,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [agentPointer, setAgentPointer] = useState<{ x: number; y: number; kind: string; ts: number } | null>(null);
   const agentPointerHideTimerRef = useRef<number | null>(null);
   const composerDirtyUntilRef = useRef(0);
+  const composerPersistChatRef = useRef<string | null>(null);
   const inputUpdatedAtRef = useRef("");
   const browserUrlUpdatedAtRef = useRef("");
   const [browserHistoryOpen, setBrowserHistoryOpen] = useState(false);
@@ -2087,7 +2090,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         return value;
       });
     };
-    if (reason) apply();
+    if (reason) {
+      const edit = composerUserEditMeta();
+      inputUpdatedAtRef.current = edit.updatedAt;
+      composerDirtyUntilRef.current = edit.dirtyUntil;
+      if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
+      apply();
+    }
     else startTransition(apply);
   }, []);
   const busyRef = useRef(false);
@@ -2621,18 +2630,25 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!activeChatId || activeChatIncognito) return;
+    const persistComposer = shouldPersistComposerSession({
+      chatId: activeChatId,
+      persistChatId: composerPersistChatRef.current,
+      incognito: activeChatIncognito,
+    });
     const nowIso = new Date().toISOString();
-    inputUpdatedAtRef.current = nowIso;
     browserUrlUpdatedAtRef.current = nowIso;
-    composerDirtyUntilRef.current = Date.now() + 1500;
     const timer = window.setTimeout(() => {
       void fetch(`/api/chats/${activeChatId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionState: {
-            input,
-            inputUpdatedAt: inputUpdatedAtRef.current || new Date().toISOString(),
+            ...(persistComposer
+              ? {
+                  input,
+                  inputUpdatedAt: inputUpdatedAtRef.current || undefined,
+                }
+              : {}),
             browserUrl,
             browserUrlUpdatedAt: browserUrlUpdatedAtRef.current || undefined,
             extraFields: {
@@ -2832,6 +2848,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ),
       sessionState: {
         input: s.input,
+        inputUpdatedAt: inputUpdatedAtRef.current || undefined,
         terminalCwd: s.remoteTerminalCwd,
         fileCwd: s.remoteFileCwd,
         terminalTabs: s.terminalTabs,
@@ -2863,7 +2880,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           updatedAt: new Date().toISOString(),
         },
         sessionState: {
-          input: s.input,
+          ...(composerPersistChatRef.current === id
+            ? {
+                input: s.input,
+                inputUpdatedAt: inputUpdatedAtRef.current || undefined,
+              }
+            : {}),
           terminalCwd: s.remoteTerminalCwd,
           fileCwd: s.remoteFileCwd,
           terminalTabs: s.terminalTabs,
@@ -4089,7 +4111,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     updateVoiceInputSettings({ connectionId: body.connectionId });
   }
 
-  const applySnapshot = useCallback((id: string, snap: ChatSnapshot) => {
+  const applySnapshot = useCallback((id: string, snap: ChatSnapshot, source: "cache" | "server" = "server") => {
     if (!acceptServerSnapshot(id, snap.updatedAt)) return;
     loadedChatIdsRef.current.add(id);
     const browser = normalizeBrowserContext(snap.browserContext, id);
@@ -4140,7 +4162,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setActiveTerminalTabId(loadedActiveTerminalTabId);
     setRemoteTerminalCwd(loadedTerminalTabs.find((tab) => tab.id === loadedActiveTerminalTabId)?.cwd || workspaceDefaultCwd);
     setRemoteFileCwd(normalizeWorkDirectory(session.fileCwd || session.remoteCwd, workspaceDefaultCwd));
-    setInput(session.input || "");
+    const remoteInput = typeof session.input === "string" ? session.input : "";
+    const allowRemoteComposer =
+      source === "cache" ||
+      composerPersistChatRef.current !== id ||
+      shouldAcceptRemoteComposerInput({
+        dirtyUntil: composerDirtyUntilRef.current,
+        localUpdatedAt: inputUpdatedAtRef.current,
+        remoteUpdatedAt: session.inputUpdatedAt,
+        remoteInput,
+      });
+    if (allowRemoteComposer) {
+      setInput(remoteInput);
+      inputUpdatedAtRef.current = session.inputUpdatedAt || "";
+      if (source === "server" && composerPersistChatRef.current !== id) {
+        composerDirtyUntilRef.current = 0;
+      }
+    }
+    if (source === "server") composerPersistChatRef.current = id;
     const extra = session.extraFields || {};
     if (Array.isArray(extra.questionCustom)) setQuestionCustom(extra.questionCustom as string[]);
     if (Array.isArray(extra.questionAnswers)) setQuestionAnswers(extra.questionAnswers as string[]);
@@ -4201,6 +4240,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       const previousChatId = activeChatIdRef.current;
       persistActiveSnapshot();
+      composerPersistChatRef.current = null;
+      composerDirtyUntilRef.current = 0;
+      inputUpdatedAtRef.current = "";
       setBusySynced(Boolean(previousChatId && runtimeRef.current.has(previousChatId)));
       setAttentionChatIds((current) => current.filter((id) => id !== previousChatId));
       activeChatIdRef.current = null;
@@ -4353,7 +4395,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setActiveChatIncognito(false);
         setIncognito(false);
       }
-      if (!alreadyActive) persistActiveSnapshot();
+      if (!alreadyActive) {
+        persistActiveSnapshot();
+        composerPersistChatRef.current = null;
+        composerDirtyUntilRef.current = 0;
+        inputUpdatedAtRef.current = "";
+      }
       activeChatIdRef.current = id;
       stickToBottomRef.current = true;
       userDetachedFromBottomRef.current = false;
@@ -4425,7 +4472,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         !opts?.forceReload
       ) {
         if (chatLoadRequestRef.current !== requestId) return false;
-        applySnapshot(id, cached);
+        applySnapshot(id, cached, "cache");
         setLoadingChatId(null);
         // Soft revalidate in background without clearing UI
         void (async () => {
@@ -4534,18 +4581,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setRemoteTerminalCwd(loadedTerminalTabs.find((tab) => tab.id === loadedActiveTerminalTabId)?.cwd || workspaceDefaultCwd);
             setRemoteFileCwd(normalizeWorkDirectory(session.fileCwd || session.remoteCwd, workspaceDefaultCwd));
             const remoteInput = session.input;
-            if (shouldAcceptRemoteComposerInput({
-              dirtyUntil: composerDirtyUntilRef.current,
-              localUpdatedAt: inputUpdatedAtRef.current,
-              remoteUpdatedAt: session.inputUpdatedAt,
-              remoteInput,
-            })) {
-              setInput(remoteInput ?? "");
+            if (
+              composerPersistChatRef.current !== id ||
+              shouldAcceptRemoteComposerInput({
+                dirtyUntil: composerDirtyUntilRef.current,
+                localUpdatedAt: inputUpdatedAtRef.current,
+                remoteUpdatedAt: session.inputUpdatedAt,
+                remoteInput,
+              })
+            ) {
+              setInput(typeof remoteInput === "string" ? remoteInput : "");
+              inputUpdatedAtRef.current = session.inputUpdatedAt || "";
+              if (composerPersistChatRef.current !== id) composerDirtyUntilRef.current = 0;
               const extra = session.extraFields || {};
               if (Array.isArray(extra.questionCustom)) setQuestionCustom(extra.questionCustom as string[]);
               if (Array.isArray(extra.questionAnswers)) setQuestionAnswers(extra.questionAnswers as string[]);
               if (Array.isArray(extra.questionCustomActive)) setQuestionCustomActive(extra.questionCustomActive as boolean[]);
             }
+            composerPersistChatRef.current = id;
             pendingQuestionIdRef.current = next.pendingQuestion?.questionId ?? null;
             setPendingQuestion(next.pendingQuestion ?? null);
             setBusySynced(
@@ -7785,7 +7838,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [queuedMessages, busy, pendingQuestion]);
 
   useEffect(() => {
-    const flush = () => persistQueuedFollowUps(queuedMessages);
+    const flush = () => {
+      persistActiveSnapshot();
+      if (!activeChatIdRef.current && draftInputLoadedRef.current) {
+        void fetch("/api/preferences", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draftInput: stateRef.current.input }),
+        });
+      }
+      persistQueuedFollowUps(queuedMessages);
+    };
     const onHide = () => {
       if (document.visibilityState === "hidden") flush();
     };
@@ -7795,7 +7858,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHide);
     };
-  }, [queuedMessages]);
+  }, [queuedMessages, persistActiveSnapshot]);
 
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const availableProviderIds = new Set([
@@ -8042,6 +8105,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   function handleComposerInputChange(value: string, cursorPosition: number) {
     const previousValue = previousComposerInputRef.current;
     previousComposerInputRef.current = value;
+    const edit = composerUserEditMeta();
+    inputUpdatedAtRef.current = edit.updatedAt;
+    composerDirtyUntilRef.current = edit.dirtyUntil;
+    if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
     setInput(value);
     if (referenceAutocompleteDismissedRef.current) {
       const addedAtMention =
@@ -9031,7 +9098,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 modelParams={modelParams}
                 onModelParamsChange={applyModelParams}
                 mobileComposerControls={{
-                  modes: [],
+                  modes,
                   selectedModeId: selectedMode?.id,
                   onModeChange: (nextModeId) => void selectMode(nextModeId),
                   runtimeMode,

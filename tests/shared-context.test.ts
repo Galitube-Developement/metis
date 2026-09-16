@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,7 +24,7 @@ let modules!: Awaited<typeof modulesPromise>;
 
 let chatId = "";
 
-function leaseHeaders(jobId: string) {
+function leaseHeaders(jobId: string, targetChatId = chatId) {
   const workerId = `test-worker-${jobId}`;
   const leaseToken = randomUUID();
   const now = new Date();
@@ -33,8 +34,8 @@ function leaseHeaders(jobId: string) {
     `INSERT OR IGNORE INTO jobs (id, chat_id, user_id, data, status, updated_at) VALUES (?, ?, NULL, ?, 'running', ?)`,
   ).run(
     jobId,
-    chatId,
-    JSON.stringify({ id: jobId, chatId, message: "test lease", status: "running", attempts: 1, revision: 1, createdAt: now.toISOString(), updatedAt: now.toISOString() }),
+    targetChatId,
+    JSON.stringify({ id: jobId, chatId: targetChatId, message: "test lease", status: "running", attempts: 1, revision: 1, createdAt: now.toISOString(), updatedAt: now.toISOString() }),
     now.toISOString(),
   );
   db.prepare(
@@ -278,4 +279,74 @@ test("chat keywords are normalized, persisted, and searchable through MCP", asyn
   assert.equal(searchBody.results?.some((result) =>
     result.chatId === chatId && result.matchedKeywords?.includes("Canvas"),
   ), true);
+});
+
+test("agent chat titles are shortened, persist as agent-sourced, and skip user titles", async () => {
+  const { POST } = modules[5];
+  const { createChat, getChat, updateChat, normalizeChatTitle } = modules[0];
+  const titled = createChat("New chat");
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: "Bearer shared-context-test-token",
+    "X-AI-Chat-Id": titled.id,
+    "X-AI-Chat-User-Id": "",
+    "X-AI-Chat-Job-Id": "title-job",
+    ...leaseHeaders("title-job", titled.id),
+  };
+
+  const normalized = normalizeChatTitle("  Memory only on explicit remember please keep this very long fallback prompt  ");
+  assert.ok(normalized.length <= 49);
+  assert.match(normalized, /^Memory only on explicit/);
+  assert.match(normalized, /…$/);
+
+  const update = await POST(new Request("http://localhost/api/internal/mcp-chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action: "title",
+      title: "  Agent chat titles  ",
+    }),
+  }));
+  assert.equal(update.status, 200);
+  const updateBody = await update.json() as { title?: string; titleSource?: string; updated?: boolean };
+  assert.equal(updateBody.title, "Agent chat titles");
+  assert.equal(updateBody.titleSource, "agent");
+  assert.equal(updateBody.updated, true);
+  assert.equal(getChat(titled.id)?.title, "Agent chat titles");
+  assert.equal(getChat(titled.id)?.titleSource, "agent");
+
+  const longTitle = await POST(new Request("http://localhost/api/internal/mcp-chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action: "title",
+      title: "This is an extremely long chat title that must be shortened for the sidebar",
+    }),
+  }));
+  const longBody = await longTitle.json() as { title?: string };
+  assert.ok((longBody.title || "").length <= 49);
+  assert.match(longBody.title || "", /…$/);
+
+  updateChat(titled.id, { title: "Pinned by user", titleSource: "user" });
+  const skipped = await POST(new Request("http://localhost/api/internal/mcp-chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action: "title",
+      title: "Agent should not overwrite this",
+    }),
+  }));
+  const skippedBody = await skipped.json() as { title?: string; titleSource?: string; updated?: boolean; skipped?: string };
+  assert.equal(skipped.status, 200);
+  assert.equal(skippedBody.updated, false);
+  assert.equal(skippedBody.skipped, "user-title");
+  assert.equal(skippedBody.title, "Pinned by user");
+  assert.equal(getChat(titled.id)?.title, "Pinned by user");
+  assert.equal(getChat(titled.id)?.titleSource, "user");
+});
+
+test("agent prompt tells the model to set a short chat title", () => {
+  const source = readFileSync(new URL("../lib/worker-runner.ts", import.meta.url), "utf8");
+  assert.match(source, /update_chat_title with a 2-6 word label/);
+  assert.match(source, /not the first prompt/);
 });

@@ -54,7 +54,11 @@ export function ModelOptionsMenu({
 }: Props) {
   const parameters = modelParametersForModel(model);
   const defaults = defaultParamsForModel({ ...model, parameters });
+  const [mobileModeOpen, setMobileModeOpen] = useState(false);
   const [mobilePermissionsOpen, setMobilePermissionsOpen] = useState(false);
+  const selectedMobileMode = mobileComposerControls?.modes.find(
+    (mode) => mode.id === mobileComposerControls.selectedModeId,
+  ) ?? mobileComposerControls?.modes[0];
 
   function paramValue(id: string): string {
     return modelParams.find((p) => p.id === id)?.value
@@ -95,32 +99,68 @@ export function ModelOptionsMenu({
         className="max-h-[min(54dvh,24rem)] w-[min(18.5rem,calc(100vw-1.5rem))] max-w-none space-y-2 overflow-y-auto overscroll-contain rounded-2xl border-border/45 p-2 shadow-xl md:max-h-[min(70dvh,32rem)] md:w-72 md:max-w-[calc(100vw-1rem)] md:space-y-4 md:rounded-lg md:p-4 md:shadow-md"
       >
         {mobileComposerControls ? (
-          <div className="md:hidden">
+          <div className="space-y-1 md:hidden">
             {mobileComposerControls.modes.length ? (
-              <div className="mb-2.5 space-y-1.5">
-                <p className="px-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">Mode</p>
-                <div className="flex gap-1 overflow-x-auto pb-0.5">
-                  {mobileComposerControls.modes.map((mode) => {
-                    const active = mode.id === mobileComposerControls.selectedModeId;
-                    return (
-                      <button
-                        key={mode.id}
-                        type="button"
-                        aria-pressed={active}
-                        className={cn(
-                          "h-8 shrink-0 rounded-lg px-2.5 text-xs font-medium transition-colors",
-                          active
-                            ? "bg-muted text-foreground"
-                            : "text-muted-foreground hover:bg-muted/45 hover:text-foreground",
-                        )}
-                        onClick={() => mobileComposerControls.onModeChange(mode.id)}
-                        title={mode.description}
-                      >
-                        {mode.name}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="rounded-xl bg-muted/15 p-1">
+                <button
+                  type="button"
+                  aria-expanded={mobileModeOpen}
+                  aria-label={`Agent mode: ${selectedMobileMode?.name || "Agent"}`}
+                  className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-left transition-colors hover:bg-muted/45"
+                  onClick={() => {
+                    setMobileModeOpen((open) => {
+                      const next = !open;
+                      if (next) setMobilePermissionsOpen(false);
+                      return next;
+                    });
+                  }}
+                >
+                  <span className="text-xs text-muted-foreground">Mode</span>
+                  <span className="ml-auto min-w-0 truncate text-xs font-medium text-foreground/90">
+                    {selectedMobileMode?.name}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                      mobileModeOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+
+                {mobileModeOpen ? (
+                  <div className="mt-1 overflow-hidden rounded-lg border border-border/50 bg-background/45 p-1">
+                    {mobileComposerControls.modes.map((mode) => {
+                      const active = mode.id === (selectedMobileMode?.id || mobileComposerControls.selectedModeId);
+                      return (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          aria-pressed={active}
+                          className={cn(
+                            "flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
+                            active
+                              ? "bg-muted/65 font-medium text-foreground"
+                              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                          )}
+                          onClick={() => {
+                            mobileComposerControls.onModeChange(mode.id);
+                            setMobileModeOpen(false);
+                          }}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{mode.name}</span>
+                            {mode.description ? (
+                              <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                                {mode.description}
+                              </span>
+                            ) : null}
+                          </span>
+                          {active ? <Check className="size-3.5 shrink-0" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -129,7 +169,13 @@ export function ModelOptionsMenu({
                 type="button"
                 aria-expanded={mobilePermissionsOpen}
                 className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-left transition-colors hover:bg-muted/45"
-                onClick={() => setMobilePermissionsOpen((open) => !open)}
+                onClick={() => {
+                  setMobilePermissionsOpen((open) => {
+                    const next = !open;
+                    if (next) setMobileModeOpen(false);
+                    return next;
+                  });
+                }}
               >
                 <span className="text-xs text-muted-foreground">Access</span>
                 <span className="ml-auto min-w-0 truncate text-xs font-medium text-foreground/90">

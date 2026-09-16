@@ -72,7 +72,7 @@ export function ApprovalPanel({
           size="sm"
           variant="secondary"
           disabled={disabled}
-          title="Für diesen Chat nicht wieder nachfragen (Präfix-Match)"
+          title="Don't ask again in this chat (prefix match)"
           onClick={() => onDecision("allow-session")}
         >
           Allow session

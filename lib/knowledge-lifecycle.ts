@@ -81,13 +81,13 @@ function classifyStatement(statement: string): KnowledgeClass {
   const text = statement.trim();
   if (!text || text.endsWith("?") || QUESTION_START.test(text)) return "ephemeral";
   if (SENSITIVE.test(text) || CODEISH.test(text)) return "ephemeral";
+  // Ordinary prompts must not become global memories. "ich will", "immer",
+  // preferences and stable-fact phrasing were matching almost every German request.
+  if (EXPLICIT_REMEMBER.test(text)) return "durable";
   if (EPHEMERAL.test(text) && !LONG_TERM_OVERRIDE.test(text)) return "ephemeral";
   // Project/app requirements stay scoped to the chat even when they are
   // long-lived ("Metis should always …"). They are not global user facts.
   if (TASK_SCOPE.test(text) && REQUIREMENT.test(text) && !PREFERENCE.test(text) && !STABLE_FACT.test(text)) return "task";
-  if (EXPLICIT_REMEMBER.test(text) || LONG_TERM_OVERRIDE.test(text) || PREFERENCE.test(text) || STABLE_FACT.test(text)) {
-    return "durable";
-  }
   return "ephemeral";
 }
 
@@ -184,9 +184,9 @@ export function deriveChatKeywords(message: string, limit = 6) {
 
 /**
  * Deterministic, token-free knowledge capture for real user turns.
- * - durable: global memory, deduped/updated conservatively
- * - task: chat-scoped learned fact
- * - ephemeral/questions/secrets/code: never persisted as knowledge
+ * - durable: global memory only when the user explicitly asks to remember
+ * - task: chat-scoped learned fact for project/app requirements
+ * - ephemeral/questions/secrets/code/ordinary prompts: never persisted as memory
  * External repo/browser/tool output is deliberately not copied into memory;
  * those systems stay durable external memory and are retrieved on demand.
  */

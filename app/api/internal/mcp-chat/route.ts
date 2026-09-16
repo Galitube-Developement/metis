@@ -1,6 +1,7 @@
 import {
   getChat,
   normalizeChatKeywords,
+  normalizeChatTitle,
   searchChatsForUser,
   updateChat,
 } from "@/lib/db-store";
@@ -46,8 +47,19 @@ export async function POST(req: Request) {
   }
 
   if (action === "title") {
-    const title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+    const title = normalizeChatTitle(body.title);
     if (!title) return Response.json({ error: "title must not be empty" }, { status: 400 });
+    if (chat.titleSource === "user") {
+      return Response.json({
+        chatId,
+        title: chat.title,
+        titleSource: "user",
+        updated: false,
+        skipped: "user-title",
+        actor: "agent",
+        jobId,
+      });
+    }
     const updated = updateChat(chatId, { title, titleSource: "agent" }, userId);
     if (!updated) return Response.json({ error: "Chat not found" }, { status: 404 });
     return Response.json({

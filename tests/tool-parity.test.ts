@@ -148,6 +148,8 @@ test("CORE allowlist keeps search_tools/call_mcp_tool and excludes provide_file/
   const allow = CORE_MCP_TOOL_ALLOWLIST as readonly string[];
   assert.ok(allow.includes("search_tools"));
   assert.ok(allow.includes("call_mcp_tool"));
+  assert.ok(allow.includes("update_chat_title"));
+  assert.ok(allow.includes("update_chat_keywords"));
   assert.equal(allow.includes("provide_file"), false);
   assert.equal(allow.includes("wait"), false);
   assert.deepEqual(

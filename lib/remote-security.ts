@@ -30,11 +30,11 @@ export function isRiskyRemoteAction(action: string, params: Record<string, unkno
 }
 
 export function validateUserRemoteRequest(action: string, params: Record<string, unknown> = {}) {
-  if (isRiskyRemoteAction(action, params)) return { allowed: false, reason: "Benutzerzugriff blockiert Systembereiche oder administrative Aktionen" };
+  if (isRiskyRemoteAction(action, params)) return { allowed: false, reason: "User access blocks system areas and administrative actions" };
   for (const key of ["path", "cwd"]) {
     const value = params[key];
     if (typeof value === "string" && (/^(?:[A-Za-z]:[\\/]|\\\\|\/etc|\/root|\/var|\/usr|\/opt|\/system|\/library)/i.test(value))) {
-      return { allowed: false, reason: "Benutzerzugriff erlaubt nur Benutzerverzeichnisse" };
+      return { allowed: false, reason: "User access allows user directories only" };
     }
   }
   return { allowed: true };

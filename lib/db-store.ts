@@ -45,6 +45,7 @@ function workerProjectionLeaseValid(chatId?: string) {
 const chatCache = new Map<string, { updatedAt: string; chat: Chat }>();
 const MAX_CHAT_KEYWORDS = 24;
 const MAX_CHAT_KEYWORD_LENGTH = 80;
+const MAX_CHAT_TITLE_LENGTH = 48;
 type ChatPageResult = {
   chat: Chat;
   messageOffset: number;
@@ -155,6 +156,17 @@ export function normalizeChatKeywords(value: unknown): string[] {
     if (keywords.length >= MAX_CHAT_KEYWORDS) break;
   }
   return keywords;
+}
+
+export function normalizeChatTitle(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const cleaned = value.replace(/\s+/g, " ").trim().replace(/^["'`]+|["'`]+$/g, "");
+  if (!cleaned) return "";
+  if (cleaned.length <= MAX_CHAT_TITLE_LENGTH) return cleaned;
+  const slice = cleaned.slice(0, MAX_CHAT_TITLE_LENGTH);
+  const lastSpace = slice.lastIndexOf(" ");
+  const base = lastSpace >= 12 ? slice.slice(0, lastSpace) : slice;
+  return `${base.replace(/[.,;:]+$/, "")}…`;
 }
 
 function syncChatList(chat: Chat) {
@@ -641,7 +653,10 @@ export function updateChat(
     const chat = getChat(id, ownerId);
     if (!chat) return null;
     const next = { ...chat };
-    if (patch.title?.trim()) next.title = patch.title.trim();
+    if (patch.title !== undefined) {
+      const title = normalizeChatTitle(patch.title);
+      if (title) next.title = title;
+    }
     if (patch.titleSource) next.titleSource = patch.titleSource;
     if (patch.keywords === null) {
       delete next.keywords;
@@ -1083,10 +1098,7 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
   });
 }
 
-export const titleFromMessage = (content: string) => {
-  const cleaned = content.replace(/\s+/g, " ").trim();
-  return cleaned ? (cleaned.length > 48 ? `${cleaned.slice(0, 48)}…` : cleaned) : "New chat";
-};
+export const titleFromMessage = (content: string) => normalizeChatTitle(content) || "New chat";
 
 export function listMemories(ownerId?: string): Memory[] {
   const query = ownerId
