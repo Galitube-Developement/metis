@@ -1053,7 +1053,9 @@ export async function runQueuedJob(job: AgentJob) {
       "Workspace rule: create or edit a plan/canvas only when the active mode and user request allow it. Never claim a workspace exists until the tool result or persisted workspace confirms it.",
       "Memories are not auto-filled from every prompt. Use list_memories only when a task genuinely needs memory inspection; use add_memory/edit_memory only when the user explicitly asks to remember something, or for a durable fact learned outside the chat. Never bulk-load memories into context.",
       "To edit an existing workspace, call edit_plan or edit_canvas with its exact id and the changed title/content. Do not create a duplicate when the user asked to edit.",
-      "When the chat topic is clear or changes, silently call update_chat_title with a 2-6 word label (not the first prompt) and update_chat_keywords with 3-8 concise, non-sensitive search terms using mode=add. Do not mention this metadata maintenance in the main response. Use search_chats when you need to locate an earlier chat by title, keyword, or message content.",
+      chat.agentTitleLocked
+        ? "The user locked this chat title. Do not call update_chat_title. Continue maintaining 3-8 concise, non-sensitive search terms with update_chat_keywords using mode=add."
+        : "When the chat topic is clear or changes, silently call update_chat_title with a 2-6 word label (not the first prompt) and update_chat_keywords with 3-8 concise, non-sensitive search terms using mode=add. Do not mention this metadata maintenance in the main response. Use search_chats when you need to locate an earlier chat by title, keyword, or message content.",
       job.automationId
         ? "Unattended automation approval rule: request_confirmation is unavailable. Follow the automation prompt and existing permissions; do not stop merely to request interactive approval."
         : "Use delete_memory, delete_plan, and delete_canvas only for explicit user requests. Before destructive or external actions, use request_confirmation and continue only when the user chooses Confirm.",

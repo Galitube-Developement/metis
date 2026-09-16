@@ -176,8 +176,8 @@ function syncChatList(chat: Chat) {
         id, owner_id, title, keywords, last_message_sent, created_at, updated_at,
         agent_id, model_id, run_status, run_updated_at, queue_message,
         pending_question, pending_approval, badge, pinned, archived, share,
-        automation_run_id, incognito, project_id, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        automation_run_id, incognito, project_id, agent_title_locked, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         owner_id=excluded.owner_id,
         title=excluded.title,
@@ -199,6 +199,7 @@ function syncChatList(chat: Chat) {
         automation_run_id=excluded.automation_run_id,
         incognito=excluded.incognito,
         project_id=excluded.project_id,
+        agent_title_locked=excluded.agent_title_locked,
         expires_at=excluded.expires_at`,
     )
     .run(
@@ -223,6 +224,7 @@ function syncChatList(chat: Chat) {
       chat.automationRunId ?? null,
       chat.incognito ? 1 : 0,
       chat.projectId ?? null,
+      chat.agentTitleLocked ? 1 : 0,
       chat.expiresAt ?? null,
     );
 }
@@ -281,12 +283,13 @@ export function listChatsForUser(
   }
   const rows = ownerId
     ? db.prepare(
-        `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
+      `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
                 queue_message AS queueMessage, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
-                automation_run_id AS automationRunId, incognito, project_id AS projectId
+                automation_run_id AS automationRunId, incognito, project_id AS projectId,
+                agent_title_locked AS agentTitleLocked
          FROM chat_list
          WHERE owner_id = ?
            AND incognito = 0
@@ -295,12 +298,13 @@ export function listChatsForUser(
          ORDER BY pinned DESC, COALESCE(last_message_sent, created_at) DESC`,
       ).all(ownerId, options.includeArchived ? 1 : 0)
     : db.prepare(
-        `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
+      `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
                 queue_message AS queueMessage, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
-                automation_run_id AS automationRunId, incognito, project_id AS projectId
+                automation_run_id AS automationRunId, incognito, project_id AS projectId,
+                agent_title_locked AS agentTitleLocked
          FROM chat_list
          WHERE incognito = 0
            AND (automation_run_id IS NULL OR automation_run_id = '')
@@ -320,6 +324,7 @@ export function listChatsForUser(
         id: String(item.id || ""),
         ownerId: typeof item.ownerId === "string" ? item.ownerId : undefined,
         title: typeof item.title === "string" ? item.title : "New chat",
+        ...(item.agentTitleLocked === 1 || item.agentTitleLocked === true ? { agentTitleLocked: true } : {}),
         ...(keywords.length ? { keywords } : {}),
         updatedAt: String(item.updatedAt || ""),
         createdAt: String(item.createdAt || ""),
@@ -618,6 +623,7 @@ export function updateChat(
   patch: {
     title?: string;
     titleSource?: "default" | "user" | "agent";
+    agentTitleLocked?: boolean;
     keywords?: string[] | null;
     agentId?: string | null;
     modelId?: string | null;
@@ -658,6 +664,9 @@ export function updateChat(
       if (title) next.title = title;
     }
     if (patch.titleSource) next.titleSource = patch.titleSource;
+    if (patch.agentTitleLocked !== undefined) {
+      next.agentTitleLocked = patch.agentTitleLocked;
+    }
     if (patch.keywords === null) {
       delete next.keywords;
     } else if (patch.keywords) {

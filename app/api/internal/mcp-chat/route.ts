@@ -49,13 +49,15 @@ export async function POST(req: Request) {
   if (action === "title") {
     const title = normalizeChatTitle(body.title);
     if (!title) return Response.json({ error: "title must not be empty" }, { status: 400 });
-    if (chat.titleSource === "user") {
+    const agentTitleLocked = chat.agentTitleLocked === true
+      || (chat.agentTitleLocked === undefined && chat.titleSource === "user");
+    if (agentTitleLocked) {
       return Response.json({
         chatId,
         title: chat.title,
-        titleSource: "user",
+        titleSource: chat.titleSource || "user",
         updated: false,
-        skipped: "user-title",
+        skipped: "agent-title-locked",
         actor: "agent",
         jobId,
       });

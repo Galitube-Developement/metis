@@ -602,6 +602,7 @@ function withSyncedFlat(parts: MsgPart[], extra: Partial<Msg> = {}): Partial<Msg
 type ChatIndexEntry = {
   id: string;
   title: string;
+  agentTitleLocked?: boolean;
   incognito?: boolean;
   keywords?: string[];
   updatedAt: string;
@@ -2294,6 +2295,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renameChatId, setRenameChatId] = useState<string | null>(null);
+  const [renameAgentTitleLocked, setRenameAgentTitleLocked] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Pick<ChatIndexEntry, "id" | "title"> | null>(null);
   const [deletingChat, setDeletingChat] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -5996,9 +5998,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function openRename(id: string, currentTitle: string) {
+  function openRename(id: string, currentTitle: string, agentTitleLocked = false) {
     setRenameChatId(id);
     setRenameValue(currentTitle);
+    setRenameAgentTitleLocked(agentTitleLocked);
     setRenameOpen(true);
   }
 
@@ -6009,7 +6012,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const res = await fetch(`/api/chats/${renameChatId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, titleSource: "user" }),
+      body: JSON.stringify({
+        title,
+        titleSource: "user",
+        agentTitleLocked: renameAgentTitleLocked,
+      }),
     });
     if (!res.ok) {
       toast.error("Rename failed");
@@ -9451,7 +9458,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     Archive
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    onClick={() => openRename(c.id, c.title)}
+                    onClick={() => openRename(c.id, c.title, Boolean(c.agentTitleLocked))}
                   >
                     <Pencil className="size-3.5" />
                     Rename
@@ -12000,6 +12007,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             }}
             autoFocus
           />
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              checked={renameAgentTitleLocked}
+              onChange={(event) => setRenameAgentTitleLocked(event.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+            />
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">Lock renaming for agent</span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                Prevents the agent from changing this chat title.
+              </span>
+            </span>
+          </label>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setRenameOpen(false)}>
               Cancel

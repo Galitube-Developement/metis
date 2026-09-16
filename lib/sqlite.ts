@@ -559,6 +559,7 @@ export function getDatabase(): DatabaseSync {
     "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE remote_clients ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'user'",
     "ALTER TABLE automation_runs ADD COLUMN manual INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE chat_list ADD COLUMN agent_title_locked INTEGER NOT NULL DEFAULT 0",
   ]) {
     try {
       database.exec(statement);
@@ -608,6 +609,7 @@ export function getDatabase(): DatabaseSync {
       automation_run_id TEXT,
       incognito INTEGER NOT NULL DEFAULT 0,
       project_id TEXT,
+      agent_title_locked INTEGER NOT NULL DEFAULT 0,
       expires_at TEXT
     );
     CREATE INDEX IF NOT EXISTS chat_list_owner_sidebar
@@ -628,7 +630,7 @@ export function getDatabase(): DatabaseSync {
       id, owner_id, title, keywords, last_message_sent, created_at, updated_at,
       agent_id, model_id, run_status, run_updated_at, queue_message,
       pending_question, pending_approval, badge, pinned, archived, share,
-      automation_run_id, incognito, project_id, expires_at
+      automation_run_id, incognito, project_id, agent_title_locked, expires_at
     )
     SELECT
       chats.id,
@@ -652,9 +654,27 @@ export function getDatabase(): DatabaseSync {
       json_extract(chats.data, '$.automationRunId'),
       CASE WHEN json_extract(chats.data, '$.incognito') IN (1, 'true', '1') THEN 1 ELSE 0 END,
       json_extract(chats.data, '$.projectId'),
+      CASE
+        WHEN json_extract(chats.data, '$.agentTitleLocked') IN (1, 'true', '1') THEN 1
+        WHEN json_type(chats.data, '$.agentTitleLocked') IS NULL
+          AND json_extract(chats.data, '$.titleSource') = 'user' THEN 1
+        ELSE 0
+      END,
       json_extract(chats.data, '$.expiresAt')
     FROM chats
     WHERE NOT EXISTS (SELECT 1 FROM chat_list WHERE chat_list.id = chats.id);
+  `);
+  database.exec(`
+    UPDATE chat_list
+    SET agent_title_locked = 1
+    WHERE agent_title_locked = 0
+      AND EXISTS (
+        SELECT 1
+        FROM chats
+        WHERE chats.id = chat_list.id
+          AND json_type(chats.data, '$.agentTitleLocked') IS NULL
+          AND json_extract(chats.data, '$.titleSource') = 'user'
+      );
   `);
   database.prepare(
     "INSERT OR IGNORE INTO meta (key, value) VALUES ('provider_connections_schema', '1')",

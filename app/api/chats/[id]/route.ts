@@ -48,6 +48,7 @@ export async function PATCH(req: Request, { params }: Params) {
   let body: {
     title?: string;
     titleSource?: "default" | "user" | "agent";
+    agentTitleLocked?: boolean;
     keywords?: string[] | null;
     agentId?: string | null;
     modelId?: string | null;
@@ -69,6 +70,7 @@ export async function PATCH(req: Request, { params }: Params) {
     body = (await req.json()) as {
       title?: string;
       titleSource?: "default" | "user" | "agent";
+      agentTitleLocked?: boolean;
       keywords?: string[] | null;
       agentId?: string | null;
       modelId?: string | null;

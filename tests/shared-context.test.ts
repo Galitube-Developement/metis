@@ -281,7 +281,7 @@ test("chat keywords are normalized, persisted, and searchable through MCP", asyn
   ), true);
 });
 
-test("agent chat titles are shortened, persist as agent-sourced, and skip user titles", async () => {
+test("agent chat titles respect the per-chat rename lock", async () => {
   const { POST } = modules[5];
   const { createChat, getChat, updateChat, normalizeChatTitle } = modules[0];
   const titled = createChat("New chat");
@@ -339,14 +339,57 @@ test("agent chat titles are shortened, persist as agent-sourced, and skip user t
   const skippedBody = await skipped.json() as { title?: string; titleSource?: string; updated?: boolean; skipped?: string };
   assert.equal(skipped.status, 200);
   assert.equal(skippedBody.updated, false);
-  assert.equal(skippedBody.skipped, "user-title");
+  assert.equal(skippedBody.skipped, "agent-title-locked");
   assert.equal(skippedBody.title, "Pinned by user");
   assert.equal(getChat(titled.id)?.title, "Pinned by user");
   assert.equal(getChat(titled.id)?.titleSource, "user");
+
+  updateChat(titled.id, { agentTitleLocked: false });
+  const unlocked = await POST(new Request("http://localhost/api/internal/mcp-chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action: "title",
+      title: "Agent can rename again",
+    }),
+  }));
+  const unlockedBody = await unlocked.json() as { title?: string; updated?: boolean };
+  assert.equal(unlocked.status, 200);
+  assert.equal(unlockedBody.updated, true);
+  assert.equal(unlockedBody.title, "Agent can rename again");
+
+  updateChat(titled.id, {
+    title: "Explicitly locked",
+    titleSource: "user",
+    agentTitleLocked: true,
+  });
+  const explicitlyLocked = await POST(new Request("http://localhost/api/internal/mcp-chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action: "title",
+      title: "Blocked agent rename",
+    }),
+  }));
+  const explicitlyLockedBody = await explicitlyLocked.json() as { title?: string; updated?: boolean; skipped?: string };
+  assert.equal(explicitlyLocked.status, 200);
+  assert.equal(explicitlyLockedBody.updated, false);
+  assert.equal(explicitlyLockedBody.skipped, "agent-title-locked");
+  assert.equal(explicitlyLockedBody.title, "Explicitly locked");
+  assert.equal(getChat(titled.id)?.agentTitleLocked, true);
+  assert.equal(modules[0].listChatsForUser().find((chat) => chat.id === titled.id)?.agentTitleLocked, true);
 });
 
 test("agent prompt tells the model to set a short chat title", () => {
   const source = readFileSync(new URL("../lib/worker-runner.ts", import.meta.url), "utf8");
   assert.match(source, /update_chat_title with a 2-6 word label/);
   assert.match(source, /not the first prompt/);
+  assert.match(source, /The user locked this chat title\. Do not call update_chat_title/);
+});
+
+test("rename modal exposes the agent title lock", () => {
+  const source = readFileSync(new URL("../components/app-shell.tsx", import.meta.url), "utf8");
+  assert.match(source, /Lock renaming for agent/);
+  assert.match(source, /type="checkbox"/);
+  assert.match(source, /agentTitleLocked: renameAgentTitleLocked/);
 });

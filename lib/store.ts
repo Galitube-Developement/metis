@@ -424,6 +424,8 @@ export type Chat = {
   expiresAt?: string;
   title: string;
   titleSource?: "default" | "user" | "agent";
+  /** Prevents agent metadata maintenance from changing this chat title. */
+  agentTitleLocked?: boolean;
   keywords?: string[];
   agentId?: string;
   /** Selected provider/model key for this chat. */
@@ -474,6 +476,7 @@ export type ChatIndexEntry = {
   id: string;
   ownerId?: string;
   title: string;
+  agentTitleLocked?: boolean;
   keywords?: string[];
   updatedAt: string;
   createdAt: string;
@@ -699,6 +702,7 @@ export function saveChat(chat: Chat): Chat {
     updatedAt: updated.updatedAt,
     agentId: updated.agentId,
     modelId: updated.modelId,
+    ...(updated.agentTitleLocked ? { agentTitleLocked: true } : {}),
   });
   return updated;
 }
@@ -707,6 +711,8 @@ export function updateChat(
   id: string,
   patch: {
     title?: string;
+    titleSource?: "default" | "user" | "agent";
+    agentTitleLocked?: boolean;
     agentId?: string | null;
     modelId?: string | null;
     modelParams?: Array<{ id: string; value: string }> | null;
@@ -734,6 +740,10 @@ export function updateChat(
   if (typeof patch.title === "string") {
     const title = patch.title.trim();
     if (title) chat.title = title;
+  }
+  if (patch.titleSource) chat.titleSource = patch.titleSource;
+  if (patch.agentTitleLocked !== undefined) {
+    chat.agentTitleLocked = patch.agentTitleLocked;
   }
   if (patch.agentId === null) {
     delete chat.agentId;
