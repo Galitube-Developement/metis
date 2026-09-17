@@ -686,6 +686,7 @@ chmod 700 "$install_dir/run-service.sh"
   set +a
   cd "$install_dir"
   pnpm install --frozen-lockfile
+  pnpm exec playwright install chromium
   current_build_slot="${NEXT_DIST_DIR:-}"
   if [[ "$current_build_slot" == ".next-a" ]]; then
     next_build_slot=".next-b"
@@ -760,5 +761,5 @@ chmod 700 "$install_dir/uninstall-macos.sh"
 if [[ "$ai_chat_host" == "0.0.0.0" ]]; then
   printf 'Warning: the web application is reachable on the local network. Use strong credentials and a firewall or trusted TLS reverse proxy.\n'
 fi
-printf '\nMetis AI installed successfully.\nOpen: %s\nUninstall: %s --install-dir %q --keep-data\n' \
-  "$public_url" "$install_dir/uninstall-macos.sh" "$install_dir"
+printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: %s\nUninstall: %s --install-dir %q --keep-data\n' \
+  "$public_url" "$install_dir/.env" "$install_dir/uninstall-macos.sh" "$install_dir"

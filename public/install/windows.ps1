@@ -520,6 +520,7 @@ try {
   $previousNodeEnv = $env:NODE_ENV
   Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
   & $pnpmCommand install --frozen-lockfile
+  & $pnpmCommand exec playwright install chromium
   $env:METIS_AI_BOOTSTRAP_USERNAME = $username
   $env:METIS_AI_BOOTSTRAP_PASSWORD = $passwordPlain
   $env:METIS_AI_BOOTSTRAP_OPTIONAL = "1"
@@ -604,4 +605,5 @@ if ($aiChatHost -eq "0.0.0.0") {
 }
 Write-Host "`nMetis AI installed successfully."
 Write-Host "Open: $publicUrl"
+Write-Host "You can change this. Add: $(Join-Path $InstallDir '.env')"
 Write-Host "Uninstall: $(Join-Path $InstallDir 'uninstall.ps1') -InstallDir `"$InstallDir`" -KeepData"

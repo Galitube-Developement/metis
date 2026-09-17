@@ -44,13 +44,23 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo "Working tree must be clean before releasing." >&2
   exit 2
 fi
+replace_release="${METIS_REPLACE_RELEASE:-0}"
 if git rev-parse "$tag" >/dev/null 2>&1; then
-  echo "Tag already exists locally: $tag" >&2
-  exit 2
+  if [[ "$replace_release" == "1" ]]; then
+    git tag -d "$tag"
+  else
+    echo "Tag already exists locally: $tag" >&2
+    exit 2
+  fi
 fi
 if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-  echo "Tag already exists on origin: $tag" >&2
-  exit 2
+  if [[ "$replace_release" == "1" ]]; then
+    git push origin ":refs/tags/$tag"
+    gh release delete "$tag" --yes --cleanup-tag || true
+  else
+    echo "Tag already exists on origin: $tag" >&2
+    exit 2
+  fi
 fi
 
 echo "Running release checks as $(git config user.name) <$(git config user.email)>"
@@ -75,9 +85,12 @@ git archive --format=tar.gz --prefix="metis-ai-${version}/" "$tag" > "$work_dir/
 cp public/install/install.sh "$work_dir/metis-install.sh"
 cp public/install/install.ps1 "$work_dir/metis-install.ps1"
 cp public/install/docker.sh "$work_dir/metis-docker-install.sh"
-sha256sum "$work_dir/metis-ai-${tag}.tar.gz" "$work_dir/metis-install.sh" "$work_dir/metis-install.ps1" "$work_dir/metis-docker-install.sh" > "$work_dir/SHA256SUMS"
+cp public/install/linux.sh "$work_dir/metis-linux.sh"
+cp public/install/macos.sh "$work_dir/metis-macos.sh"
+cp public/install/windows.ps1 "$work_dir/metis-windows.ps1"
+sha256sum "$work_dir/metis-ai-${tag}.tar.gz" "$work_dir/metis-install.sh" "$work_dir/metis-install.ps1" "$work_dir/metis-docker-install.sh" "$work_dir/metis-linux.sh" "$work_dir/metis-macos.sh" "$work_dir/metis-windows.ps1" > "$work_dir/SHA256SUMS"
 
-image="ghcr.io/${repo,,}"
+image="${METIS_IMAGE_REPOSITORY:-ghcr.io/f1shyondrugs/metis-ai}"
 gh auth token | docker login ghcr.io --username "$owner" --password-stdin >/dev/null
 docker buildx build --push \
   --tag "${image}:${tag}" \
@@ -92,16 +105,59 @@ notes_file="$work_dir/release-notes.md"
 {
   echo "## What's new"
   echo
-  git log --format='- %s' "${tag}^".."$tag"
-  echo
-  echo "## How to install"
-  echo
-  echo '```bash'
-  echo "curl -fsSL https://github.com/${owner}/metis-ai/releases/latest/download/metis-docker-install.sh -o metis-docker-install.sh"
-  echo "bash metis-docker-install.sh --version ${tag}"
-  echo '```'
-  echo
-  echo "See [CHANGELOG.md](https://github.com/${owner}/metis-ai/blob/${tag}/CHANGELOG.md) for the full changelog."
+  awk -v ver="$version" '
+    $0 ~ "^## v" ver " " {p=1; next}
+    p && /^## / {exit}
+    p {print}
+  ' CHANGELOG.md
+  cat <<EOF
+
+## How to install
+
+Pick the installer that matches how you want to run Metis.
+
+### Docker (recommended for production)
+
+\`\`\`bash
+curl -fsSL https://github.com/${repo}/releases/latest/download/metis-docker-install.sh -o metis-docker-install.sh
+bash metis-docker-install.sh --version ${tag}
+\`\`\`
+
+### Linux and macOS
+
+\`\`\`bash
+/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/${repo}/master/install.sh)"
+\`\`\`
+
+From this release:
+
+\`\`\`bash
+curl -fsSL https://github.com/${repo}/releases/latest/download/metis-install.sh -o metis-install.sh
+bash metis-install.sh
+\`\`\`
+
+Native (no Docker): add \`-- --native\` after the bootstrap, or run \`bash metis-install.sh -- --native\`.
+
+### Windows
+
+\`\`\`powershell
+irm https://raw.githubusercontent.com/${repo}/master/install.ps1 | iex
+\`\`\`
+
+From this release:
+
+\`\`\`powershell
+irm https://github.com/${repo}/releases/latest/download/metis-install.ps1 | iex
+\`\`\`
+
+Native (no Docker): download \`metis-windows.ps1\` and run \`powershell -File .\\metis-windows.ps1 -Native\`.
+
+### Source tarball
+
+Download \`metis-ai-${tag}.tar.gz\`, extract it, copy \`.env.example\` to \`.env\`, then \`pnpm install && pnpm build\`.
+
+See [CHANGELOG.md](https://github.com/${repo}/blob/${tag}/CHANGELOG.md) for the full changelog.
+EOF
 } > "$notes_file"
 
 gh release create "$tag" \
@@ -111,6 +167,9 @@ gh release create "$tag" \
   "$work_dir/metis-install.sh" \
   "$work_dir/metis-install.ps1" \
   "$work_dir/metis-docker-install.sh" \
+  "$work_dir/metis-linux.sh" \
+  "$work_dir/metis-macos.sh" \
+  "$work_dir/metis-windows.ps1" \
   "$work_dir/SHA256SUMS"
 
 echo "Published ${tag} as ${owner}."

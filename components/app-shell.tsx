@@ -37,6 +37,7 @@ import {
   FilePen,
   Unlock,
   CircleAlert,
+  Download,
   Brain,
   Bot,
   AudioLines,
@@ -2022,6 +2023,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const browserUrlUpdatedAtRef = useRef("");
   const [browserHistoryOpen, setBrowserHistoryOpen] = useState(false);
   const [browserError, setBrowserError] = useState("");
+  const [browserInstalling, setBrowserInstalling] = useState(false);
   const [browserViewport, setBrowserViewport] = useState({ width: 1280, height: 800 });
   const [browserFrameSize, setBrowserFrameSize] = useState({ width: 0, height: 0 });
   const [browserWidthInput, setBrowserWidthInput] = useState("1280");
@@ -3223,6 +3225,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return null;
     } finally {
       setBrowserLoading(false);
+    }
+  }
+
+  const browserNeedsInstall = /playwright chromium is not installed|executable doesn't exist|install browser/i.test(browserError);
+
+  async function installBrowser() {
+    if (browserInstalling) return;
+    setBrowserInstalling(true);
+    setBrowserError("");
+    try {
+      const response = await fetch("/api/browser/install", { method: "POST" });
+      const data = await readJsonResponse<{ error?: string }>(response);
+      if (!response.ok) throw new Error(data.error || "Browser installation failed");
+      await performBrowserAction("screenshot");
+    } catch (error) {
+      setBrowserError(error instanceof Error ? error.message : "Browser installation failed");
+    } finally {
+      setBrowserInstalling(false);
     }
   }
 
@@ -11219,7 +11239,25 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     <span className="tabular-nums">{browserViewport.width}×{browserViewport.height}</span>
                   </div>
                 </div>
-                {browserError ? <div className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">{browserError}</div> : null}
+                {browserError ? (
+                  browserNeedsInstall ? (
+                    <div className="shrink-0 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-3 py-2.5 text-xs text-foreground">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium">Browser engine isn’t installed</p>
+                          <p className="mt-0.5 text-muted-foreground">Metis needs Chromium for the embedded browser.</p>
+                        </div>
+                        <Button type="button" size="sm" variant="secondary" className="h-7 shrink-0 gap-1.5" onClick={() => void installBrowser()} disabled={browserInstalling}>
+                          {browserInstalling ? <LoaderCircle className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                          {browserInstalling ? "Installing…" : "Install browser"}
+                        </Button>
+                      </div>
+                      <p className="mt-2 border-t border-amber-500/15 pt-2 font-mono text-[10px] text-muted-foreground">pnpm exec playwright install chromium</p>
+                    </div>
+                  ) : (
+                    <div className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">{browserError}</div>
+                  )
+                ) : null}
               </div>
             ) : workspaceTab === "monitor" ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">

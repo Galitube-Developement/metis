@@ -7,6 +7,7 @@ import { chromium, type BrowserContext, type Frame, type Locator, type Page } fr
 import { config } from "@/lib/config";
 import { getUserAgentCwd } from "@/lib/mcp";
 import { isPrivateAddress } from "@/lib/url-security";
+import { isPlaywrightBrowserMissing } from "@/lib/playwright-install";
 
 const MAX_SNAPSHOT_LENGTH = 120_000;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -345,8 +346,8 @@ async function getPersistentContext(ownerId: string) {
   } catch (error) {
     if (persistentContexts.get(ownerId) === pending) persistentContexts.delete(ownerId);
     const message = error instanceof Error ? error.message : String(error);
-    if (/Executable doesn't exist/i.test(message)) {
-      throw new Error("Playwright Chromium is not installed. From /home/samuel/metis-ai run: pnpm exec playwright install chromium");
+    if (isPlaywrightBrowserMissing(error)) {
+      throw new Error("Playwright Chromium is not installed. Click Install browser or run: pnpm exec playwright install chromium");
     }
     throw error;
   }

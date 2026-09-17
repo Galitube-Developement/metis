@@ -22,6 +22,13 @@ publish releases.
 - Fix context usage leaking across model/context-tier switches and start native
   sessions fresh with compacted recovery context when required.
 - Fix Codex runs hanging after the last visible token.
+- Preserve provider output after compaction.
+- Publish Docker, Linux/macOS, Windows, native, and source installers on the
+  GitHub release so each user can install the way they want.
+- Print `You can change this. Add: <install-dir>/.env` under the Open URL after
+  install.
+- Install Chromium with native installers and let the UI install the browser
+  when it is missing.
 
 ## v1.0.5 — 2026-09-12
 

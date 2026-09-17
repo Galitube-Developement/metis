@@ -115,6 +115,52 @@ test("unix native installers build an inactive Next slot and verify browser asse
   }
 });
 
+test("all native installers install the Playwright Chromium browser", () => {
+  for (const file of ["linux.sh", "macos.sh"]) {
+    const content = readFileSync(path.join(root, "install", file), "utf8");
+    const publicContent = readFileSync(path.join(installerDir, file), "utf8");
+    for (const source of [content, publicContent]) {
+      const dependenciesAt = source.indexOf("pnpm install --frozen-lockfile");
+      const browserAt = source.indexOf("pnpm exec playwright install chromium");
+      assert.ok(dependenciesAt >= 0 && browserAt > dependenciesAt, `${file} must install Chromium after dependencies`);
+    }
+  }
+  const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
+  const publicWindows = readFileSync(path.join(installerDir, "windows.ps1"), "utf8");
+  for (const source of [windows, publicWindows]) assert.match(source, /exec playwright install chromium/);
+});
+
+test("installers print the Open URL and the .env path after install", () => {
+  for (const file of ["linux.sh", "macos.sh", "windows.ps1"]) {
+    const content = readFileSync(path.join(root, "install", file), "utf8");
+    const publicContent = readFileSync(path.join(installerDir, file), "utf8");
+    for (const source of [content, publicContent]) {
+      assert.match(source, /Open:/);
+      assert.match(source, /You can change this\. Add:/);
+      const openAt = source.lastIndexOf("Open:");
+      const envHintAt = source.lastIndexOf("You can change this. Add:");
+      assert.ok(openAt >= 0 && envHintAt > openAt, `${file} must print the .env hint under Open`);
+    }
+  }
+  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
+  assert.match(docker, /Open: http:\/\/%s:%s/);
+  assert.match(docker, /You can change this\. Add: %s/);
+});
+
+test("the release script publishes every installer option", () => {
+  const release = readFileSync(path.join(root, "scripts", "release.sh"), "utf8");
+  assert.match(release, /metis-docker-install\.sh/);
+  assert.match(release, /metis-install\.sh/);
+  assert.match(release, /metis-install\.ps1/);
+  assert.match(release, /metis-linux\.sh/);
+  assert.match(release, /metis-macos\.sh/);
+  assert.match(release, /metis-windows\.ps1/);
+  assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.sh/);
+  assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.ps1/);
+  assert.match(release, /ghcr\.io\/f1shyondrugs\/metis-ai/);
+  assert.doesNotMatch(release, /github\.com\/\$\{owner\}\/metis-ai\/releases/);
+});
+
 test("unix bootstrap remaps the v1.0.0 install base to current master scripts", () => {
   const bootstrap = readFileSync(path.join(root, "install.sh"), "utf8");
   const published = readFileSync(path.join(installerDir, "install.sh"), "utf8");

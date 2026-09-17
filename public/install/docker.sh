@@ -309,6 +309,6 @@ cat > "$MANIFEST_FILE" <<EOF
 }
 EOF
 chmod 600 "$MANIFEST_FILE"
-printf 'Metis AI %s is running at http://%s:%s\n' "$VERSION" "$BIND" "$PORT"
+printf 'Metis AI %s is running.\nOpen: http://%s:%s\nYou can change this. Add: %s\n' "$VERSION" "$BIND" "$PORT" "$ENV_FILE"
 printf 'Install manifest: %s\n' "$MANIFEST_FILE"
 printf 'Upgrade: rerun this installer with --version vX.Y.Z or --version latest\n'
