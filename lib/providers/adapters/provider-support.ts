@@ -643,6 +643,14 @@ export function compactIfNeeded(
     typeof measuredTokens === "number" && Number.isFinite(measuredTokens) && measuredTokens > 0
       ? measuredTokens
       : undefined;
+  const beforeTokens = Math.max(total, measured ?? 0);
+  // Provider usage includes prompt material that is not fully represented by
+  // the locally serialized transcript. When that measured value triggers the
+  // compaction, translate the provider budget onto the local estimate scale;
+  // otherwise every local message can appear to fit and nothing gets removed.
+  const localBudget = measured && measured > total
+    ? Math.max(1, Math.floor(budget * (total / measured)))
+    : budget;
   const estimatePressure = total / contextWindow >= CONTEXT_COMPACT_RATIO;
   const measuredPressure = Boolean(measured && measured / contextWindow >= CONTEXT_COMPACT_RATIO);
   if (!estimatePressure && !measuredPressure) return messages;
@@ -668,7 +676,7 @@ export function compactIfNeeded(
   const protectedTail: ModelMessage[] = [];
   let tailTokens = 0;
   let index = source.length;
-  const tailBudget = Math.floor(budget * 0.45);
+  const tailBudget = Math.floor(localBudget * 0.45);
   while (index > 0 && tailTokens < tailBudget) {
     index -= 1;
     const message = source[index];
@@ -684,7 +692,7 @@ export function compactIfNeeded(
     kind: "compaction",
     systemTriggered: true,
     status: "started",
-    beforeTokens: total,
+    beforeTokens,
     targetTokens: budget,
     removedMessages: oldMessages.length,
   });
@@ -693,7 +701,7 @@ export function compactIfNeeded(
     .join("\n")
     .replace(/\s+$/g, "");
   const recapPrefix = `Compressed conversation history ${COMPACTION_MARKER} (older messages were auto-compacted; preserve task state, files, todos, errors, and the latest tail):\n`;
-  const recapBudget = Math.max(64, (budget - tailTokens - 8) * 4);
+  const recapBudget = Math.max(64, (localBudget - tailTokens - 8) * 4);
   let result: ModelMessage[] = [
     {
       role: "user",
@@ -707,12 +715,12 @@ export function compactIfNeeded(
   const maxTrimPasses = Math.max(8, result.length * 4);
   while (
     result.reduce((sum, message) => sum + estimateContextTokens(message), 0) >
-      budget &&
+      localBudget &&
     result.length > 1
   ) {
     const excess =
       result.reduce((sum, message) => sum + estimateContextTokens(message), 0) -
-      budget;
+      localBudget;
     let candidateIndex = -1;
     let candidateChars = 0;
     for (let index = 1; index < result.length; index += 1) {
@@ -735,13 +743,13 @@ export function compactIfNeeded(
   }
   if (
     result.reduce((sum, message) => sum + estimateContextTokens(message), 0) >
-    budget
+    localBudget
   ) {
     const last = result.at(-1);
     result = [
       {
         role: "user",
-        content: `${recapPrefix}${boundedText(recap, Math.max(32, (budget - estimateContextTokens(last || "") - 2) * 4))}`,
+        content: `${recapPrefix}${boundedText(recap, Math.max(32, (localBudget - estimateContextTokens(last || "") - 2) * 4))}`,
       },
       ...(last
         ? [
@@ -749,7 +757,7 @@ export function compactIfNeeded(
               role: last.role,
               content: boundedText(
                 modelMessageText(last),
-                Math.max(32, (budget - 2) * 4),
+                Math.max(32, (localBudget - 2) * 4),
               ),
             } as ModelMessage,
           ]
@@ -763,7 +771,7 @@ export function compactIfNeeded(
     kind: "compaction",
     systemTriggered: true,
     status: "completed",
-    beforeTokens: total,
+    beforeTokens,
     targetTokens: budget,
     afterTokens: result.reduce(
       (sum, message) => sum + estimateContextTokens(message),

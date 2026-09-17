@@ -114,6 +114,23 @@ test("measured provider usage forces compaction below the transcript estimate", 
   assert.equal(events.at(-1)?.status, "completed");
 });
 
+test("measured compaction reports provider usage and removes locally scaled history", () => {
+  const messages: ModelMessage[] = Array.from({ length: 8 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: `${index}: ${"context ".repeat(2_500)}`,
+  }));
+  const estimated = messages.reduce((sum, message) => sum + estimateContextTokens(message), 0);
+  const measured = 1_040_000;
+  const events: Array<Record<string, unknown>> = [];
+
+  compactProviderMessages(messages, 1_050_000, "normal", (event) => events.push(event), measured);
+
+  assert.equal(events[0]?.beforeTokens, measured);
+  assert.equal(events.at(-1)?.beforeTokens, measured);
+  assert.ok(Number(events.at(-1)?.removedMessages) >= 2);
+  assert.ok(Number(events.at(-1)?.afterTokens) < estimated);
+});
+
 test("compaction emits a structured start and completion event", () => {
   const events: Array<Record<string, unknown>> = [];
   compactProviderMessages(toolHistory, 4_000, "normal", (event) => events.push(event));

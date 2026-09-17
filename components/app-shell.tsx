@@ -47,6 +47,8 @@ import {
   FileCode2,
   ExternalLink,
   FileClock,
+  FolderInput,
+  FolderX,
   Fullscreen,
   Globe2,
   Eye,
@@ -9464,13 +9466,30 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </DropdownMenuItem>
                   {c.incognito ? null : (
                     <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>Move to project</DropdownMenuSubTrigger>
+                      <DropdownMenuSubTrigger>
+                        <FolderInput className="size-3.5" />
+                        Move to project
+                      </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="z-[1300]">
                         {c.projectId ? (
-                          <DropdownMenuItem onClick={() => void moveChatToProject(c.id, null)}>Remove from project</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void moveChatToProject(c.id, null)}>
+                            <FolderX className="size-3.5" />
+                            Remove from project
+                          </DropdownMenuItem>
                         ) : null}
                         {sidebarProjects.filter((project) => project.id !== c.projectId).map((project) => (
-                          <DropdownMenuItem key={project.id} onClick={() => void moveChatToProject(c.id, project.id)}>{project.name}</DropdownMenuItem>
+                          <DropdownMenuItem key={project.id} onClick={() => void moveChatToProject(c.id, project.id)}>
+                            <ProjectAvatar
+                              id={project.id}
+                              icon={project.icon || "folder"}
+                              color={project.color || "#64748b"}
+                              hasLogo={Boolean(project.logoStoredName)}
+                              updatedAt={project.updatedAt}
+                              label=""
+                              className="size-4 rounded"
+                            />
+                            {project.name}
+                          </DropdownMenuItem>
                         ))}
                         {sidebarProjects.filter((project) => project.id !== c.projectId).length === 0 && !c.projectId ? (
                           <DropdownMenuItem disabled>No projects yet</DropdownMenuItem>

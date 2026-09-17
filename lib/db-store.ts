@@ -259,16 +259,22 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
        WHERE id = ?`,
     ).run(`$.messages[${index}]`, JSON.stringify(message), updatedAt, updatedAt, chat.id);
   }
-  chatCache.set(chat.id, { updatedAt, chat });
+  // Another process may have patched chat metadata (for example projectId)
+  // while this worker was streaming. The SQL above intentionally updates
+  // only the message and timestamp, so refresh the cache from that canonical
+  // row instead of putting the worker's stale pre-run Chat object back.
+  const persisted = rowChat(db.prepare("SELECT data FROM chats WHERE id = ?").get(chat.id)) || chat;
+  chatCache.set(chat.id, { updatedAt, chat: persisted });
   for (const key of chatPageCache.keys()) {
     if (key.includes(`:${chat.id}:`)) chatPageCache.delete(key);
   }
   recordChatSyncEvent({
-    ownerId: chat.ownerId,
+    ownerId: persisted.ownerId,
     chatId: chat.id,
     kind: "updated",
     chatUpdatedAt: updatedAt,
   });
+  return persisted;
 }
 
 export function listChatsForUser(
@@ -1098,12 +1104,11 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
     const next = { ...message, createdAt: message.createdAt || chat.messages[index]?.createdAt || now() };
     if (index >= 0) {
       chat.messages[index] = next;
-      persistAssistantMessage(chat, index, next, "set");
+      return persistAssistantMessage(chat, index, next, "set");
     } else {
       chat.messages.push(next);
-      persistAssistantMessage(chat, chat.messages.length - 1, next, "append");
+      return persistAssistantMessage(chat, chat.messages.length - 1, next, "append");
     }
-    return chat;
   });
 }
 

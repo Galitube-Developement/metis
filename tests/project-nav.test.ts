@@ -23,6 +23,15 @@ test("assigned chats show a project avatar; unassigned chats do not", () => {
  assert.match(row, /if \(!project\) return null/);
 });
 
+test("chat actions show move and project icons", () => {
+ const shellSource = readFileSync(new URL("../components/app-shell.tsx", import.meta.url), "utf8");
+ const menu = shellSource.slice(shellSource.indexOf("<DropdownMenuSubTrigger>"), shellSource.indexOf("<DropdownMenuItem\n                    onClick={() => void updateChatFlags", shellSource.indexOf("<DropdownMenuSubTrigger>")));
+ assert.match(menu, /<FolderInput className="size-3\.5" \/>/);
+ assert.match(menu, /<ProjectAvatar/);
+ assert.match(menu, /icon=\{project\.icon \|\| "folder"\}/);
+ assert.match(menu, /hasLogo=\{Boolean\(project\.logoStoredName\)\}/);
+});
+
 test("Project Hub uploads use the normal chat JSON-base64 contract", () => {
  assert.match(projectHomeSource, /headers: \{ "Content-Type": "application\/json" \}/);
  assert.match(projectHomeSource, /data: await fileToBase64\(file\)/);

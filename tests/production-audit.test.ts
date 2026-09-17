@@ -128,6 +128,30 @@ test("upsertMessage patches one message without dropping list metadata", () => {
   assert.equal(listChatsForUser().find((item) => item.id === chat.id)?.title, "Checkpoint");
 });
 
+test("streaming message checkpoints preserve a project move made by another process", () => {
+  const { appendMessage, createChat, getChat, updateChat, upsertMessage } = modules[0];
+  const { getDatabase } = modules[1];
+  const chat = createChat("Moving chat");
+  appendMessage(chat.id, { role: "user", content: "keep working" });
+
+  // Simulate the web process moving the chat while the worker still holds its
+  // pre-run object in memory. Both JSON and the list projection are durable.
+  getChat(chat.id);
+  getDatabase().prepare(
+    `UPDATE chats
+     SET data = json_set(data, '$.projectId', ?), updated_at = ?
+     WHERE id = ?`,
+  ).run("project-during-run", new Date().toISOString(), chat.id);
+  getDatabase().prepare("UPDATE chat_list SET project_id = ? WHERE id = ?")
+    .run("project-during-run", chat.id);
+
+  const assistantId = randomUUID();
+  upsertMessage(chat.id, { id: assistantId, role: "assistant", content: "finished" });
+  updateChat(chat.id, { runStatus: "completed" });
+
+  assert.equal(getChat(chat.id)?.projectId, "project-during-run");
+});
+
 test("chat list poll is 30s idle and 10s while a run is active", () => {
   assert.equal(CHAT_LIST_POLL_IDLE_MS, 30_000);
   assert.equal(CHAT_LIST_POLL_ACTIVE_MS, 10_000);
