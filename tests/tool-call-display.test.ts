@@ -18,8 +18,105 @@ import {
   truncateToolText,
   workspaceIdFromLink,
 } from "../lib/tool-call-display";
+import {
+  appendTextMessagePart,
+  reconcileMessageParts,
+  updateThinkingMessagePart,
+  upsertToolMessagePart,
+  type MessagePartLike,
+} from "../lib/message-parts";
 
 type LayoutTool = { id: string; callId?: string; name?: string; kind?: string; status?: string; input?: string; result?: string; todos?: Array<{ content: string }> };
+type ReconcileTool = {
+  id: string;
+  name: string;
+  status: string;
+  kind?: string;
+  result?: string;
+  todos?: Array<{ content: string }>;
+};
+type ReconcilePart = MessagePartLike<ReconcileTool>;
+
+test("reconciles flat text and tools into a compaction-only message", () => {
+  const parts = reconcileMessageParts<ReconcileTool, ReconcilePart>({
+    parts: [{ type: "compaction", status: "completed", afterTokens: 12_000 }],
+    content: "Final answer",
+    tools: [{
+      id: "read-1",
+      name: "read_file",
+      status: "completed",
+      result: "file contents",
+    }],
+  });
+
+  assert.deepEqual(parts.map((part) => part.type), ["compaction", "tool", "text"]);
+  assert.equal(parts.filter((part) => part.type === "tool").length, 1);
+  assert.equal(parts.filter((part) => part.type === "text").length, 1);
+  const finalPart = parts.at(-1);
+  assert.equal(finalPart?.type === "text" ? finalPart.content : "", "Final answer");
+});
+
+test("keeps complete ordered message parts without duplicating flat projections", () => {
+  const original: ReconcilePart[] = [
+    { type: "thinking", content: "Checking", done: true, durationMs: 500 },
+    { type: "tool", id: "read-1", name: "read_file", status: "completed", result: "ok" },
+    { type: "text", content: "Final answer" },
+    { type: "compaction", status: "completed", afterTokens: 9_000 },
+  ];
+  const parts = reconcileMessageParts<ReconcileTool, ReconcilePart>({
+    parts: original,
+    content: "Final answer",
+    thinking: "Checking",
+    thinkingDone: true,
+    thinkingDurationMs: 500,
+    tools: [{ id: "read-1", name: "read_file", status: "completed", result: "ok" }],
+  });
+
+  assert.deepEqual(parts, original);
+});
+
+test("deduplicates tool updates by stable id and keeps the final todo state", () => {
+  const parts = reconcileMessageParts<ReconcileTool, ReconcilePart>({
+    parts: [
+      { type: "tool", id: "todo-run", name: "write_todos", kind: "todo", status: "running", todos: [{ content: "Old" }] },
+      { type: "tool", id: "todo-run", name: "write_todos", kind: "todo", status: "completed", todos: [{ content: "New" }] },
+    ],
+    content: "",
+    tools: [{
+      id: "todo-run",
+      name: "write_todos",
+      kind: "todo",
+      status: "completed",
+      todos: [{ content: "Final" }],
+    }],
+  });
+
+  const todos = parts.filter((part) => part.type === "tool");
+  assert.equal(todos.length, 1);
+  assert.equal(todos[0].status, "completed");
+  assert.deepEqual(todos[0].todos, [{ content: "Final" }]);
+});
+
+test("preserves thinking, tool, and text event order while extending final text", () => {
+  const parts: ReconcilePart[] = [];
+  updateThinkingMessagePart<ReconcileTool>(parts, { text: "Reasoning", replace: true });
+  appendTextMessagePart<ReconcileTool>(parts, "Answer");
+  upsertToolMessagePart<ReconcileTool>(parts, { id: "read-1", name: "read_file", status: "running" });
+  upsertToolMessagePart<ReconcileTool>(parts, { id: "read-1", name: "read_file", status: "completed", result: "ok" });
+  appendTextMessagePart<ReconcileTool>(parts, " continued");
+
+  const reconciled = reconcileMessageParts<ReconcileTool, ReconcilePart>({
+    parts,
+    content: "Answer continued",
+    tools: [{ id: "read-1", name: "read_file", status: "completed", result: "ok" }],
+  });
+  assert.deepEqual(reconciled.map((part) => part.type), ["thinking", "text", "tool", "text"]);
+  assert.equal(reconciled[0].type === "thinking" ? reconciled[0].done : false, true);
+  assert.equal(
+    reconciled.filter((part) => part.type === "text").map((part) => part.content).join(""),
+    "Answer continued",
+  );
+});
 
 test("classifies system context compaction as a tool-like chip", () => {
  assert.equal(classifyToolKind("context_compaction"), "compaction");

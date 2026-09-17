@@ -173,6 +173,16 @@ test("terminal events and chat state commit before the worker lease is released"
   assert.ok(cursorTerminal.indexOf("updateJob(job.id") > cursorEmit);
 });
 
+test("alternative-provider checkpoints persist a complete ordered message projection", () => {
+  const provider = readFileSync(path.join(root, "lib", "providers", "runner.ts"), "utf8");
+  assert.match(provider, /const durableMessageProjection = \(\) =>/);
+  assert.match(provider, /reconcileMessageParts\(\{/);
+  assert.match(provider, /appendTextMessagePart\(parts, value\)/);
+  assert.match(provider, /upsertToolMessagePart\(parts, normalizedTool\)/);
+  assert.match(provider, /updateThinkingMessagePart\(parts, data\)/);
+  assert.match(provider, /compactMessagePartsForPersistence\(durableParts\)/);
+});
+
 test("canonical timeline keeps durable tool kinds for correct visualization", () => {
   const converter = readFileSync(path.join(root, "lib", "runtime", "from-run-event.ts"), "utf8");
   const reducer = readFileSync(path.join(root, "lib", "timeline", "reducer.ts"), "utf8");

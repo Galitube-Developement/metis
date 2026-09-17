@@ -124,6 +124,7 @@ import {
 } from "@/lib/subagent-bar";
 import { PlanToolCallCard, ToolCallGroup, type ActivityEntry, type ToolCallData } from "@/components/tool-call-chip";
 import { canvasFromToolPayload, classifyToolKind, isToolRunning, layoutAssistantParts, mergeChatMessages, planFromToolPayload, remoteClientHostnameMap, todosFromToolPayload, workspaceIdFromLink } from "@/lib/tool-call-display";
+import { reconcileMessageParts } from "@/lib/message-parts";
 import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
 import {
@@ -1558,14 +1559,8 @@ function mapApiMessages(
       ? m.content.replace(/^⚠\s*/, "").trim() || "Agent run failed."
       : "";
     const visibleTools = (m.tools || []).filter((tool) => !isLegacyCodexNoiseTool(tool));
-    const toolsById = new Map(visibleTools.map((tool) => [tool.id, tool]));
     const persistedParts = (m.parts as MsgPart[] | undefined)
-      ?.map((part) => {
-        if (part.type !== "tool") return part;
-        const fullTool = toolsById.get(part.id);
-        return fullTool ? { ...fullTool, ...part, type: "tool" as const } : part;
-      })
-      .filter((part) => part.type !== "tool" || !isLegacyCodexNoiseTool(part));
+      ?.filter((part) => part.type !== "tool" || !isLegacyCodexNoiseTool(part));
     const base = {
       id: m.id,
       role: m.role,
@@ -1582,7 +1577,16 @@ function mapApiMessages(
       runMetadata: m.runMetadata,
       attachments: m.attachments,
     };
-    return { ...base, parts: base.parts ?? partsFromFlat(base) };
+    return {
+      ...base,
+      parts: reconcileMessageParts({
+        parts: base.parts,
+        content: base.content,
+        thinking: base.thinking,
+        thinkingDone: base.thinkingDone,
+        tools: base.tools,
+      }),
+    };
   });
 }
 

@@ -8,6 +8,12 @@ import {
 } from "@/lib/db-store";
 import type { MessagePart } from "@/lib/store";
 import {
+  appendTextMessagePart,
+  reconcileMessageParts,
+  updateThinkingMessagePart,
+  upsertToolMessagePart,
+} from "@/lib/message-parts";
+import {
   findActiveConnection,
   getProviderConnection,
   getProviderConnectionSecret,
@@ -30,7 +36,10 @@ import { modeById } from "@/lib/modes";
 import { estimateProviderInputTokens } from "@/lib/providers/adapters/provider-support";
 import { activeInFlightTool } from "@/lib/providers/stream-guard";
 import { logError } from "@/lib/error-logs";
-import { persistToolsForMessage } from "@/lib/tool-persistence";
+import {
+  compactMessagePartsForPersistence,
+  persistToolsForMessage,
+} from "@/lib/tool-persistence";
 import { recordSignal } from "@/lib/model-telemetry";
 import { providerModelsForConnection } from "@/lib/providers/discovery";
 import { contextWindowForSelection } from "@/lib/context-window";
@@ -165,21 +174,28 @@ export async function runAlternativeProviderJob(
     appendRunEvent(job.id, job.chatId, job.userId, event, data);
   let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
   let checkpointDirty = false;
+  const durableMessageProjection = () => {
+    const durableTools = tools.length
+      ? persistToolsForMessage(job.chatId, assistantMessageId, tools)
+      : [];
+    const durableParts = reconcileMessageParts({
+      parts,
+      content: text,
+      tools: durableTools,
+    });
+    return {
+      content: text,
+      ...(durableTools.length ? { tools: durableTools } : {}),
+      ...(durableParts.length
+        ? { parts: compactMessagePartsForPersistence(durableParts) }
+        : {}),
+    };
+  };
   const checkpointNow = () => {
     upsertMessage(job.chatId, {
       id: assistantMessageId,
       role: "assistant",
-      content: text,
-      ...(tools.length
-        ? {
-            tools: persistToolsForMessage(
-              job.chatId,
-              assistantMessageId,
-              tools,
-            ),
-          }
-        : {}),
-      ...(parts.length ? { parts } : {}),
+      ...durableMessageProjection(),
     });
     checkpointDirty = false;
   };
@@ -235,6 +251,7 @@ export async function runAlternativeProviderJob(
     if (!value) return;
     markProviderProgress();
     text += value;
+    appendTextMessagePart(parts, value);
     checkpoint();
     emit("text", { text: value });
   };
@@ -262,6 +279,7 @@ export async function runAlternativeProviderJob(
     } else {
       tools.push(normalizedTool);
     }
+    upsertToolMessagePart(parts, normalizedTool);
     checkpoint(true);
     emit("tool", {
       callId: normalizedTool.id,
@@ -290,6 +308,8 @@ export async function runAlternativeProviderJob(
     durationMs?: number;
   }) => {
     markProviderProgress();
+    updateThinkingMessagePart(parts, data);
+    checkpoint(data.done === true);
     emit("thinking", data);
     if (data.done !== true) {
       emit("status", { status: "running", message: "Thinking…" });
@@ -466,17 +486,7 @@ export async function runAlternativeProviderJob(
     upsertMessage(job.chatId, {
       id: assistantMessageId,
       role: "assistant",
-      content: text,
-      ...(tools.length
-        ? {
-            tools: persistToolsForMessage(
-              job.chatId,
-              assistantMessageId,
-              tools,
-            ),
-          }
-        : {}),
-      ...(parts.length ? { parts } : {}),
+      ...durableMessageProjection(),
       runMetadata: {
         providerId: definition.key,
         modelId: parsed.modelId,
@@ -595,18 +605,8 @@ export async function runAlternativeProviderJob(
       upsertMessage(job.chatId, {
         id: assistantMessageId,
         role: "assistant",
-        content: text,
+        ...durableMessageProjection(),
         errorMessage: message,
-        ...(tools.length
-          ? {
-              tools: persistToolsForMessage(
-                job.chatId,
-                assistantMessageId,
-                tools,
-              ),
-            }
-          : {}),
-        ...(parts.length ? { parts } : {}),
       });
       updateChat(
         job.chatId,
