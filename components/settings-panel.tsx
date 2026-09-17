@@ -67,6 +67,7 @@ import type { AgentMode, ToolPermissionCategory } from "@/lib/store";
 import { TOOL_PERMISSION_CATEGORIES } from "@/lib/modes";
 import { PlanUsagePanel } from "@/components/quota-gauges";
 import { UpdateSettingsPanel, UpdateStatusProbe } from "@/components/update-channel-nav";
+import { BrowserSettingsControls } from "@/components/browser-settings-controls";
 import type { UsageSnapshot } from "@/lib/usage-display";
 
 type ProviderDefinition = {
@@ -1873,14 +1874,23 @@ export function SettingsPanel({
                 </label>
               </section>
 
- <section className="flex flex-col gap-4">
- <div>
- <h3 id="settings-browser" className="text-sm font-medium">Browser</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Browser settings live in the browser tab. Open a chat, switch to Browser, then use the gear next to reload.
-                </p>
- </div>
- </section>
+              <section className="flex flex-col gap-4">
+                <div>
+                  <h3 id="settings-browser" className="text-sm font-medium">Browser</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Turn the embedded browser on or off, and set realtime preview, FPS, and the default viewport.
+                  </p>
+                </div>
+                <BrowserSettingsControls
+                  compact
+                  browserEnabled={browserEnabled}
+                  browserRealtime={browserRealtime}
+                  browserFps={browserFps}
+                  browserViewportWidth={browserViewportWidth}
+                  browserViewportHeight={browserViewportHeight}
+                  onChange={onBrowserSettingsChange}
+                />
+              </section>
 
  <section className="flex flex-col gap-4">
  <div className="flex items-start justify-between gap-3">

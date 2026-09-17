@@ -99,8 +99,8 @@ json_str() {
 }
 
 wait_for_health() {
-  local url="$1" attempt
-  for attempt in $(seq 1 30); do
+  local url="$1" max="${2:-30}" attempt
+  for attempt in $(seq 1 "$max"); do
     if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
       return 0
     fi
@@ -147,6 +147,27 @@ compose() {
   fi
 }
 
+write_docker_reload() {
+  local dest="$1/reload.sh"
+  cat > "$dest" <<'EOF'
+#!/usr/bin/env bash
+# Apply .env and published-port changes. `docker compose restart` keeps the old config.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+if docker compose version >/dev/null 2>&1; then
+  docker compose --env-file .env up -d --remove-orphans --force-recreate
+elif command -v docker-compose >/dev/null 2>&1; then
+  docker-compose --env-file .env up -d --remove-orphans --force-recreate
+else
+  printf 'Error: Docker Compose is required to apply .env changes.\n' >&2
+  exit 1
+fi
+EOF
+  chmod 700 "$dest"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -165,7 +186,8 @@ Options:
   --public-url URL        URL shown to users
   --version TAG          Checkout a release tag such as v1.0.0 after clone/pull
   --commit SHA           Checkout a master commit SHA after clone/pull
-  --native                Force Node.js + systemd instead of Docker
+  --docker                Install with Docker Compose instead of native systemd
+  --native                Install with Node.js + systemd (default)
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
   --dry-run               Collect configuration and print the plan, then exit
@@ -185,6 +207,7 @@ mcp_port="8787"
 service_name="metis-ai"
 public_url=""
 force_native=0
+force_docker=0
 replace_existing=0
 REPLACE_DATA_STASH=""
 release_version=""
@@ -254,6 +277,7 @@ while [[ $# -gt 0 ]]; do
     --version) [[ $# -ge 2 ]] || die "--version requires a value"; release_version="$2"; shift 2 ;;
     --commit) [[ $# -ge 2 ]] || die "--commit requires a value"; commit_sha="$2"; shift 2 ;;
     --native) force_native=1; shift ;;
+    --docker) force_docker=1; shift ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
     --dry-run) dry_run=1; shift ;;
@@ -261,6 +285,10 @@ while [[ $# -gt 0 ]]; do
     *) die "Unknown option: $1 (use --help for usage)" ;;
   esac
 done
+
+if (( force_docker && force_native )); then
+  die "Use either --docker or --native, not both."
+fi
 
 install_dir="${install_dir/#\~/$HOME}"
 agent_cwd="${agent_cwd/#\~/$HOME}"
@@ -316,6 +344,7 @@ Dry run; no files or services will be changed.
   service name:  $service_name
   public url:    $public_url
   version:       ${release_version:-current branch}
+  docker:        $force_docker
   native:        $force_native
   existing:      ${existing_service_state:-none}${existing_service_dir:+ at $existing_service_dir}
 EOF
@@ -650,9 +679,13 @@ fi
 restore_stashed_data "$data_dir"
 
 use_docker=0
-if (( force_native == 0 )) && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+if (( force_docker )); then
+  command -v docker >/dev/null 2>&1 || die "Docker is required for --docker."
+  docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start Docker, then rerun with --docker."
   if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
     use_docker=1
+  else
+    die "Docker Compose is required for --docker."
   fi
 fi
 
@@ -717,9 +750,11 @@ merge_preserved_env "$install_dir/.env"
 apply_merged_runtime_ports "$install_dir/.env"
 
 if (( use_docker )); then
+  write_docker_reload "$install_dir"
   (
     cd "$install_dir"
-    compose up -d --build
+    unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+    compose --env-file .env up -d --build --remove-orphans
   )
 else
 cat > "$install_dir/run-service.sh" <<'EOF'
@@ -796,11 +831,13 @@ EOF
 fi
 fi
 if command -v curl >/dev/null 2>&1; then
-  wait_for_health "http://127.0.0.1:$port/api/status" ||
+  health_tries=30
+  if (( use_docker )); then health_tries=60; fi
+  wait_for_health "http://127.0.0.1:$port/api/status" "$health_tries" ||
     die "The application did not become healthy. Check systemctl status ${service_name}.service or docker compose logs."
   wait_for_frontend_assets "http://127.0.0.1:$port" ||
     die "The application started, but its browser assets are not available. Check systemctl status ${service_name}.service or docker compose logs."
-  wait_for_health "http://127.0.0.1:$mcp_port/health" ||
+  wait_for_health "http://127.0.0.1:$mcp_port/health" "$health_tries" ||
     die "The MCP gateway did not become healthy on port $mcp_port."
 fi
 
@@ -824,5 +861,9 @@ chmod 700 "$install_dir/uninstall.sh"
 if [[ "$ai_chat_host" == "0.0.0.0" ]]; then
   printf 'Warning: the web application is reachable on the local network. Use strong credentials and a firewall or trusted TLS reverse proxy.\n'
 fi
-printf '\n%s installed successfully.\nOpen: %s\nYou can change this. Add: %s\nUninstall: %s --install-dir %q --keep-data\n' \
-  "$APP_NAME" "$public_url" "$install_dir/.env" "$install_dir/uninstall.sh" "$install_dir"
+printf '\n%s installed successfully.\nOpen: %s\nYou can change this. Add: %s\n' \
+  "$APP_NAME" "$public_url" "$install_dir/.env"
+if (( use_docker )); then
+  printf 'Apply: %s\n' "$install_dir/reload.sh"
+fi
+printf 'Uninstall: %s --install-dir %q --keep-data\n' "$install_dir/uninstall.sh" "$install_dir"

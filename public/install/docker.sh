@@ -96,7 +96,7 @@ Dry run; no files, containers, or data will be changed.
   data:      $DATA_DIR
   workspace: $WORKSPACE_DIR
   web:       $BIND:$PORT
-  mcp:       127.0.0.1:$MCP_PORT
+  mcp:       $BIND:$MCP_PORT
   existing:  ${existing_native:-none}${existing_native_dir:+ native at $existing_native_dir}
 EOF
   exit 0
@@ -200,13 +200,22 @@ if [[ ! -f "$ENV_FILE" ]]; then
   upsert_env MCP_ENABLE_OPTIONAL_SERVERS "false"
 fi
 
+if [[ "$BIND" == "0.0.0.0" ]]; then
+  display_host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  display_host="${display_host:-127.0.0.1}"
+else
+  display_host="$BIND"
+fi
 upsert_env METIS_IMAGE "$(quote_env "$IMAGE")"
 upsert_env METIS_RELEASE_VERSION "$(quote_env "$VERSION")"
 upsert_env METIS_DATA_DIR "$(quote_env "$DATA_DIR")"
 upsert_env METIS_WORKSPACE "$(quote_env "$WORKSPACE_DIR")"
 upsert_env PORT "$PORT"
+upsert_env AI_CHAT_HOST "$(quote_env "$BIND")"
 upsert_env AI_CHAT_BIND "$(quote_env "$BIND")"
+upsert_env AI_CHAT_PUBLIC_URL "$(quote_env "http://${display_host}:${PORT}")"
 upsert_env MCP_PORT "$MCP_PORT"
+upsert_env MCP_PUBLIC_URL "$(quote_env "http://${display_host}:${MCP_PORT}")"
 
 cat > "$COMPOSE_FILE" <<'EOF'
 services:
@@ -222,7 +231,10 @@ services:
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
       AI_CHAT_HOST: "0.0.0.0"
       PORT: "3100"
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PUBLIC_URL: http://mcp:8787
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -233,12 +245,12 @@ services:
       - ${METIS_DATA_DIR:?METIS_DATA_DIR is required}:/data
       - ${METIS_WORKSPACE:?METIS_WORKSPACE is required}:/workspace
     ports:
-      - ${AI_CHAT_BIND:-127.0.0.1}:${PORT:-3100}:3100
+      - "${AI_CHAT_HOST:-127.0.0.1}:${PORT:-3100}:3100"
     depends_on:
       worker:
         condition: service_started
       mcp:
-        condition: service_started
+        condition: service_healthy
 
   worker:
     image: ${METIS_IMAGE:?METIS_IMAGE is required}
@@ -251,12 +263,16 @@ services:
       CHAT_DATA_DIR: /data
       AI_CHAT_ROOT: /app
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PUBLIC_URL: http://mcp:8787
     volumes:
       - ${METIS_DATA_DIR:?METIS_DATA_DIR is required}:/data
       - ${METIS_WORKSPACE:?METIS_WORKSPACE is required}:/workspace
     depends_on:
-      - mcp
+      mcp:
+        condition: service_healthy
 
   mcp:
     image: ${METIS_IMAGE:?METIS_IMAGE is required}
@@ -269,15 +285,43 @@ services:
       CHAT_DATA_DIR: /data
       AI_CHAT_ROOT: /app
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
-      MCP_PORT: "8787"
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8787"
+      MCP_PUBLIC_URL: http://mcp:8787
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
       - ${METIS_DATA_DIR:?METIS_DATA_DIR is required}:/data
       - ${METIS_WORKSPACE:?METIS_WORKSPACE is required}:/workspace
     ports:
-      - 127.0.0.1:${MCP_PORT:-8787}:8787
+      - "${AI_CHAT_HOST:-127.0.0.1}:${MCP_PORT:-8787}:8787"
 EOF
 
+cat > "$INSTALL_DIR/reload.sh" <<'EOF'
+#!/usr/bin/env bash
+# Apply .env and published-port changes. `docker compose restart` keeps the old config.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+if docker compose version >/dev/null 2>&1; then
+  docker compose --env-file .env up -d --remove-orphans --force-recreate
+elif command -v docker-compose >/dev/null 2>&1; then
+  docker-compose --env-file .env up -d --remove-orphans --force-recreate
+else
+  printf 'Error: Docker Compose is required to apply .env changes.\n' >&2
+  exit 1
+fi
+EOF
+chmod 700 "$INSTALL_DIR/reload.sh"
+
+unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull
 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
 
@@ -286,6 +330,13 @@ for attempt in $(seq 1 60); do
     break
   fi
   [[ "$attempt" -eq 60 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 app >&2 || true; fail "Metis did not become healthy on port $PORT."; }
+  sleep 2
+done
+for attempt in $(seq 1 30); do
+  if curl --fail --silent --max-time 2 "http://127.0.0.1:${MCP_PORT}/health" >/dev/null 2>&1; then
+    break
+  fi
+  [[ "$attempt" -eq 30 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 mcp >&2 || true; fail "The MCP gateway did not become healthy on port $MCP_PORT."; }
   sleep 2
 done
 
@@ -309,6 +360,6 @@ cat > "$MANIFEST_FILE" <<EOF
 }
 EOF
 chmod 600 "$MANIFEST_FILE"
-printf 'Metis AI %s is running.\nOpen: http://%s:%s\nYou can change this. Add: %s\n' "$VERSION" "$BIND" "$PORT" "$ENV_FILE"
+printf 'Metis AI %s is running.\nOpen: http://%s:%s\nYou can change this. Add: %s\nApply: %s\n' "$VERSION" "$display_host" "$PORT" "$ENV_FILE" "$INSTALL_DIR/reload.sh"
 printf 'Install manifest: %s\n' "$MANIFEST_FILE"
 printf 'Upgrade: rerun this installer with --version vX.Y.Z or --version latest\n'

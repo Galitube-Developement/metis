@@ -84,7 +84,7 @@ bash metis-docker-install.sh --version latest
 Für reproduzierbare Installationen kann ein konkreter Release-Tag verwendet werden:
 
 ```bash
-bash metis-docker-install.sh --version v1.0.6
+bash metis-docker-install.sh --version v1.0.7
 ```
 
 Ein Upgrade wird mit demselben Befehl und einer neuen Version ausgeführt. Die
@@ -96,12 +96,11 @@ startet die Compose-Services mit `docker compose pull` und `up -d` neu.
 
 The versioned Docker release installer above is recommended for production.
 This legacy cross-platform bootstrap remains useful for development checkouts
-or native fallback installations. When it detects Docker, it uses the current
-repository source; use the versioned installer above when reproducibility is
-required. Use `--native` / `-Native` to keep the Node.js +
-systemd/launchd/Task Scheduler flow. The one-liner downloads the platform
-installer to a temp file and executes that file — it does not run the installer
-from a pipe.
+or native installations. On Linux it installs native systemd; pass `-- --docker`
+for Compose. On macOS and Windows it uses Docker when available; use `--native` /
+`-Native` to keep the Node.js + launchd/Task Scheduler flow. The one-liner
+downloads the platform installer to a temp file and executes that file — it does
+not run the installer from a pipe.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)"
@@ -163,7 +162,8 @@ macOS use Bash options; Windows uses PowerShell named parameters.
 | Service/task name | `--service-name NAME` | `--service-name NAME` | `-ServiceName NAME` | `metis-ai` / `MetisAI` |
 | Public URL | `--public-url URL` | `--public-url URL` | `-PublicUrl URL` | `http://127.0.0.1:PORT` |
 | No prompts | `--non-interactive` | `--non-interactive` | `-NonInteractive` | off |
-| Native (no Docker) | `--native` | `--native` | `-Native` | off when Docker is available |
+| Native (no Docker) | default | `--native` | `-Native` | Linux default; macOS/Windows off when Docker is available |
+| Docker Compose | `--docker` | auto if Docker | auto if Docker | Linux opt-in |
 | Dry run | `--dry-run` | `--dry-run` | `-DryRun` | off |
 | Skip runtime installation | — | — | `-SkipRuntimeInstall` | off |
 | Show help | `--help` or `-h` | `--help` or `-h` | `-Help` | — |
@@ -232,6 +232,11 @@ With Docker and Compose installed, start the app, worker and MCP gateway with:
 ```bash
 docker compose up --build
 ```
+
+Published ports follow `AI_CHAT_HOST` or `AI_CHAT_BIND` in `.env` (default
+`127.0.0.1`). Set either to `0.0.0.0` for LAN access, then apply with
+`./reload.sh` in the install directory. `docker compose restart` keeps the old
+bind address and environment.
 
 When `METIS_WORKSPACE` is unset, Compose mounts `./workspace` at `/workspace`.
 Set `METIS_WORKSPACE` to use a different host workspace directory.

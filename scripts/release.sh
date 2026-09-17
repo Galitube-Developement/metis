@@ -136,7 +136,8 @@ curl -fsSL https://github.com/${repo}/releases/latest/download/metis-install.sh 
 bash metis-install.sh
 \`\`\`
 
-Native (no Docker): add \`-- --native\` after the bootstrap, or run \`bash metis-install.sh -- --native\`.
+Linux is native systemd by default. Docker: add \`-- --docker\` after the bootstrap, or run \`bash metis-linux.sh --docker\`.
+On macOS, Docker is used when available; add \`-- --native\` to force Node.js + launchd.
 
 ### Windows
 

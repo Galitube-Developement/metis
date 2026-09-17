@@ -4,7 +4,14 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## Unreleased — changes since v1.0.6
+## v1.0.7 — 2026-09-17
+
+- Default the Linux installer to native systemd; use `--docker` for Compose.
+- Expose the sidebar browser settings (workspace, realtime, FPS, viewport) on
+  Settings → General.
+- Fix Docker so `.env` bind/host changes apply, stop the MCP restart loop, and
+  add `reload.sh` (`reload.ps1` on Windows) because `docker compose restart`
+  does not recreate published ports.
 
 ## v1.0.6 — 2026-09-17
 

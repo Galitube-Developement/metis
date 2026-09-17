@@ -60,6 +60,19 @@ test("remote client removal uses the shared confirmation dialog", () => {
   assert.match(settingsSource, /title="Remove remote client\?"/);
 });
 
+test("General settings expose the same browser controls as the sidebar", () => {
+  const general = settingsSource.slice(
+    settingsSource.indexOf('<TabsContent value="general"'),
+    settingsSource.indexOf("</TabsContent>", settingsSource.indexOf('<TabsContent value="general"')),
+  );
+  assert.match(general, /id="settings-browser"/);
+  assert.match(general, /<BrowserSettingsControls/);
+  assert.match(general, /onChange=\{onBrowserSettingsChange\}/);
+  assert.match(general, /browserViewportWidth=\{browserViewportWidth\}/);
+  assert.match(general, /browserViewportHeight=\{browserViewportHeight\}/);
+  assert.doesNotMatch(general, /Browser settings live in the browser tab/);
+});
+
 test("browser storage uses a dedicated manager instead of an inline origin list on General", () => {
   const general = settingsSource.slice(
     settingsSource.indexOf('<TabsContent value="general"'),

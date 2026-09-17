@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { isDockerEnv, rewriteDockerServiceUrl } from "@/lib/docker-urls.mjs";
 
 function env(name: string) {
   return process.env[name]?.trim() || "";
@@ -22,10 +23,14 @@ const port = numberEnv("PORT", 3100);
 const host = env("AI_CHAT_HOST") || "127.0.0.1";
 const publicHost = host === "0.0.0.0" ? "127.0.0.1" : host;
 const publicUrl = env("AI_CHAT_PUBLIC_URL") || `http://${publicHost}:${port}`;
-const internalOrigin = env("AI_CHAT_INTERNAL_ORIGIN") || publicUrl;
+const docker = isDockerEnv();
+const internalOrigin = docker
+  ? rewriteDockerServiceUrl(env("AI_CHAT_INTERNAL_ORIGIN") || "http://app:3100", "app", 3100)
+  : env("AI_CHAT_INTERNAL_ORIGIN") || publicUrl;
 
 function internalUrl(name: string, route: string) {
-  return env(name) || `${internalOrigin.replace(/\/+$/, "")}${route}`;
+  const resolved = env(name) || `${internalOrigin.replace(/\/+$/, "")}${route}`;
+  return rewriteDockerServiceUrl(resolved, "app", 3100);
 }
 
 export const config = {
@@ -54,10 +59,14 @@ export const config = {
   serviceName: env("AI_CHAT_SERVICE_NAME") || "metis-ai",
   port,
   mcpPort: numberEnv("MCP_PORT", 8787),
-  mcpPublicUrl: env("MCP_PUBLIC_URL") || `http://127.0.0.1:${numberEnv("MCP_PORT", 8787)}`,
+  mcpPublicUrl: rewriteDockerServiceUrl(
+    env("MCP_PUBLIC_URL") || `http://127.0.0.1:${numberEnv("MCP_PORT", 8787)}`,
+    "mcp",
+    8787,
+  ),
   mcpBearerToken: env("MCP_BEARER_TOKEN"),
   mcpAllowRemoteAdmin: booleanEnv("MCP_ALLOW_REMOTE_ADMIN"),
-  docker: booleanEnv("METIS_DOCKER"),
+  docker,
   dockerWorkspace: "/workspace",
   allowRootAgents: booleanEnv("AI_CHAT_ALLOW_ROOT_AGENTS"),
   enableOptionalMcp: booleanEnv("MCP_ENABLE_OPTIONAL_SERVERS"),

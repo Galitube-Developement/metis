@@ -57,14 +57,13 @@ test("installer sources do not contain this deployment's machine path", () => {
   }
 });
 
-test("installers default to Docker and keep a native fallback", () => {
-  for (const file of ["linux.sh", "macos.sh"]) {
-    const content = readFileSync(path.join(root, "install", file), "utf8");
-    const publicContent = readFileSync(path.join(installerDir, file), "utf8");
-    for (const source of [content, publicContent]) {
-      assert.match(source, /--native/);
-      assert.match(source, /docker compose/);
-    }
+test("macos and windows installers default to Docker and keep a native fallback", () => {
+  const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
+  const publicMacos = readFileSync(path.join(installerDir, "macos.sh"), "utf8");
+  for (const source of [macos, publicMacos]) {
+    assert.match(source, /--native/);
+    assert.match(source, /docker compose/);
+    assert.match(source, /force_native == 0 \)\) && command -v docker/);
   }
   const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
   assert.match(windows, /-Native/);
@@ -72,6 +71,19 @@ test("installers default to Docker and keep a native fallback", () => {
   assert.equal(existsSync(path.join(root, "Dockerfile")), true);
   assert.equal(existsSync(path.join(root, "docker-compose.yml")), true);
   assert.equal(existsSync(path.join(root, "docker", "entrypoint.sh")), true);
+});
+
+test("linux installer defaults to native systemd and requires --docker", () => {
+  const content = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
+  const publicContent = readFileSync(path.join(installerDir, "linux.sh"), "utf8");
+  for (const source of [content, publicContent]) {
+    assert.match(source, /--docker\s+Install with Docker Compose/);
+    assert.match(source, /--native\s+Install with Node\.js \+ systemd \(default\)/);
+    assert.match(source, /force_docker=1/);
+    assert.match(source, /if \(\( force_docker \)\)/);
+    assert.match(source, /Use either --docker or --native, not both/);
+    assert.doesNotMatch(source, /force_native == 0 \)\) && command -v docker/);
+  }
 });
 
 test("all platform installers expose an explicit network-host option", () => {
@@ -158,6 +170,7 @@ test("the release script publishes every installer option", () => {
   assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.sh/);
   assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.ps1/);
   assert.match(release, /ghcr\.io\/f1shyondrugs\/metis-ai/);
+  assert.match(release, /--docker/);
   assert.doesNotMatch(release, /github\.com\/\$\{owner\}\/metis-ai\/releases/);
 });
 
@@ -426,4 +439,49 @@ test("linux and macos installers start when HOME is unset", () => {
     });
     assert.match(output, /Usage:/);
   }
+});
+
+test("docker compose publishes host bind from .env and does not pin MCP to localhost", () => {
+  const compose = readFileSync(path.join(root, "docker-compose.yml"), "utf8");
+  assert.match(compose, /\$\{AI_CHAT_HOST:-127\.0\.0\.1\}:\$\{PORT:-3100\}:3100/);
+  assert.match(compose, /AI_CHAT_INTERNAL_ORIGIN: http:\/\/app:3100/);
+  assert.match(compose, /MCP_HOST: "0\.0\.0\.0"/);
+  assert.match(compose, /MCP_PUBLIC_URL: http:\/\/mcp:8787/);
+  assert.match(compose, /condition: service_healthy/);
+  assert.doesNotMatch(compose, /127\.0\.0\.1:\$\{MCP_PORT/);
+});
+
+test("docker installer writes reload.sh and honors AI_CHAT_HOST", () => {
+  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
+  assert.match(docker, /reload\.sh/);
+  assert.match(docker, /force-recreate/);
+  assert.match(docker, /upsert_env AI_CHAT_HOST/);
+  assert.match(docker, /AI_CHAT_INTERNAL_ORIGIN: http:\/\/app:3100/);
+  assert.match(docker, /MCP_HOST: "0\.0\.0\.0"/);
+  assert.match(docker, /Apply: %s/);
+  assert.match(docker, /\$\{AI_CHAT_HOST:-127\.0\.0\.1\}:\$\{PORT:-3100\}:3100/);
+  assert.doesNotMatch(docker, /127\.0\.0\.1:\$\{MCP_PORT:-8787\}:8787/);
+});
+
+test("platform docker installers write a reload helper after .env edits", () => {
+  for (const file of ["linux.sh", "macos.sh"]) {
+    const content = readFileSync(path.join(root, "install", file), "utf8");
+    const published = readFileSync(path.join(installerDir, file), "utf8");
+    for (const source of [content, published]) {
+      assert.match(source, /write_docker_reload/);
+      assert.match(source, /Apply: %s/);
+      assert.match(source, /force-recreate/);
+    }
+  }
+  const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
+  assert.match(windows, /reload\.ps1/);
+  assert.match(windows, /force-recreate/);
+});
+
+test("MCP gateway listens on MCP_HOST and defaults to 0.0.0.0 in Docker", () => {
+  const gateway = readFileSync(path.join(root, "lib", "mcp-core", "gateway-core.mjs"), "utf8");
+  assert.match(gateway, /LISTEN_HOST = env\("MCP_HOST"/);
+  assert.match(gateway, /isDockerEnv\(\) \? "0\.0\.0\.0" : "127\.0\.0\.1"/);
+  assert.match(gateway, /httpServer\.listen\(PORT, LISTEN_HOST/);
+  assert.doesNotMatch(gateway, /httpServer\.listen\(PORT, "127\.0\.0\.1"/);
 });

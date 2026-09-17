@@ -508,9 +508,17 @@ foreach ($line in Get-Content -LiteralPath $mergedEnv) {
 }
 
 if ($useDocker) {
+  $reloadPs1 = @"
+# Apply .env and published-port changes. `docker compose restart` keeps the old config.
+Set-Location -LiteralPath $PSScriptRoot
+Remove-Item Env:PORT,Env:MCP_PORT,Env:AI_CHAT_HOST,Env:AI_CHAT_BIND,Env:METIS_DATA_DIR,Env:METIS_WORKSPACE,Env:METIS_IMAGE -ErrorAction SilentlyContinue
+docker compose --env-file .env up -d --remove-orphans --force-recreate
+"@
+  Set-Content -LiteralPath (Join-Path $InstallDir "reload.ps1") -Value $reloadPs1.Trim() -Encoding utf8
   Push-Location $InstallDir
   try {
-    docker compose up -d --build
+    Remove-Item Env:PORT,Env:MCP_PORT,Env:AI_CHAT_HOST,Env:AI_CHAT_BIND,Env:METIS_DATA_DIR,Env:METIS_WORKSPACE,Env:METIS_IMAGE -ErrorAction SilentlyContinue
+    docker compose --env-file .env up -d --build --remove-orphans
   } finally {
     Pop-Location
   }
@@ -606,4 +614,7 @@ if ($aiChatHost -eq "0.0.0.0") {
 Write-Host "`nMetis AI installed successfully."
 Write-Host "Open: $publicUrl"
 Write-Host "You can change this. Add: $(Join-Path $InstallDir '.env')"
+if ($useDocker) {
+  Write-Host "Apply: $(Join-Path $InstallDir 'reload.ps1')"
+}
 Write-Host "Uninstall: $(Join-Path $InstallDir 'uninstall.ps1') -InstallDir `"$InstallDir`" -KeepData"

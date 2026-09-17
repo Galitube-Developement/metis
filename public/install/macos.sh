@@ -66,8 +66,8 @@ json_str() {
 }
 
 wait_for_health() {
-  local url="$1" attempt
-  for attempt in $(seq 1 30); do
+  local url="$1" max="${2:-30}" attempt
+  for attempt in $(seq 1 "$max"); do
     if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
       return 0
     fi
@@ -112,6 +112,27 @@ compose() {
   if docker compose version >/dev/null 2>&1; then docker compose "$@"
   else docker-compose "$@"
   fi
+}
+
+write_docker_reload() {
+  local dest="$1/reload.sh"
+  cat > "$dest" <<'EOF'
+#!/usr/bin/env bash
+# Apply .env and published-port changes. `docker compose restart` keeps the old config.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+if docker compose version >/dev/null 2>&1; then
+  docker compose --env-file .env up -d --remove-orphans --force-recreate
+elif command -v docker-compose >/dev/null 2>&1; then
+  docker-compose --env-file .env up -d --remove-orphans --force-recreate
+else
+  printf 'Error: Docker Compose is required to apply .env changes.\n' >&2
+  exit 1
+fi
+EOF
+  chmod 700 "$dest"
 }
 
 usage() {
@@ -659,9 +680,11 @@ merge_preserved_env "$install_dir/.env"
 apply_merged_runtime_ports "$install_dir/.env"
 
 if (( use_docker )); then
+  write_docker_reload "$install_dir"
   (
     cd "$install_dir"
-    compose up -d --build
+    unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+    compose --env-file .env up -d --build --remove-orphans
   )
 else
 cat > "$install_dir/run-service.sh" <<'EOF'
@@ -734,11 +757,13 @@ write_plist app "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/serve
 write_plist worker "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/worker.ts"
 write_plist mcp "$install_dir/lib/mcp-core/gateway-core.mjs"
 fi
-wait_for_health "http://127.0.0.1:$port/api/status" ||
+health_tries=30
+if (( use_docker )); then health_tries=60; fi
+wait_for_health "http://127.0.0.1:$port/api/status" "$health_tries" ||
   die "The application did not become healthy. Check launchctl, docker compose logs, or the service logs."
 wait_for_frontend_assets "http://127.0.0.1:$port" ||
   die "The application started, but its browser assets are not available. Check launchctl, docker compose logs, or the service logs."
-wait_for_health "http://127.0.0.1:$mcp_port/health" ||
+wait_for_health "http://127.0.0.1:$mcp_port/health" "$health_tries" ||
   die "The MCP gateway did not become healthy on port $mcp_port."
 
 install_method="native"
@@ -761,5 +786,9 @@ chmod 700 "$install_dir/uninstall-macos.sh"
 if [[ "$ai_chat_host" == "0.0.0.0" ]]; then
   printf 'Warning: the web application is reachable on the local network. Use strong credentials and a firewall or trusted TLS reverse proxy.\n'
 fi
-printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: %s\nUninstall: %s --install-dir %q --keep-data\n' \
-  "$public_url" "$install_dir/.env" "$install_dir/uninstall-macos.sh" "$install_dir"
+printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: %s\n' \
+  "$public_url" "$install_dir/.env"
+if (( use_docker )); then
+  printf 'Apply: %s\n' "$install_dir/reload.sh"
+fi
+printf 'Uninstall: %s --install-dir %q --keep-data\n' "$install_dir/uninstall-macos.sh" "$install_dir"

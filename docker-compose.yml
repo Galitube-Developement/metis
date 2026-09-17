@@ -12,20 +12,26 @@ services:
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
       AI_CHAT_HOST: "0.0.0.0"
       PORT: "3100"
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PUBLIC_URL: http://mcp:8787
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
     volumes:
       - ${METIS_DATA_DIR:-./data}:/data
       - ${METIS_WORKSPACE:-./workspace}:/workspace
     ports:
-      - "${AI_CHAT_BIND:-127.0.0.1}:${PORT:-3100}:3100"
+      - "${AI_CHAT_HOST:-127.0.0.1}:${PORT:-3100}:3100"
     depends_on:
-      - worker
-      - mcp
+      worker:
+        condition: service_started
+      mcp:
+        condition: service_healthy
 
   worker:
     image: metis-ai:local
@@ -38,12 +44,16 @@ services:
       CHAT_DATA_DIR: /data
       AI_CHAT_ROOT: /app
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PUBLIC_URL: http://mcp:8787
     volumes:
       - ${METIS_DATA_DIR:-./data}:/data
       - ${METIS_WORKSPACE:-./workspace}:/workspace
     depends_on:
-      - mcp
+      mcp:
+        condition: service_healthy
 
   mcp:
     image: metis-ai:local
@@ -56,10 +66,19 @@ services:
       CHAT_DATA_DIR: /data
       AI_CHAT_ROOT: /app
       AI_CHAT_MCP_STATE_DIR: /data/mcp-state
-      MCP_PORT: ${MCP_PORT:-8787}
+      AI_CHAT_INTERNAL_ORIGIN: http://app:3100
       AI_CHAT_INTERNAL_URL: http://app:3100/api/internal/mcp-question
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8787"
+      MCP_PUBLIC_URL: http://mcp:8787
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
       - ${METIS_DATA_DIR:-./data}:/data
       - ${METIS_WORKSPACE:-./workspace}:/workspace
     ports:
-      - "127.0.0.1:${MCP_PORT:-8787}:${MCP_PORT:-8787}"
+      - "${AI_CHAT_HOST:-127.0.0.1}:${MCP_PORT:-8787}:8787"
