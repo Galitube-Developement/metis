@@ -4,18 +4,24 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## Unreleased — changes since v1.0.5
+## Unreleased — changes since v1.0.6
 
-- Improved browser loading, streaming rendering, and long-chat performance.
-- Hardened native Next updates, updater health checks, version selection, and
-  persisted update jobs.
-- Fixed Codex runs hanging after the last visible token.
-- Moved release publishing to the local account-based workflow; GitHub Actions
+## v1.0.6 — 2026-09-17
+
+- Persist composer drafts, agent-generated chat titles, and explicit-only memories.
+- Let users lock chat titles so agents cannot overwrite them.
+- Keep the chat view stable after completion and reconcile the sending device
+  with the durable server snapshot.
+- Persist automation model options, restyle the split view, and improve live
+  chat plus remote editing.
+- Improve browser loading, streaming rendering, and long-chat performance.
+- Harden network access, production checks, native Next updates, updater health
+  checks, version selection, and persisted update jobs.
+- Move release publishing to the local account-based workflow; GitHub Actions
   no longer publishes releases.
-- Fixed context usage leaking across model/context-tier switches and made native
-  sessions start fresh with compacted recovery context when required.
-- Fixed the sending device missing a persisted assistant response after a live
-  stream completed; it now reconciles with the durable server snapshot.
+- Fix context usage leaking across model/context-tier switches and start native
+  sessions fresh with compacted recovery context when required.
+- Fix Codex runs hanging after the last visible token.
 
 ## v1.0.5 — 2026-09-12
 
