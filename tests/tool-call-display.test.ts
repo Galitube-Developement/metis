@@ -118,6 +118,40 @@ test("preserves thinking, tool, and text event order while extending final text"
   );
 });
 
+test("reconcileMessageParts keeps interleaved text and tools when flat content is shorter or glued", () => {
+  const original: ReconcilePart[] = [
+    { type: "thinking", content: "Checking", done: true },
+    { type: "text", content: "Ich suche zuerst, was herd rollback bedeutet, und führe es dann aus." },
+    { type: "tool", id: "read-1", name: "read_file", status: "completed", result: "ok" },
+    { type: "text", content: "Ich hole den Kontext zu herd rollback." },
+    { type: "tool", id: "search-1", name: "repo_search", status: "completed", result: "ok" },
+    { type: "text", content: "Force-Push ist durch." },
+  ];
+  const glued = original
+    .filter((part) => part.type === "text")
+    .map((part) => part.type === "text" ? part.content : "")
+    .join("");
+  const parts = reconcileMessageParts<ReconcileTool, ReconcilePart>({
+    parts: original,
+    content: glued.slice(0, 80),
+    thinking: "Checking",
+    thinkingDone: true,
+    tools: [
+      { id: "read-1", name: "read_file", status: "completed", result: "ok" },
+      { id: "search-1", name: "repo_search", status: "completed", result: "ok" },
+    ],
+  });
+
+  assert.deepEqual(
+    parts.map((part) => part.type),
+    ["thinking", "text", "tool", "text", "tool", "text"],
+  );
+  assert.equal(
+    parts.filter((part) => part.type === "text").map((part) => part.content).join(""),
+    glued,
+  );
+});
+
 test("classifies system context compaction as a tool-like chip", () => {
  assert.equal(classifyToolKind("context_compaction"), "compaction");
 });
