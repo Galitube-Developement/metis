@@ -10,6 +10,7 @@ import {
   shouldIgnoreComposerEnter,
   shouldStartQueuedFollowUp,
   shouldSyncComposerDom,
+  composerTranscriptInsert,
 } from "../lib/composer-send";
 
 test("composerLiveText prefers non-empty DOM text over stale React state", () => {
@@ -23,6 +24,19 @@ test("shouldSyncComposerDom clears a focused editor after send", () => {
   assert.equal(shouldSyncComposerDom("hello", "hello", true), false);
   assert.equal(shouldSyncComposerDom("hello", "other draft", true), false);
   assert.equal(shouldSyncComposerDom("hello", "other draft", false), true);
+});
+
+test("shouldSyncComposerDom inserts a forced voice transcript while focused", () => {
+  assert.equal(shouldSyncComposerDom("", "spoken text", true), false);
+  assert.equal(shouldSyncComposerDom("", "spoken text", true, true), true);
+  assert.equal(shouldSyncComposerDom("draft", "draft spoken text", true, true), true);
+});
+
+test("composerTranscriptInsert appends spoken text to the live draft", () => {
+  assert.equal(composerTranscriptInsert("", "hello there"), "hello there");
+  assert.equal(composerTranscriptInsert("draft", "hello"), "draft hello");
+  assert.equal(composerTranscriptInsert("  draft  ", "  hello  "), "draft hello");
+  assert.equal(composerTranscriptInsert("draft", "   "), "draft");
 });
 
 test("shouldAcceptRemoteComposerInput rejects a stale draft after local clear", () => {

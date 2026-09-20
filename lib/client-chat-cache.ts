@@ -1,8 +1,28 @@
 const DB_NAME = "metis-client-chat-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "snapshots";
-const MAX_SNAPSHOTS = 24;
+export const MAX_SNAPSHOTS = 8;
+export const MAX_MEMORY_CHAT_SNAPSHOTS = 8;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function pruneMemoryChatCache<K, V>(cache: Map<K, V>, keep: Iterable<K>, max = MAX_MEMORY_CHAT_SNAPSHOTS) {
+  const keepSet = new Set(Array.from(keep));
+  for (const key of [...cache.keys()]) {
+    if (cache.size <= max) return cache;
+    if (!keepSet.has(key)) cache.delete(key);
+  }
+  const protectedKey = Array.from(keepSet)[0];
+  for (const key of [...cache.keys()]) {
+    if (cache.size <= max) break;
+    if (key === protectedKey) continue;
+    cache.delete(key);
+  }
+  return cache;
+}
+
+export function shouldPersistClientChatSnapshot(options: { busy: boolean; incognito?: boolean }) {
+  return !options.busy && !options.incognito;
+}
 
 type CachedSnapshot<T> = {
   key: string;
@@ -85,6 +105,10 @@ export async function writeClientChatSnapshot<T>(scope: string, chatId: string, 
       tx.onerror = () => resolve();
       tx.onabort = () => resolve();
     });
+
+    const countTx = db.transaction(STORE_NAME, "readonly");
+    const count = await requestValue(countTx.objectStore(STORE_NAME).count() as IDBRequest<number>);
+    if ((count || 0) <= MAX_SNAPSHOTS) return;
 
     const readTx = db.transaction(STORE_NAME, "readonly");
     const rows = await requestValue(

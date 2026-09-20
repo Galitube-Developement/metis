@@ -5,11 +5,24 @@ export function composerLiveText(domText: string | null | undefined, stateText: 
   return fromDom.trim() ? fromDom : stateText;
 }
 
-/** While focused, skip live-sync overwrites. Always apply a programmatic clear. */
-export function shouldSyncComposerDom(currentText: string, nextValue: string, focused: boolean) {
+/** While focused, skip live-sync overwrites. Always apply a programmatic clear or forced write (voice). */
+export function shouldSyncComposerDom(
+  currentText: string,
+  nextValue: string,
+  focused: boolean,
+  force = false,
+) {
   if (currentText === nextValue) return false;
+  if (force) return true;
   if (focused && nextValue !== "") return false;
   return true;
+}
+
+export function composerTranscriptInsert(current: string, transcript: string) {
+  const live = current.replace(/\u00a0/g, " ").trim();
+  const spoken = transcript.trim();
+  if (!spoken) return live;
+  return live ? `${live} ${spoken}` : spoken;
 }
 
 export function shouldAcceptRemoteComposerInput(options: {

@@ -59,6 +59,9 @@ test("voice composer exposes cancel via the plus button and drops stale waveform
   assert.match(shellSource, /<X className="size-4" \/>/);
   assert.match(shellSource, /voiceRecording && voiceState === "recording"/);
   assert.match(shellSource, /\[activeChatId, automationsOpen, notesOpen\]/);
+  assert.match(shellSource, /composerTranscriptInsert/);
+  assert.match(shellSource, /setComposerSyncNonce/);
+  assert.match(shellSource, /paintVoiceWaveform/);
 });
 
 test("agent completion uses the bundled default sound unless a custom sound is set", () => {

@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 type RichComposerInputProps = {
   value: string;
   mentionLabels?: string[];
+  syncNonce?: number;
   onChange: (value: string, cursorPosition: number) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
@@ -134,6 +135,7 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
     {
       value,
       mentionLabels = [],
+      syncNonce,
       onChange,
       onKeyDown,
       onPaste,
@@ -148,6 +150,7 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
   ) {
     const editorRef = useRef<HTMLDivElement>(null);
     const selectionRef = useRef<ComposerSelection | null>(null);
+    const lastSyncNonceRef = useRef(syncNonce ?? 0);
     useImperativeHandle(ref, () => editorRef.current as HTMLDivElement);
 
     const captureSelection = () => {
@@ -170,11 +173,14 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
       const element = editorRef.current;
       if (!element) return;
       const current = composerPlainText(element);
-      if (!shouldSyncComposerDom(current, value, document.activeElement === element)) return;
+      const force = syncNonce !== undefined && syncNonce !== lastSyncNonceRef.current;
+      if (syncNonce !== undefined) lastSyncNonceRef.current = syncNonce;
+      if (!shouldSyncComposerDom(current, value, document.activeElement === element, force)) return;
       if (selectionRef.current?.text !== value) selectionRef.current = null;
       element.textContent = value;
       if (value) formatText(element, mentionLabels);
-    }, [mentionLabels, value]);
+      if (force) restoreSelection(element, { start: value.length, end: value.length });
+    }, [mentionLabels, syncNonce, value]);
 
     return (
       <div

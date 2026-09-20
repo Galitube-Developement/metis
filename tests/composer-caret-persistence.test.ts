@@ -12,4 +12,6 @@ test("rich composer preserves its selection across tab visibility changes", () =
   assert.match(source, /selectionRef\.current = \{ \.\.\.offsets, text \}/);
   assert.match(source, /onBlur=\{\(event\) => \{[\s\S]*captureSelection\(\);[\s\S]*formatText\(element, mentionLabels\)/);
   assert.match(source, /onFocus=\{\(event\) => \{[\s\S]*restoreSelection\(element, saved\)/);
+  assert.match(source, /syncNonce/);
+  assert.match(source, /shouldSyncComposerDom\(current, value, document\.activeElement === element, force\)/);
 });

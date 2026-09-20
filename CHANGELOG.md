@@ -4,6 +4,12 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.8 — 2026-09-20
+
+- Insert voice transcripts into the focused mobile composer instead of dropping them after transcription.
+- Paint the recording waveform outside React so chat messages do not re-render at 60fps.
+- Cap client chat snapshots at 8 and skip cache writes while a run is streaming.
+
 ## v1.0.7 — 2026-09-20
 
 - Keep interleaved text between tool groups in chat instead of collapsing every

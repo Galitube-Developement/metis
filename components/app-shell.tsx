@@ -132,6 +132,7 @@ import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
 import {
   composerLiveText,
+  composerTranscriptInsert,
   composerUserEditMeta,
   decideComposerSend,
   isDuplicateComposerSend,
@@ -146,7 +147,9 @@ import { getMetisDeviceId } from "@/lib/metis-device";
 import {
   clearClientChatSnapshots,
   deleteClientChatSnapshot,
+  pruneMemoryChatCache,
   readClientChatSnapshot,
+  shouldPersistClientChatSnapshot,
   writeClientChatSnapshot,
 } from "@/lib/client-chat-cache";
 import { CHAT_LIST_POLL_ACTIVE_MS, CHAT_LIST_POLL_IDLE_MS } from "@/lib/chat-list-poll";
@@ -1852,6 +1855,15 @@ function FileShareEmbed({
   );
 }
 
+function paintVoiceWaveform(root: HTMLDivElement | null, level: number) {
+  if (!root) return;
+  const bars = root.children;
+  for (let index = 0; index < bars.length; index += 1) {
+    const detail = 0.35 + Math.abs(Math.sin(index * 1.73)) * 0.65;
+    (bars[index] as HTMLElement).style.height = `${Math.max(2, 2 + level * (8 + detail * 14))}px`;
+  }
+}
+
 export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const searchParams = useSearchParams();
   const routeChatId = searchParams.get("c");
@@ -2049,7 +2061,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [voiceState, setVoiceState] = useState("idle");
   const [voiceStopSignal, setVoiceStopSignal] = useState(0);
   const [voiceCancelSignal, setVoiceCancelSignal] = useState(0);
-  const [voiceWaveformLevel, setVoiceWaveformLevel] = useState(0);
+  const voiceWaveformRef = useRef<HTMLDivElement>(null);
+  const [composerSyncNonce, setComposerSyncNonce] = useState(0);
   const [monitorData, setMonitorData] = useState<MonitorPayload>({ current: null, history: [] });
   const browserSocketRef = useRef<WebSocket | null>(null);
   const browserStreamObjectUrlRef = useRef<string | null>(null);
@@ -2942,7 +2955,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const resetVoiceComposer = useCallback(() => {
     setVoiceRecording(false);
     setVoiceState("idle");
-    setVoiceWaveformLevel(0);
+    paintVoiceWaveform(voiceWaveformRef.current, 0);
     setVoiceCancelSignal((current) => current + 1);
   }, []);
 
@@ -5472,6 +5485,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // Keep in-memory chat cache warm so switches stay instant
   useEffect(() => {
     if (!activeChatId || activeChatIncognito) return;
+    if (!shouldPersistClientChatSnapshot({ busy })) return;
     const cachedMessages = messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
       ...m,
       streaming: false,
@@ -5523,6 +5537,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       messageOffset: 0,
       hasEarlierMessages: hasEarlierMessages || messages.length > cachedMessages.length,
     });
+    pruneMemoryChatCache(
+      chatCacheRef.current,
+      [activeChatId, ...chats.slice(0, 3).map((chat) => chat.id)],
+    );
   }, [
     activeChatId,
     activeChatIncognito,
@@ -5550,6 +5568,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     pendingApproval,
     messageOffset,
     hasEarlierMessages,
+    chats,
   ]);
 
   // Persist the warm snapshot after activity settles. This makes returning to
@@ -5557,6 +5576,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // revalidated in the background. Never persist incognito chats.
   useEffect(() => {
     if (!activeChatId || activeChatIncognito) return;
+    if (!shouldPersistClientChatSnapshot({ busy })) return;
     const timer = window.setTimeout(() => {
       const snapshot = chatCacheRef.current.get(activeChatId);
       if (snapshot) void writeClientChatSnapshot(chatCacheScope, activeChatId, snapshot);
@@ -8922,6 +8942,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <RichComposerInput
             ref={textareaRef}
             value={input}
+            syncNonce={composerSyncNonce}
             mentionLabels={references.map((reference) => reference.label)}
             onChange={handleComposerInputChange}
             onPaste={onComposerPaste}
@@ -8986,21 +9007,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           />
           {voiceRecording && voiceState === "recording" ? (
             <div
+              ref={voiceWaveformRef}
               className="pointer-events-none absolute inset-0 z-10 flex items-center justify-between overflow-hidden bg-transparent px-3"
               aria-label="Audio waveform"
             >
-              {Array.from({ length: 72 }, (_, index) => {
-                const detail = 0.35 + Math.abs(Math.sin(index * 1.73)) * 0.65;
-                return (
+              {Array.from({ length: 72 }, (_, index) => (
                   <span
                     key={index}
                     className="h-1 w-px rounded-full bg-primary/65 transition-[height]"
-                    style={{
-                      height: `${Math.max(2, 2 + voiceWaveformLevel * (8 + detail * 14))}px`,
-                    }}
+                    style={{ height: "2px" }}
                   />
-                );
-              })}
+              ))}
             </div>
           ) : null}
         </div>
@@ -9019,12 +9036,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             }}
             onRecordingChange={setVoiceRecording}
             onStateChange={setVoiceState}
-            onWaveformLevelChange={setVoiceWaveformLevel}
+            onWaveformLevelChange={(level) => paintVoiceWaveform(voiceWaveformRef.current, level)}
             stopSignal={voiceStopSignal}
             cancelSignal={voiceCancelSignal}
             onTranscript={(transcript) => {
-              const next = input.trim() ? `${input.trim()} ${transcript}` : transcript;
+              const live = composerLiveText(textareaRef.current?.innerText, input);
+              const next = composerTranscriptInsert(live, transcript);
               handleComposerInputChange(next, next.length);
+              setComposerSyncNonce((current) => current + 1);
               window.requestAnimationFrame(() => textareaRef.current?.focus());
             }}
           />
