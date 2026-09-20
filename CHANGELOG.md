@@ -4,8 +4,11 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## v1.0.7 — 2026-09-17
+## v1.0.7 — 2026-09-20
 
+- Keep interleaved text between tool groups in chat instead of collapsing every
+  tool call to the bottom of the message.
+- Type `docker-urls` so the production build can import it.
 - Default the Linux installer to native systemd; use `--docker` for Compose.
 - Expose the sidebar browser settings (workspace, realtime, FPS, viewport) on
   Settings → General.
