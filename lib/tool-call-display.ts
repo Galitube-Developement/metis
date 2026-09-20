@@ -4,10 +4,7 @@ function joinAssistantText(left: string, right: string): string {
   if (!left) return right;
   if (!right) return left;
   if (/\s$/.test(left) || /^\s/.test(right)) return left + right;
-  if (/[a-zäöüß]{3,}[.!?]$/.test(left) && /^[A-ZÄÖÜ]/.test(right)) {
-    return `${left}\n\n${right}`;
-  }
-  return left + right;
+  return `${left}\n\n${right}`;
 }
 
 const RUNNING_TOOL_STATUSES = new Set([

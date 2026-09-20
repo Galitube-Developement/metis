@@ -131,6 +131,12 @@ export function reconcileMessageParts<
           if (last?.type === "text") last.content += suffix;
           else parts.push({ type: "text", content: suffix } as TPart);
         }
+      } else if (textIndexes.length > 1) {
+        // Flat `content` is a concatenated projection. Replacing every text
+        // part with that blob moves all tools to the bottom and glues the
+        // utterances that should stay between tool groups.
+      } else if (existingText.length >= input.content.length && textIndexes.length === 1) {
+        // The ordered parts already have the fuller text; do not truncate.
       } else {
         const insertionIndex = textIndexes[0] ?? parts.length;
         for (let index = textIndexes.length - 1; index >= 0; index -= 1) {
