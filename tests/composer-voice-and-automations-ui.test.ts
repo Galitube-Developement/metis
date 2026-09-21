@@ -14,6 +14,10 @@ const voiceSource = readFileSync(
   new URL("../components/voice-input.tsx", import.meta.url),
   "utf8",
 );
+const clientConfigSource = readFileSync(
+  new URL("../lib/client-config.ts", import.meta.url),
+  "utf8",
+);
 const automationsSource = readFileSync(
   new URL("../components/automations-panel.tsx", import.meta.url),
   "utf8",
@@ -62,6 +66,20 @@ test("voice composer exposes cancel via the plus button and drops stale waveform
   assert.match(shellSource, /composerTranscriptInsert/);
   assert.match(shellSource, /setComposerSyncNonce/);
   assert.match(shellSource, /paintVoiceWaveform/);
+});
+
+test("voice recording keeps the parent waveform callback stable across recording renders", () => {
+  assert.match(shellSource, /const handleVoiceWaveformLevelChange = useCallback\(\(level: number\) => \{/);
+  assert.match(shellSource, /onWaveformLevelChange=\{handleVoiceWaveformLevelChange\}/);
+  assert.doesNotMatch(shellSource, /onWaveformLevelChange=\{\(level\) => paintVoiceWaveform/);
+});
+
+test("login starts with an empty username and exposes an accessible password visibility toggle", () => {
+  assert.match(clientConfigSource, /NEXT_PUBLIC_CHAT_USERNAME\?\.trim\(\) \|\| ""/);
+  assert.doesNotMatch(clientConfigSource, /\|\| "admin"/);
+  assert.match(shellSource, /type=\{passwordVisible \? "text" : "password"\}/);
+  assert.match(shellSource, /aria-label=\{passwordVisible \? "Hide password" : "Show password"\}/);
+  assert.match(shellSource, /<EyeOff className="size-4" aria-hidden="true" \/> : <Eye className="size-4" aria-hidden="true" \/>/);
 });
 
 test("agent completion uses the bundled default sound unless a custom sound is set", () => {

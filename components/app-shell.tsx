@@ -1876,6 +1876,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, []);
   const [username, setUsername] = useState(clientConfig.username);
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [authError, setAuthError] = useState("");
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const workspaceDefaultCwd = status?.agentCwd?.trim() || defaultCwd.trim() || clientConfig.defaultCwd;
@@ -2062,6 +2063,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [voiceStopSignal, setVoiceStopSignal] = useState(0);
   const [voiceCancelSignal, setVoiceCancelSignal] = useState(0);
   const voiceWaveformRef = useRef<HTMLDivElement>(null);
+  const handleVoiceWaveformLevelChange = useCallback((level: number) => {
+    paintVoiceWaveform(voiceWaveformRef.current, level);
+  }, []);
   const [composerSyncNonce, setComposerSyncNonce] = useState(0);
   const [monitorData, setMonitorData] = useState<MonitorPayload>({ current: null, history: [] });
   const browserSocketRef = useRef<WebSocket | null>(null);
@@ -9036,7 +9040,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             }}
             onRecordingChange={setVoiceRecording}
             onStateChange={setVoiceState}
-            onWaveformLevelChange={(level) => paintVoiceWaveform(voiceWaveformRef.current, level)}
+            onWaveformLevelChange={handleVoiceWaveformLevelChange}
             stopSignal={voiceStopSignal}
             cancelSignal={voiceCancelSignal}
             onTranscript={(transcript) => {
@@ -9716,14 +9720,27 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             className="h-10 rounded-xl"
             placeholder="Username"
           />
-          <Input
-            type="password"
-            autoFocus
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            className="h-10 rounded-xl"
-          />
+          <div className="relative">
+            <Input
+              type={passwordVisible ? "text" : "password"}
+              autoFocus
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              aria-label="Password"
+              className="h-10 rounded-xl pr-10"
+            />
+            <button
+              type="button"
+              onClick={() => setPasswordVisible((visible) => !visible)}
+              aria-label={passwordVisible ? "Hide password" : "Show password"}
+              aria-pressed={passwordVisible}
+              title={passwordVisible ? "Hide password" : "Show password"}
+              className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-xl text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              {passwordVisible ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+            </button>
+          </div>
           <Button type="submit" className="h-10 w-full rounded-xl">
             Continue
           </Button>
