@@ -34,6 +34,32 @@ import {
   type ProviderResult,
 } from "./contract";
 
+export function codexMcpOnlyConfig() {
+  return {
+    features: {
+      shell_tool: false,
+      unified_exec: false,
+      apps: false,
+      browser_use: false,
+      browser_use_external: false,
+      browser_use_full_cdp_access: false,
+      computer_use: false,
+      multi_agent: false,
+      goals: false,
+      hooks: false,
+      image_generation: false,
+      in_app_browser: false,
+      plugins: false,
+      skill_mcp_dependency_install: false,
+      skill_search: false,
+      tool_suggest: false,
+      view_image: false,
+      workspace_dependencies: false,
+    },
+    web_search: "disabled",
+  } as const;
+}
+
 export function codexTool(
   item: Record<string, unknown>,
   status: ToolPart["status"] = "completed",
@@ -213,6 +239,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
       : { command: mcp.command, args: mcp.args, env: mcp.env };
   const codexConfig: NonNullable<CodexOptions["config"]> = {
     ...(codexHome ? { cli_auth_credentials_store: "file" } : {}),
+    ...codexMcpOnlyConfig(),
     mcp_servers: { metis_ai: codexMcp },
   };
   const codex = new Codex({

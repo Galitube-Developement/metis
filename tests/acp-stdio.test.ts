@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyAcpSessionUpdate, mcpServersForAcp, runAcpStdioAgent } from "../lib/providers/acp-stdio";
+import {
+  applyAcpSessionUpdate,
+  mcpServersForAcp,
+  rejectedAcpPermissionResult,
+  runAcpStdioAgent,
+} from "../lib/providers/acp-stdio";
 
 test("applyAcpSessionUpdate maps MCP-looking tools onto canonical parts", () => {
   const tools: Array<{ name: string; source?: string; kind?: string }> = [];
@@ -28,6 +33,22 @@ test("mcpServersForAcp keeps HTTP Authorization headers", () => {
   assert.equal(mapped[0]?.type, "http");
   assert.equal(mapped[0]?.url, "http://127.0.0.1:8787");
   assert.deepEqual(mapped[0]?.headers, [{ name: "Authorization", value: "Bearer x" }]);
+});
+
+test("ACP permission requests are rejected instead of approving native tools", () => {
+  assert.deepEqual(
+    rejectedAcpPermissionResult({
+      options: [
+        { optionId: "allow-once", kind: "allow_once" },
+        { optionId: "deny-once", kind: "reject_once" },
+      ],
+    }),
+    { outcome: { outcome: "selected", optionId: "deny-once" } },
+  );
+  assert.deepEqual(
+    rejectedAcpPermissionResult({ options: [{ optionId: "allow-once", kind: "allow_once" }] }),
+    { outcome: { outcome: "cancelled" } },
+  );
 });
 
 test("runAcpStdioAgent drives a fake ACP child and surfaces tools + text", async () => {

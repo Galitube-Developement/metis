@@ -47,6 +47,10 @@ function writeResult(child: ChildProcess, id: number, result: unknown) {
   writeLine(child, { jsonrpc: "2.0", id, result });
 }
 
+function writeError(child: ChildProcess, id: number | string, code: number, message: string) {
+  writeLine(child, { jsonrpc: "2.0", id, error: { code, message } });
+}
+
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -83,8 +87,17 @@ export function applyAcpSessionUpdate(
   }
 }
 
-function permissionResult() {
-  return { outcome: { outcome: "selected", optionId: "allow-once" } };
+export function rejectedAcpPermissionResult(params: unknown) {
+  const options = Array.isArray(asRecord(params).options)
+    ? asRecord(params).options as unknown[]
+    : [];
+  const rejection = options
+    .map(asRecord)
+    .find((option) => option.kind === "reject_once" || option.kind === "reject_always");
+  const optionId = rejection && asString(rejection.optionId);
+  return optionId
+    ? { outcome: { outcome: "selected", optionId } }
+    : { outcome: { outcome: "cancelled" } };
 }
 
 export async function runAcpStdioAgent(input: AcpRunInput): Promise<{ sessionId?: string }> {
@@ -117,10 +130,15 @@ export async function runAcpStdioAgent(input: AcpRunInput): Promise<{ sessionId?
     if (typeof record.method === "string" && (typeof rpcId === "number" || typeof rpcId === "string")) {
       const method = record.method;
       if (method === "session/request_permission" || method.endsWith("/request_permission")) {
-        writeResult(child, rpcId as number, permissionResult());
+        writeResult(child, rpcId as number, rejectedAcpPermissionResult(record.params));
         return;
       }
-      writeResult(child, rpcId as number, {});
+      writeError(
+        child,
+        rpcId,
+        -32601,
+        `Native ACP client method ${method} is disabled; use the Metis MCP gateway.`,
+      );
       return;
     }
     if ((typeof rpcId === "number" || typeof rpcId === "string") && pending.has(Number(rpcId))) {
@@ -157,7 +175,7 @@ export async function runAcpStdioAgent(input: AcpRunInput): Promise<{ sessionId?
     writeRpc(child, initId, "initialize", {
       protocolVersion: 1,
       clientInfo: { name: input.clientName || "metis-ai", version: "1.0.0" },
-      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
     });
     await wait(initId);
 

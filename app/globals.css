@@ -909,6 +909,13 @@
   margin-bottom: 8px;
 }
 
+.automation-list-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .automation-list-header h2 {
   color: var(--automation-text);
   font-size: 18px;
@@ -924,6 +931,37 @@
   color: var(--automation-dim);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.automation-create-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--automation-border-raised);
+  border-radius: 8px;
+  color: var(--automation-text);
+  background: var(--automation-surface);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.automation-create-button:hover {
+  border-color: #454545;
+  color: var(--automation-brand);
+  background: var(--automation-surface-active);
+}
+
+.automation-create-button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.automation-create-button svg {
+  width: 14px;
+  height: 14px;
 }
 
 .automation-list-items {
@@ -961,6 +999,7 @@
 
 .automation-list-row:focus-visible,
 .automation-list-select:focus-visible,
+.automation-create-button:focus-visible,
 .automation-list-row-actions button:focus-visible,
 .automation-pills button:focus-visible,
 .automation-actions button:focus-visible,
@@ -1757,7 +1796,9 @@
   }
 
   .automation-actions button,
+  .automation-create-button,
   .automation-list-row-actions button {
+    min-width: 32px;
     min-height: 32px;
   }
 

@@ -10,6 +10,7 @@ import {
   Pause,
   Pencil,
   Play,
+  Plus,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -261,6 +262,26 @@ function scheduleFromDraft(draft: EditDraft): Automation["schedule"] {
   return { kind: "interval", everyMinutes: Number(draft.everyMinutes) };
 }
 
+function newAutomationDraft(fallbackModeId: string): EditDraft {
+  return {
+    name: "",
+    prompt: "",
+    scheduleKind: "interval",
+    onceAt: toDatetimeLocal(new Date(Date.now() + 60 * 60 * 1_000).toISOString()),
+    everyMinutes: "60",
+    everyDays: "1",
+    dayOfMonth: "1",
+    modeId: fallbackModeId,
+    modelId: "",
+    extendedModelId: "",
+    modelParams: [],
+    extendedModelParams: [],
+    maxRunMinutes: "1440",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    projectId: "",
+  };
+}
+
 type AutomationListRowProps = {
   automation: Automation;
   selected: boolean;
@@ -339,6 +360,7 @@ export function AutomationsPanel({
   const [loadError, setLoadError] = useState("");
   const [pendingAction, setPendingAction] = useState<"run" | "pause" | "resume" | "save" | "delete" | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Automation | null>(null);
@@ -420,6 +442,7 @@ export function AutomationsPanel({
   }, [loadAutomations, loadDetail]);
 
   useEffect(() => {
+    if (creating) return;
     if (!automations.length) {
       if (!loading) {
         setSelectedId(null);
@@ -435,12 +458,13 @@ export function AutomationsPanel({
       if (stored && automations.some((automation) => automation.id === stored)) return stored;
       return automations[0].id;
     });
-  }, [automations, loading]);
+  }, [automations, creating, loading]);
 
   useEffect(() => {
     if (!highlightId || handledHighlightRef.current === highlightId) return;
     if (!automations.some((automation) => automation.id === highlightId)) return;
     handledHighlightRef.current = highlightId;
+    setCreating(false);
     setEditing(false);
     setDraft(null);
     setSelectedId(highlightId);
@@ -478,6 +502,7 @@ export function AutomationsPanel({
   }, [latestCompleted]);
 
   const selectAutomation = useCallback((id: string) => {
+    setCreating(false);
     setEditing(false);
     setDraft(null);
     setSelectedId(id);
@@ -487,11 +512,35 @@ export function AutomationsPanel({
     () => automations.find((automation) => automation.id === selectedId) || null,
     [automations, selectedId],
   );
-  const currentDetail = detailAutomation?.id === selectedId ? detailAutomation : selectedSummary;
-  const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
   const fallbackModeId = modes[0]?.id || "agent";
+  const creatingDetail: Automation | null = creating
+    ? {
+        id: "__new__",
+        chatId: "",
+        name: "New automation",
+        prompt: "",
+        creator: "user",
+        modeId: fallbackModeId,
+        maxRunMinutes: 1_440,
+        schedule: { kind: "interval", everyMinutes: 60 },
+        timezone: draft?.timezone || "UTC",
+        status: "draft",
+        runs: [],
+      }
+    : null;
+  const currentDetail = creatingDetail || (detailAutomation?.id === selectedId ? detailAutomation : selectedSummary);
+  const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+
+  const beginCreate = useCallback(() => {
+    setSelectedId(null);
+    setDetailAutomation(null);
+    setDraft(newAutomationDraft(fallbackModeId));
+    setCreating(true);
+    setEditing(true);
+  }, [fallbackModeId]);
 
   const beginEdit = useCallback((automation: Automation) => {
+    setCreating(false);
     setSelectedId(automation.id);
     setDraft(draftFromAutomation(automation, fallbackModeId, modelOptions));
     setEditing(true);
@@ -526,40 +575,58 @@ export function AutomationsPanel({
     }
   }
 
-  async function saveEdits(event: FormEvent) {
+  async function saveAutomation(event: FormEvent) {
     event.preventDefault();
-    if (!currentDetail || !draft) return;
+    if (!draft || (!creating && !currentDetail)) return;
     setPendingAction("save");
     try {
-      const response = await fetch(`/api/automations/${encodeURIComponent(currentDetail.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: draft.name.trim(),
-          prompt: draft.prompt.trim(),
-          modeId: draft.modeId,
-          modelId: draft.modelId,
-          extendedModelId: draft.extendedModelId,
-          modelParams: draft.modelParams,
-          extendedModelParams: draft.extendedModelParams,
-          maxRunMinutes: Number(draft.maxRunMinutes),
-          timezone: draft.timezone.trim(),
-          projectId: draft.projectId || null,
-          schedule: scheduleFromDraft(draft),
-        }),
-      });
+      const automationId = creating ? null : currentDetail!.id;
+      const response = await fetch(
+        creating ? "/api/automations" : `/api/automations/${encodeURIComponent(automationId!)}`,
+        {
+          method: creating ? "POST" : "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: draft.name.trim(),
+            prompt: draft.prompt.trim(),
+            modeId: draft.modeId,
+            modelId: draft.modelId,
+            extendedModelId: draft.extendedModelId,
+            modelParams: draft.modelParams,
+            extendedModelParams: draft.extendedModelParams,
+            maxRunMinutes: Number(draft.maxRunMinutes),
+            timezone: draft.timezone.trim(),
+            projectId: draft.projectId || null,
+            schedule: scheduleFromDraft(draft),
+          }),
+        },
+      );
       const data = (await response.json().catch(() => ({}))) as { error?: string; automation?: Automation };
-      if (!response.ok) throw new Error(data.error || "Could not save automation");
+      if (!response.ok || !data.automation) {
+        throw new Error(data.error || (creating ? "Could not create automation" : "Could not save automation"));
+      }
+      setCreating(false);
       setEditing(false);
       setDraft(null);
-      if (data.automation) setDetailAutomation(data.automation);
-      await Promise.all([loadAutomations(true), loadDetail(currentDetail.id, true)]);
-      toast.success("Automation updated");
+      setDetailAutomation(data.automation);
+      selectedIdRef.current = data.automation.id;
+      setSelectedId(data.automation.id);
+      await loadAutomations(true);
+      if (!creating && automationId) await loadDetail(automationId, true);
+      toast.success(creating ? "Automation created" : "Automation updated");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save automation");
+      toast.error(error instanceof Error ? error.message : creating ? "Could not create automation" : "Could not save automation");
     } finally {
       setPendingAction(null);
     }
+  }
+
+  function cancelDraft() {
+    const wasCreating = creating;
+    setCreating(false);
+    setEditing(false);
+    setDraft(null);
+    if (wasCreating) setSelectedId(automations[0]?.id || null);
   }
 
   async function removeAutomation(automation: Automation) {
@@ -606,7 +673,19 @@ export function AutomationsPanel({
     <div className="automations-split-view" data-slot="automations-split-view">
       <aside className="automation-list-pane automation-scroll" aria-label="Automations">
         <header className="automation-list-header">
-          <h2>Automations</h2>
+          <div className="automation-list-title-row">
+            <h2>Automations</h2>
+            <button
+              type="button"
+              className="automation-create-button"
+              aria-label="Create automation"
+              title="Create automation"
+              disabled={pendingAction !== null}
+              onClick={beginCreate}
+            >
+              <Plus aria-hidden="true" />
+            </button>
+          </div>
           <p>Recurring agent work, with its history and browser state intact.</p>
         </header>
 
@@ -626,7 +705,7 @@ export function AutomationsPanel({
         {!loading && !loadError && automations.length === 0 ? (
           <div className="automation-inline-state">
             <strong>No automations yet</strong>
-            <span>Ask Metis in a chat to schedule recurring work.</span>
+            <span>Use + to create one here, or ask Metis in a chat.</span>
           </div>
         ) : null}
 
@@ -665,30 +744,36 @@ export function AutomationsPanel({
           <div key={currentDetail.id} className="automation-detail-content">
             <header className="automation-detail-header">
               <span className="automation-detail-icon">
-                {currentDetail.creator === "agent" ? <Bot aria-hidden="true" /> : <CalendarClock aria-hidden="true" />}
+                {creating ? <Plus aria-hidden="true" /> : currentDetail.creator === "agent" ? <Bot aria-hidden="true" /> : <CalendarClock aria-hidden="true" />}
               </span>
               <span className="automation-detail-heading">
                 <span className="automation-detail-title-line">
                   <h3>{currentDetail.name}</h3>
                   <span className="automation-status" data-status={currentDetail.status}>{statusLabel(currentDetail.status)}</span>
                 </span>
-                <span>Created by {currentDetail.creator === "agent" ? "Agent" : "You"} · max run {formatRunLimit(currentDetail.maxRunMinutes)}</span>
+                <span>
+                  {creating
+                    ? "Set the task, schedule, and model."
+                    : `Created by ${currentDetail.creator === "agent" ? "Agent" : "You"} · max run ${formatRunLimit(currentDetail.maxRunMinutes)}`}
+                </span>
               </span>
             </header>
 
-            <div className="automation-stats-grid">
-              <StatCard label="Schedule" value={formatSchedule(currentDetail)} />
-              <StatCard
-                label="Next run"
-                value={currentDetail.status === "paused" ? "Paused" : formatDate(currentDetail.nextRunAt, currentDetail.timezone)}
-                detail={nextHint(currentDetail, now)}
-              />
-              <StatCard label="Last run" value={formatDate(lastRunAt, currentDetail.timezone)} detail={lastStatus} />
-              <StatCard label="Timezone" value={currentDetail.timezone || "UTC"} />
-            </div>
+            {!creating ? (
+              <div className="automation-stats-grid">
+                <StatCard label="Schedule" value={formatSchedule(currentDetail)} />
+                <StatCard
+                  label="Next run"
+                  value={currentDetail.status === "paused" ? "Paused" : formatDate(currentDetail.nextRunAt, currentDetail.timezone)}
+                  detail={nextHint(currentDetail, now)}
+                />
+                <StatCard label="Last run" value={formatDate(lastRunAt, currentDetail.timezone)} detail={lastStatus} />
+                <StatCard label="Timezone" value={currentDetail.timezone || "UTC"} />
+              </div>
+            ) : null}
 
             {editing && draft ? (
-              <form className="automation-edit-form" onSubmit={(event) => void saveEdits(event)}>
+              <form className="automation-edit-form" onSubmit={(event) => void saveAutomation(event)}>
                 <label>
                   Name
                   <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
@@ -850,9 +935,11 @@ export function AutomationsPanel({
                 </div>
                 <div className="automation-actions">
                   <button type="submit" disabled={pendingAction !== null}>
-                    {pendingAction === "save" ? "Saving…" : "Save changes"}
+                    {pendingAction === "save"
+                      ? creating ? "Creating…" : "Saving…"
+                      : creating ? "Create automation" : "Save changes"}
                   </button>
-                  <button type="button" disabled={pendingAction !== null} onClick={() => { setEditing(false); setDraft(null); }}>
+                  <button type="button" disabled={pendingAction !== null} onClick={cancelDraft}>
                     Cancel
                   </button>
                 </div>
@@ -922,36 +1009,38 @@ export function AutomationsPanel({
               </div>
             ) : null}
 
-            {currentDetail.lastError ? <p className="automation-last-error" role="alert">{currentDetail.lastError}</p> : null}
+            {!creating && currentDetail.lastError ? <p className="automation-last-error" role="alert">{currentDetail.lastError}</p> : null}
 
-            <section className="automation-run-history" aria-labelledby={`automation-history-${currentDetail.id}`}>
-              <div className="automation-run-history-header">
-                <h4 id={`automation-history-${currentDetail.id}`}>Run history</h4>
-                <span>{selectedRuns.length} loaded</span>
-              </div>
+            {!creating ? (
+              <section className="automation-run-history" aria-labelledby={`automation-history-${currentDetail.id}`}>
+                <div className="automation-run-history-header">
+                  <h4 id={`automation-history-${currentDetail.id}`}>Run history</h4>
+                  <span>{selectedRuns.length} loaded</span>
+                </div>
 
-              {selectedRuns.length === 0 ? (
-                <div className="automation-history-empty">No runs yet. Run it now or wait for the next trigger.</div>
-              ) : null}
+                {selectedRuns.length === 0 ? (
+                  <div className="automation-history-empty">No runs yet. Run it now or wait for the next trigger.</div>
+                ) : null}
 
-              <div className="automation-run-list">
-                {selectedRuns.map((run) => {
-                  const duration = formatDuration(run.startedAt || run.createdAt, run.completedAt, now);
-                  const preview = run.resultPreview || run.error;
-                  return (
-                    <button key={run.id} type="button" className="automation-run-card" onClick={() => onOpenChat(run.chatId)}>
-                      <span className="automation-run-topline">
-                        <span className="automation-run-dot" data-status={run.status} aria-hidden="true" />
-                        <span className="automation-run-when">{formatDate(run.startedAt || run.createdAt, currentDetail.timezone)}</span>
-                        <span className="automation-run-trigger">{run.trigger || (run.manual ? "manual" : "scheduled")}</span>
-                      </span>
-                      <span className="automation-run-summary">{run.status}{duration ? ` · ${duration}` : ""}</span>
-                      {preview ? <span className={cn("automation-run-preview", run.error && "is-error")}>{preview}</span> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+                <div className="automation-run-list">
+                  {selectedRuns.map((run) => {
+                    const duration = formatDuration(run.startedAt || run.createdAt, run.completedAt, now);
+                    const preview = run.resultPreview || run.error;
+                    return (
+                      <button key={run.id} type="button" className="automation-run-card" onClick={() => onOpenChat(run.chatId)}>
+                        <span className="automation-run-topline">
+                          <span className="automation-run-dot" data-status={run.status} aria-hidden="true" />
+                          <span className="automation-run-when">{formatDate(run.startedAt || run.createdAt, currentDetail.timezone)}</span>
+                          <span className="automation-run-trigger">{run.trigger || (run.manual ? "manual" : "scheduled")}</span>
+                        </span>
+                        <span className="automation-run-summary">{run.status}{duration ? ` · ${duration}` : ""}</span>
+                        {preview ? <span className={cn("automation-run-preview", run.error && "is-error")}>{preview}</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
 
             {detailLoading ? <span className="sr-only" role="status">Refreshing automation details…</span> : null}
           </div>

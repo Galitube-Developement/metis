@@ -31,14 +31,14 @@ export function toolContractPrompt(input: ToolContractInput): string {
       : "Do not create a Todo checklist for a single-step answer.";
   return [
     `Tool contract for this run (${input.provider || "provider"}):`,
-    `Callable tools: ${surface}. Never call or promise a tool that is not listed or provider-native.`,
+    `Callable tools: ${surface}. Never call or promise a tool that is not listed.`,
     "Use direct Metis core tools such as read_file, list_directory, execute_command, write_file, browser_* and write_todos when they are listed. Do not invent MCP server IDs such as 'metis'; call_mcp_tool is only for an exact server/tool pair returned by search_tools or list_mcp_servers.",
     planRule,
     todoRule,
     "Workspace truth rule: a Metis Plan or Canvas exists ONLY after the Metis MCP create_plan/create_canvas tool returns a successful workspace://plan/... or workspace://canvas/... result. A provider-native file/artifact/brain document is NOT a Metis workspace. Never claim Plan/Canvas creation from write_file or a provider-native artifact.",
     "When the user asks to create, edit, list, or delete a Metis Plan/Canvas, use the exact Metis MCP workspace tools (create_plan, create_canvas, edit_plan, edit_canvas, list_workspaces, delete_plan, delete_canvas). Do not substitute provider-native artifact/file tools.",
     "Tool calls are stateful actions, not narration. Wait for the result, preserve errors, and continue from the returned state.",
-    "Prefer Metis MCP / gateway tools over repeating tool names in chat. Native provider tools are a fallback when a Metis tool is not listed. Do not narrate the tool catalog.",
+    "Use Metis MCP / gateway tools exclusively. Provider-native file, shell, browser, task, subagent, connector, and workspace tools are disabled and must never be used as fallbacks. Do not narrate the tool catalog.",
   ].join("\n");
 }
 

@@ -91,6 +91,16 @@ test("automations use the full-height demo split view without a composer or work
   assert.doesNotMatch(automationsSource, /Search automations|AutomationGraphView|NoteProjectMenu/);
 });
 
+test("automations expose a direct create action and submit through the existing editor", () => {
+  assert.match(automationsSource, /aria-label="Create automation"/);
+  assert.match(automationsSource, /<Plus aria-hidden="true" \/>/);
+  assert.match(automationsSource, /creating \? "\/api\/automations"/);
+  assert.match(automationsSource, /method: creating \? "POST" : "PATCH"/);
+  assert.match(automationsSource, /creating \? "Create automation" : "Save changes"/);
+  assert.match(automationsSource, /Automation created/);
+  assert.match(globalCssSource, /\.automation-create-button \{/);
+});
+
 test("automation detail exposes live run, pause and resume actions", () => {
   assert.match(automationsSource, /method: "PATCH"/);
   assert.match(automationsSource, /JSON\.stringify\(\{ action \}\)/);

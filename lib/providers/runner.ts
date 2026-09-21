@@ -48,6 +48,8 @@ import {
   getProviderSessionBinding,
   providerSessionNeedsCompaction,
 } from "@/lib/providers/session-bindings";
+import { withLocalFileEditSnapshot } from "@/lib/file-edit-snapshot";
+import { getAgentCwd } from "@/lib/mcp";
 
 async function runProvider(context: ProviderContext): Promise<ProviderResult> {
   const providerKey =
@@ -61,6 +63,7 @@ export async function runAlternativeProviderJob(
   initialChat: Chat,
 ) {
   const runStartedAt = Date.now();
+  const agentCwd = getAgentCwd(job.userId || undefined);
   let completionCommitted = false;
   const rawParsed = parseModelKey(job.modelId || initialChat.modelId || "");
   const normalizedModelId = normalizeLegacyProviderModelId(
@@ -260,7 +263,7 @@ export async function runAlternativeProviderJob(
     // write_todos is a state surface, not an append-only tool history. Give it
     // one stable id per run so every update replaces the same Tasks card in
     // persistence and in the live SSE UI instead of creating ghost checklists.
-    const normalizedTool =
+    let normalizedTool =
       tool.kind === "todo" ? { ...tool, id: `todo-${job.id}` } : tool;
     let existingIndex = tools.findIndex(
       (item) => item.id === normalizedTool.id,
@@ -274,6 +277,11 @@ export async function runAlternativeProviderJob(
         normalizedTool.id = tools[existingIndex].id;
       }
     }
+    normalizedTool = withLocalFileEditSnapshot(
+      normalizedTool,
+      existingIndex >= 0 ? tools[existingIndex] : undefined,
+      agentCwd,
+    );
     if (existingIndex >= 0) {
       tools[existingIndex] = { ...tools[existingIndex], ...normalizedTool };
     } else {

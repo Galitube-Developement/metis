@@ -177,7 +177,27 @@ test("antigravity MCP config maps stdio servers", () => {
   });
   assert.equal(config.mcpServers.gateway.command, "/usr/bin/node");
   assert.equal(config.mcpServers.gateway.env.MCP_CHAT_ID, "chat-1");
-  assert.equal(antigravityCliSettings().toolPermission, "always-proceed");
+  assert.deepEqual(antigravityCliSettings(), {
+    enableTelemetry: false,
+    toolPermission: "request-review",
+    permissions: {
+      allow: ["mcp(*)"],
+      deny: [
+        "command(*)",
+        "read_file(*)",
+        "write_file(*)",
+        "read_url(*)",
+        "execute_url(*)",
+      ],
+    },
+  });
+});
+
+test("antigravity SDK disables native tools and subagents", async () => {
+  const bridge = await readFile(new URL("../scripts/antigravity_bridge.py", import.meta.url), "utf8");
+  assert.match(bridge, /enabled_tools=\[\]/);
+  assert.match(bridge, /enable_subagents=False/);
+  assert.doesNotMatch(bridge, /enable_subagents=True/);
 });
 
 test("antigravity SDK MCP mapping keeps stdio and HTTP servers", () => {

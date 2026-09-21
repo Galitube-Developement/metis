@@ -76,7 +76,17 @@ export function antigravitySdkMcpServers(mcp: McpServerMap = {}): AntigravitySdk
 export function antigravityCliSettings() {
   return {
     enableTelemetry: false,
-    toolPermission: "always-proceed",
+    toolPermission: "request-review",
+    permissions: {
+      allow: ["mcp(*)"],
+      deny: [
+        "command(*)",
+        "read_file(*)",
+        "write_file(*)",
+        "read_url(*)",
+        "execute_url(*)",
+      ],
+    },
   };
 }
 

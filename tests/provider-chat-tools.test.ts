@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { modelSupportsChatTools } from "../lib/providers/discovery";
+import { toolContractPrompt } from "../lib/agent-control";
+import { codexMcpOnlyConfig } from "../lib/providers/adapters/codex";
+import {
+  GROK_MCP_ONLY_ARGS,
+  OPENCODE_MCP_ONLY_CONFIG,
+  OPENCODE_MCP_ONLY_ENV,
+} from "../lib/providers/adapters/acp-cli";
 
 test("chat models keep tool support; embeddings/tts/whisper do not", () => {
   assert.equal(modelSupportsChatTools("gpt-5.4"), true);
@@ -42,4 +49,45 @@ test("grok and opencode stay on the ACP stdio path via registered adapters", () 
   assert.match(index, /"grok-cli": grokAdapter/);
   assert.match(index, /"opencode-cli": opencodeAdapter/);
   assert.match(acp, /runAcpStdioAgent/);
+});
+
+test("native provider tool surfaces are disabled in favor of Metis MCP", () => {
+  assert.deepEqual(codexMcpOnlyConfig(), {
+    features: {
+      shell_tool: false,
+      unified_exec: false,
+      apps: false,
+      browser_use: false,
+      browser_use_external: false,
+      browser_use_full_cdp_access: false,
+      computer_use: false,
+      multi_agent: false,
+      goals: false,
+      hooks: false,
+      image_generation: false,
+      in_app_browser: false,
+      plugins: false,
+      skill_mcp_dependency_install: false,
+      skill_search: false,
+      tool_suggest: false,
+      view_image: false,
+      workspace_dependencies: false,
+    },
+    web_search: "disabled",
+  });
+  assert.deepEqual(GROK_MCP_ONLY_ARGS, [
+    "--tools",
+    "",
+    "--no-subagents",
+    "--disable-web-search",
+    "agent",
+    "stdio",
+  ]);
+  assert.ok(Object.values(OPENCODE_MCP_ONLY_CONFIG.tools).every((enabled) => enabled === false));
+  assert.equal(
+    OPENCODE_MCP_ONLY_ENV.OPENCODE_CONFIG_CONTENT,
+    JSON.stringify(OPENCODE_MCP_ONLY_CONFIG),
+  );
+  assert.match(toolContractPrompt({ modeId: "agent", toolNames: ["metis_ai"] }), /exclusively/);
+  assert.doesNotMatch(toolContractPrompt({ modeId: "agent", toolNames: ["metis_ai"] }), /fallback when/);
 });

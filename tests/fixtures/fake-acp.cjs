@@ -6,7 +6,15 @@ rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
   const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }) + String.fromCharCode(10));
-  if (msg.method === "initialize") { reply({ protocolVersion: 1, agentCapabilities: {} }); return; }
+  if (msg.method === "initialize") {
+    if (msg.params?.clientCapabilities?.fs?.readTextFile !== false || msg.params?.clientCapabilities?.fs?.writeTextFile !== false) {
+      process.stderr.write("native ACP filesystem capabilities must be disabled\n");
+      process.exitCode = 1;
+      return;
+    }
+    reply({ protocolVersion: 1, agentCapabilities: {} });
+    return;
+  }
   if (msg.method === "session/new") { reply({ sessionId: "sess-1" }); return; }
   if (msg.method === "session/prompt") {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "sess-1", update: { sessionUpdate: "tool_call", toolCallId: "call-1", title: "list_directory", status: "completed", rawInput: { path: "/tmp" } } } }) + String.fromCharCode(10));

@@ -14,7 +14,46 @@ type AcpCliAdapterConfig = {
   readonly key: "grok-cli" | "opencode-cli";
   readonly binary: string;
   readonly args: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
 };
+
+export const GROK_MCP_ONLY_ARGS = [
+  "--tools",
+  "",
+  "--no-subagents",
+  "--disable-web-search",
+  "agent",
+  "stdio",
+] as const;
+
+export const OPENCODE_MCP_ONLY_CONFIG = {
+  tools: {
+    read: false,
+    write: false,
+    edit: false,
+    patch: false,
+    apply_patch: false,
+    glob: false,
+    grep: false,
+    list: false,
+    bash: false,
+    task: false,
+    todowrite: false,
+    todoread: false,
+    webfetch: false,
+    websearch: false,
+    lsp: false,
+    skill: false,
+    question: false,
+  },
+} as const;
+
+export const OPENCODE_MCP_ONLY_ENV = {
+  OPENCODE_CONFIG_CONTENT: JSON.stringify(OPENCODE_MCP_ONLY_CONFIG),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "true",
+  OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
+} as const;
 
 function acpCliAdapter(config: AcpCliAdapterConfig): ProviderAdapterShape {
   const capabilities = {
@@ -38,6 +77,7 @@ function acpCliAdapter(config: AcpCliAdapterConfig): ProviderAdapterShape {
       const result = await runAcpStdioAgent({
         command: binary,
         args: [...config.args],
+        ...(config.env ? { env: { ...config.env } } : {}),
         cwd: getUserAgentCwd(context.job.userId),
         prompt: [
           providerPrompt(
@@ -75,11 +115,12 @@ function acpCliAdapter(config: AcpCliAdapterConfig): ProviderAdapterShape {
 export const grokAdapter = acpCliAdapter({
   key: "grok-cli",
   binary: "grok",
-  args: ["agent", "stdio"],
+  args: GROK_MCP_ONLY_ARGS,
 });
 
 export const opencodeAdapter = acpCliAdapter({
   key: "opencode-cli",
   binary: "opencode",
-  args: ["acp"],
+  args: ["acp", "--pure"],
+  env: OPENCODE_MCP_ONLY_ENV,
 });
