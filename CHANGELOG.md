@@ -4,6 +4,11 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.9 — 2026-09-21
+
+- Stabilize voice recording by keeping waveform callbacks consistent across renders.
+- Start the login form with an empty username and add an accessible password visibility toggle.
+
 ## v1.0.8 — 2026-09-20
 
 - Insert voice transcripts into the focused mobile composer instead of dropping them after transcription.
