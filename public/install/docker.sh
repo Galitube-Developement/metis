@@ -17,6 +17,17 @@ REPLACE_EXISTING=0
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
+read_tty_line() {
+  local prompt="$1"
+  if [[ -t 0 ]]; then
+    IFS= read -r -p "$prompt" REPLY
+  elif [[ -r /dev/tty ]] && { : 2>/dev/null < /dev/tty; }; then
+    IFS= read -r -p "$prompt" REPLY < /dev/tty
+  else
+    REPLY=""
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: docker.sh [options]
@@ -56,6 +67,13 @@ while [[ $# -gt 0 ]]; do
     *) fail "Unknown option: $1" ;;
   esac
 done
+
+if (( NON_INTERACTIVE == 0 )); then
+  read_tty_line "Installation directory [$INSTALL_DIR]: "
+  if [[ -n "$REPLY" ]]; then
+    INSTALL_DIR="$REPLY"
+  fi
+fi
 
 INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
 DATA_DIR="${DATA_DIR:-$INSTALL_DIR/data}"

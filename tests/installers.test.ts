@@ -229,6 +229,43 @@ test("platform installers collect configuration before side effects and support 
   assert.match(windows, /run-service\.ps1/);
 });
 
+test("interactive installers ask for the install directory before making changes", () => {
+  const linux = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
+  const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
+  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
+  const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
+
+  for (const source of [linux, macos]) {
+    assert.ok(source.includes('read_tty_line "Installation directory [$install_dir]: "'));
+    assert.ok(source.includes("if (( non_interactive == 0 )); then"));
+    const promptAt = source.indexOf('read_tty_line "Installation directory [$install_dir]: "');
+    const cloneAt = source.indexOf('git clone "$REPO_URL" "$install_dir"');
+    assert.ok(promptAt >= 0 && cloneAt > promptAt, "the path prompt must run before cloning");
+  }
+
+  assert.ok(docker.includes('read_tty_line "Installation directory [$INSTALL_DIR]: "'));
+  assert.ok(docker.includes("if (( NON_INTERACTIVE == 0 )); then"));
+  assert.ok(
+    docker.indexOf('read_tty_line "Installation directory [$INSTALL_DIR]: "') <
+      docker.indexOf('mkdir -p "$INSTALL_DIR"'),
+    "the Docker path prompt must run before directories are created",
+  );
+  assert.ok(windows.includes('$InstallDir = Ask "Installation directory" $InstallDir'));
+});
+
+test("installers honor an explicit install directory in non-interactive dry-runs", () => {
+  const customDir = path.join(os.tmpdir(), "metis-custom-install");
+  for (const file of ["linux.sh", "macos.sh"]) {
+    const output = execFileSync(
+      "/bin/bash",
+      [path.join(root, "install", file), "--non-interactive", "--dry-run", "--install-dir", customDir],
+      { encoding: "utf8" },
+    );
+    assert.ok(output.includes(`install dir:   ${customDir}`));
+    assert.ok(output.includes(`data dir:      ${path.join(customDir, "data")}`));
+  }
+});
+
 test("installers detect an existing Metis install from OS services", () => {
   const linux = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
   const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");

@@ -140,7 +140,11 @@ irm https://raw.githubusercontent.com/f1shyondrugs/metis/master/install/windows.
 .\install.ps1 -NonInteractive -PasswordFile .\metis-password.txt
 ```
 
-All three installers accept argument-only configuration for the install
+During a normal interactive installation, every installer asks for the
+installation directory before it creates files or installs dependencies. Press
+Enter to accept `~/metis-ai`, or enter a different path.
+
+All three installers also accept argument-only configuration for the install
 directory, data directory, agent workspace, ports, bind address, service name
 and public URL. Use `--help` on Linux/macOS or `-Help`
 on Windows for the complete list.

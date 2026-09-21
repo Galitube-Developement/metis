@@ -250,6 +250,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+read_tty_line() {
+  local prompt="$1"
+  if [[ -t 0 ]]; then
+    IFS= read -r -p "$prompt" REPLY
+  elif [[ -r /dev/tty ]] && { : 2>/dev/null < /dev/tty; }; then
+    IFS= read -r -p "$prompt" REPLY < /dev/tty
+  else
+    REPLY=""
+  fi
+}
+
+if (( non_interactive == 0 )); then
+  read_tty_line "Installation directory [$install_dir]: "
+  if [[ -n "$REPLY" ]]; then
+    install_dir="$REPLY"
+  fi
+fi
+
 install_dir="${install_dir/#\~/$HOME}"
 agent_cwd="${agent_cwd/#\~/$HOME}"
 data_dir="${data_dir/#\~/$HOME}"
@@ -310,17 +328,6 @@ Dry run; no files or services will be changed.
 EOF
   exit 0
 fi
-
-read_tty_line() {
-  local prompt="$1"
-  if [[ -t 0 ]]; then
-    IFS= read -r -p "$prompt" REPLY
-  elif [[ -r /dev/tty ]]; then
-    IFS= read -r -p "$prompt" REPLY < /dev/tty
-  else
-    REPLY=""
-  fi
-}
 
 abspath() {
   python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$1"
