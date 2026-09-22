@@ -18,6 +18,15 @@ test("settlement keeps preparing while the installer unit is running", () => {
   assert.equal(next.status, "preparing");
 });
 
+test("settlement keeps preparing before the installer unit has started", () => {
+  const next = settleUpdateJobFromInstaller(preparing, {
+    installerRunning: false,
+    logText: "",
+  });
+  assert.equal(next.status, "preparing");
+  assert.equal(next.finishedAt, undefined);
+});
+
 test("settlement marks ready after the installer restarts Metis", () => {
   const next = settleUpdateJobFromInstaller(preparing, {
     installerRunning: false,

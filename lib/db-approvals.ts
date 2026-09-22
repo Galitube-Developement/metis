@@ -33,7 +33,7 @@ export function approvalLimits() {
     maxCommandLength: 20_000,
     maxFiles: 100,
     maxPatterns: 100,
-    timeoutMs: 10 * 60_000,
+    timeoutMs: 30 * 60_000,
   };
 }
 
@@ -194,6 +194,7 @@ export function resolveApproval(
   chatId: string;
   decision: ApprovalDecision;
   sessionScope?: string;
+  heartbeatAt?: string;
 } | null {
   if (!approvalId.trim() || !normalizeDecision(decision)) return null;
   return transaction(() => {
@@ -205,9 +206,9 @@ export function resolveApproval(
     if (version !== undefined && version !== approval.version) return null;
     const timestamp = iso();
     const sessionScope =
-      decision === "allow-session"
-        ? approval.sessionScope?.trim() || `${approvalId}:session`
-        : null;
+      decision === "deny"
+        ? null
+        : approval.sessionScope?.trim() || `${approvalId}:session`;
     const changed = db
       .prepare(
         `UPDATE pending_approvals
@@ -221,6 +222,7 @@ export function resolveApproval(
       chatId: approval.chatId,
       decision,
       ...(sessionScope ? { sessionScope } : {}),
+      ...(approval.heartbeatAt ? { heartbeatAt: approval.heartbeatAt } : {}),
     };
   });
 }
@@ -243,6 +245,38 @@ export function getApproval(
   const approval = mapApproval(selectOne(approvalId));
   if (!approval || (userId && approval.ownerId !== userId)) return null;
   return approval;
+}
+
+export function consumeApprovalGrant(input: {
+  jobId: string;
+  chatId: string;
+  ownerId?: string;
+  sessionScope: string;
+}) {
+  if (!input.jobId.trim() || !input.chatId.trim() || !input.sessionScope.trim()) {
+    return false;
+  }
+  return transaction(() => {
+    const db = getDatabase();
+    const row = db.prepare(
+      `SELECT id FROM pending_approvals
+       WHERE job_id = ? AND chat_id = ?
+         AND (? IS NULL OR owner_id = ?)
+         AND status = 'resolved' AND decision = 'allow' AND session_scope = ?
+       ORDER BY resolved_at DESC LIMIT 1`,
+    ).get(
+      input.jobId,
+      input.chatId,
+      input.ownerId ?? null,
+      input.ownerId ?? null,
+      input.sessionScope,
+    ) as { id?: string } | undefined;
+    if (!row?.id) return false;
+    const deleted = db.prepare(
+      "DELETE FROM pending_approvals WHERE id = ? AND status = 'resolved' AND decision = 'allow'",
+    ).run(row.id);
+    return Boolean(deleted.changes);
+  });
 }
 
 export function getPendingApprovalForChat(

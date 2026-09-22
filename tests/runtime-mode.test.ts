@@ -80,6 +80,7 @@ test("every runtime mode has complete provider mappings", () => {
 
 test("approvals round-trip and cannot be resolved twice", async () => {
   const {
+    consumeApprovalGrant,
     createApproval,
     expireApproval,
     getApproval,
@@ -88,11 +89,13 @@ test("approvals round-trip and cannot be resolved twice", async () => {
   } = modules[0];
   const { createChat } = modules[1];
   const chat = createChat("Runtime approval");
+  const scope = approvalPatternFor("execute_command", { command: "pnpm test" });
   const { approvalId } = createApproval({
     jobId: "job-1",
     chatId: chat.id,
     title: "Command approval required",
     command: "pnpm test",
+    sessionScope: scope,
   });
   assert.ok(heartbeatApproval(approvalId));
   const pending = getApproval(approvalId);
@@ -101,6 +104,17 @@ test("approvals round-trip and cannot be resolved twice", async () => {
   assert.equal(resolved?.chatId, chat.id);
   assert.equal(getApproval(approvalId)?.status, "resolved");
   assert.equal(getApproval(approvalId)?.decision, "allow");
+  assert.equal(resolved?.sessionScope, scope);
+  assert.equal(consumeApprovalGrant({
+    jobId: "job-1",
+    chatId: chat.id,
+    sessionScope: scope,
+  }), true);
+  assert.equal(consumeApprovalGrant({
+    jobId: "job-1",
+    chatId: chat.id,
+    sessionScope: scope,
+  }), false);
   assert.equal(resolveApproval(approvalId, "deny"), null);
   const expired = createApproval({
     jobId: "job-2",

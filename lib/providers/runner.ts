@@ -50,6 +50,7 @@ import {
 } from "@/lib/providers/session-bindings";
 import { withLocalFileEditSnapshot } from "@/lib/file-edit-snapshot";
 import { getAgentCwd } from "@/lib/mcp";
+import { isJobWaitingForUser } from "@/lib/user-input-resume";
 
 async function runProvider(context: ProviderContext): Promise<ProviderResult> {
   const providerKey =
@@ -384,6 +385,14 @@ export async function runAlternativeProviderJob(
       emit("status", {
         status: "interrupted",
         message: "Run was interrupted before the provider finished.",
+      });
+      return true;
+    }
+    if (isJobWaitingForUser(durableStatus)) {
+      checkpoint(true);
+      emit("status", {
+        status: "waiting_for_user",
+        message: "Waiting for the user's response before resuming the agent.",
       });
       return true;
     }

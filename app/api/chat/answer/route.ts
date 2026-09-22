@@ -1,6 +1,7 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { questionLimits, resolveQuestion } from "@/lib/db-questions";
-import { updateJob } from "@/lib/db-jobs";
+import { getJob, updateJob } from "@/lib/db-jobs";
+import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
 import { getChat, updateChat } from "@/lib/db-store";
 
 export const runtime = "nodejs";
@@ -42,12 +43,14 @@ export async function POST(req: Request) {
       { status: 404 },
     );
   }
-  const heartbeatAge = resolved.heartbeatAt
-    ? Date.now() - new Date(resolved.heartbeatAt).getTime()
-    : Number.POSITIVE_INFINITY;
-  if (resolved.jobId && heartbeatAge > 5_000) {
+  const resolvedJob = resolved.jobId ? getJob(resolved.jobId) : null;
+  if (
+    resolved.jobId &&
+    shouldQueueUserInputResume(resolvedJob?.status, resolved.heartbeatAt)
+  ) {
     updateJob(resolved.jobId, {
       status: "queued",
+      error: undefined,
       resumePrompt: `The user answered the pending question with: ${JSON.stringify(resolved.answers)}`,
       resumeRequestedAt: new Date().toISOString(),
     });

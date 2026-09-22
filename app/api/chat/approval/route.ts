@@ -1,6 +1,8 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { resolveApproval } from "@/lib/db-approvals";
+import { getJob, updateJob } from "@/lib/db-jobs";
 import { getChat, updateChat } from "@/lib/db-store";
+import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +41,21 @@ export async function POST(req: Request) {
       { error: "Approval not found or already resolved" },
       { status: 404 },
     );
+  }
+  const resolvedJob = resolved.jobId ? getJob(resolved.jobId) : null;
+  if (
+    resolved.jobId &&
+    shouldQueueUserInputResume(resolvedJob?.status, resolved.heartbeatAt)
+  ) {
+    updateJob(resolved.jobId, {
+      status: "queued",
+      error: undefined,
+      resumePrompt:
+        resolved.decision === "deny"
+          ? "The user denied the pending action. Continue without executing it."
+          : `The user approved the pending action (${resolved.sessionScope || approvalId}). Retry that exact tool call now; its durable one-time approval is ready to be consumed.`,
+      resumeRequestedAt: new Date().toISOString(),
+    });
   }
   const currentChat = getChat(resolved.chatId, userId);
   if (currentChat?.pendingApproval?.id === approvalId) {

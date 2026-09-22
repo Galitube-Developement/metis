@@ -1,9 +1,11 @@
 import {
   approvalLimits,
+  consumeApprovalGrant,
   createApproval,
   expireApproval,
   getApproval,
   getPendingApprovalForChat,
+  heartbeatApproval,
 } from "@/lib/db-approvals";
 import { getChat, updateChat } from "@/lib/db-store";
 import { getJob, updateJob } from "@/lib/db-jobs";
@@ -13,7 +15,7 @@ import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 960;
+export const maxDuration = 1_860;
 
 function authorized(req: Request) {
   return bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN);
@@ -33,16 +35,30 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   const id = params.get("id")?.trim() || "";
   const chatId = params.get("chatId")?.trim() || "";
-  const { userId } = contextHeaders(req);
+  const { userId, jobId } = contextHeaders(req);
   if (!id && !chatId)
     return Response.json(
       { error: "id or chatId is required" },
       { status: 400 },
     );
   if (id) {
-    const approval = getApproval(id, userId);
+    let approval = getApproval(id, userId);
     if (!approval)
       return Response.json({ error: "Approval not found" }, { status: 404 });
+    if (approval.status === "waiting_for_user") {
+      if (
+        !jobId ||
+        approval.jobId !== jobId ||
+        !internalRunLeaseAuthorized(req, jobId)
+      ) {
+        return Response.json(
+          { error: "Worker run lease is expired or invalid" },
+          { status: 409 },
+        );
+      }
+      heartbeatApproval(id);
+      approval = getApproval(id, userId) || approval;
+    }
     return Response.json({
       approvalId: approval.approvalId,
       status: approval.status,
@@ -51,8 +67,25 @@ export async function GET(req: Request) {
   }
   const chat = getChat(chatId, userId);
   if (!chat) return Response.json({ error: "Chat not found" }, { status: 404 });
+  const sessionScope = params.get("sessionScope")?.trim() || "";
+  let approvedOnce = false;
+  if (sessionScope) {
+    if (!jobId || !internalRunLeaseAuthorized(req, jobId)) {
+      return Response.json(
+        { error: "Worker run lease is expired or invalid" },
+        { status: 409 },
+      );
+    }
+    approvedOnce = consumeApprovalGrant({
+      jobId,
+      chatId,
+      ownerId: userId,
+      sessionScope,
+    });
+  }
   return Response.json({
     approvedPatterns: chat.approvedPatterns || [],
+    approvedOnce,
     pendingApproval: getPendingApprovalForChat(chatId, userId),
   });
 }

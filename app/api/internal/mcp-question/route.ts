@@ -9,7 +9,7 @@ import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 960;
+export const maxDuration = 1_860;
 
 type QuestionInput = {
   question?: unknown;
@@ -69,7 +69,26 @@ export async function POST(req: Request) {
     questions: pending.questions,
   });
 
-  const answers = await pending.promise;
+  let removeAbortListener = () => {};
+  const aborted = new Promise<{ type: "aborted" }>((resolve) => {
+    const onAbort = () => resolve({ type: "aborted" });
+    if (req.signal.aborted) {
+      onAbort();
+      return;
+    }
+    req.signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => req.signal.removeEventListener("abort", onAbort);
+  });
+  const outcome = await Promise.race([
+    pending.promise.then((answers) => ({ type: "answered" as const, answers })),
+    aborted,
+  ]);
+  removeAbortListener();
+  if (outcome.type === "aborted") {
+    pending.stop();
+    return new Response(null, { status: 499 });
+  }
+  const answers = outcome.answers;
   const resolved = getPendingQuestion(pending.questionId, userId);
   if (!resolved || resolved.status !== "answered") {
     const nextJobStatus = resolved?.status === "cancelled" ? "cancelled" : "interrupted";

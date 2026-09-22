@@ -52,6 +52,7 @@ import { classifyTool, resolveMcpToolName, toolDetailFromArgs } from "@/lib/tool
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { captureKnowledgeFromUserTurn } from "@/lib/knowledge-lifecycle";
+import { isJobWaitingForUser } from "@/lib/user-input-resume";
 
 const AGENT_INIT_TIMEOUT_MS = 90_000;
 const AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
@@ -1584,6 +1585,15 @@ export async function runQueuedJob(job: AgentJob) {
       return;
     }
 
+    const pausedStatus = getJob(job.id)?.status;
+    if (isJobWaitingForUser(pausedStatus)) {
+      checkpoint(true);
+      emit("status", {
+        status: "waiting_for_user",
+        message: "Waiting for the user's response before resuming the agent.",
+      });
+      return;
+    }
     const wasCancelled =
       cancellationRequested ||
       getJob(job.id)?.status === "cancelled" ||

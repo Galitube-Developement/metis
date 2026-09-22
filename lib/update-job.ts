@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "@/lib/config";
 import {
   installerLogIndicatesFailure,
+  installerLogIndicatesSuccess,
   installerUpdateIsRunning,
   readInstallerUpdateLog,
   runInstallerUpdate,
@@ -83,6 +84,9 @@ export function settleUpdateJobFromInstaller(
   const last = logs.filter(Boolean).at(-1);
   if (installerLogIndicatesFailure(input.logText)) {
     return { ...job, status: "failed", error: last || "Installer update failed.", finishedAt: now, logs };
+  }
+  if (!installerLogIndicatesSuccess(input.logText)) {
+    return { ...job, logs };
   }
   return {
     ...job,
