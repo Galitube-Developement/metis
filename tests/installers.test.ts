@@ -95,12 +95,14 @@ test("linux systemd services apply a hardened sandbox around app and worker", ()
     assert.match(unit, /^NoNewPrivileges=true$/m);
     assert.match(unit, /^PrivateTmp=true$/m);
     assert.match(unit, /^ProtectSystem=full$/m);
+    assert.match(unit, /^ReadWritePaths=YOUR_DATA_DIR YOUR_INSTALL_DIR$/m);
     assert.match(unit, /^ProtectKernelModules=true$/m);
     assert.match(unit, /^RestrictSUIDSGID=true$/m);
   }
   assert.match(gatewayUnit, /^UMask=0077$/m);
   assert.match(gatewayUnit, /^NoNewPrivileges=false$/m);
   assert.match(gatewayUnit, /^ProtectSystem=false$/m);
+  assert.doesNotMatch(gatewayUnit, /^ReadWritePaths=/m);
 
   for (const file of ["install/linux.sh", "public/install/linux.sh"]) {
     const source = readFileSync(path.join(root, file), "utf8");
@@ -109,6 +111,10 @@ test("linux systemd services apply a hardened sandbox around app and worker", ()
     assert.match(source, /write_unit "\$\{service_name\}-mcp\.service" "Metis AI MCP gateway" false false/);
     assert.match(source, /NoNewPrivileges=\$no_new_privileges/);
     assert.match(source, /ProtectSystem=\$protect_system/);
+    assert.match(source, /if \[\[ "\$protect_system" == "full" \]\]; then/);
+    assert.match(source, /ReadWritePaths=\\"\$data_dir\\"/);
+    assert.match(source, /\/etc\|\/etc\/\*\|\/usr\|\/usr\/\*\|\/boot\|\/boot\/\*/);
+    assert.match(source, /ReadWritePaths=\\"\$install_dir\\"/);
   }
 });
 

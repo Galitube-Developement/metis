@@ -802,12 +802,22 @@ if (( use_docker == 0 )) && command -v systemctl >/dev/null 2>&1; then
   command -v sudo >/dev/null 2>&1 || die "sudo is required to install system services."
   service_dir="/etc/systemd/system"
   write_unit() {
-    local unit="$1" description="$2" protect_system="$3" no_new_privileges="$4" exec_start arg
+    local unit="$1" description="$2" protect_system="$3" no_new_privileges="$4" exec_start arg read_write_paths=""
     shift 4
     exec_start="\"$install_dir/run-service.sh\""
     for arg in "$@"; do
       exec_start="$exec_start \"$arg\""
     done
+    if [[ "$protect_system" == "full" ]]; then
+      read_write_paths="ReadWritePaths=\"$data_dir\""
+      case "$install_dir" in
+        /etc|/etc/*|/usr|/usr/*|/boot|/boot/*)
+          if [[ "$install_dir" != "$data_dir" ]]; then
+            read_write_paths+=$'\n'"ReadWritePaths=\"$install_dir\""
+          fi
+          ;;
+      esac
+    fi
     sudo tee "$service_dir/$unit" >/dev/null <<EOF
 [Unit]
 Description=$description
@@ -828,6 +838,7 @@ UMask=0077
 NoNewPrivileges=$no_new_privileges
 PrivateTmp=true
 ProtectSystem=$protect_system
+$read_write_paths
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

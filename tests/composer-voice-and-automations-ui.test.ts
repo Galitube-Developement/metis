@@ -80,6 +80,9 @@ test("login starts with an empty username and exposes an accessible password vis
   assert.match(shellSource, /type=\{passwordVisible \? "text" : "password"\}/);
   assert.match(shellSource, /aria-label=\{passwordVisible \? "Hide password" : "Show password"\}/);
   assert.match(shellSource, /<EyeOff className="size-4" aria-hidden="true" \/> : <Eye className="size-4" aria-hidden="true" \/>/);
+  assert.match(shellSource, /setAuthError\(loginErrorMessage\(res\.status, body\.error\)\)/);
+  assert.match(shellSource, /setAuthError\(loginErrorMessage\(\)\)/);
+  assert.match(shellSource, /<p role="alert" aria-live="polite"/);
 });
 
 test("agent completion uses the bundled default sound unless a custom sound is set", () => {

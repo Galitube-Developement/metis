@@ -194,6 +194,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { modelAttrSummary } from "@/lib/model-label";
 import { clientConfig } from "@/lib/client-config";
+import { loginErrorMessage } from "@/lib/login-error";
 import {
   DEFAULT_RUNTIME_MODE,
   RUNTIME_MODES,
@@ -5909,13 +5910,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   async function login(e: FormEvent) {
     e.preventDefault();
     setAuthError("");
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+    } catch {
+      setAuthError(loginErrorMessage());
+      return;
+    }
     if (!res.ok) {
-      setAuthError("Wrong username or password");
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setAuthError(loginErrorMessage(res.status, body.error));
       return;
     }
     setPassword("");
@@ -9745,7 +9753,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             Continue
           </Button>
           {authError ? (
-            <p className="text-center text-sm text-destructive">{authError}</p>
+            <p role="alert" aria-live="polite" className="text-center text-sm text-destructive">{authError}</p>
           ) : null}
         </form>
       </main>

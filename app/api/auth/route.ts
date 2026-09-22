@@ -26,7 +26,16 @@ export async function POST(req: Request) {
       { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
     );
   }
-  const result = authenticateUser(username, body.password ?? "");
+  let result: ReturnType<typeof authenticateUser>;
+  try {
+    result = authenticateUser(username, body.password ?? "");
+  } catch (error) {
+    console.error("[auth] Authentication storage is unavailable.", error);
+    return NextResponse.json(
+      { error: "Authentication storage is unavailable. Check the server and try again." },
+      { status: 500 },
+    );
+  }
   if (!result) {
     return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
   }
