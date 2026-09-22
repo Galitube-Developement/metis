@@ -802,8 +802,8 @@ if (( use_docker == 0 )) && command -v systemctl >/dev/null 2>&1; then
   command -v sudo >/dev/null 2>&1 || die "sudo is required to install system services."
   service_dir="/etc/systemd/system"
   write_unit() {
-    local unit="$1" description="$2" exec_start arg
-    shift 2
+    local unit="$1" description="$2" protect_system="$3" no_new_privileges="$4" exec_start arg
+    shift 4
     exec_start="\"$install_dir/run-service.sh\""
     for arg in "$@"; do
       exec_start="$exec_start \"$arg\""
@@ -824,14 +824,31 @@ Environment=NODE_ENV=production
 ExecStart=$exec_start
 Restart=always
 RestartSec=5
+UMask=0077
+NoNewPrivileges=$no_new_privileges
+PrivateTmp=true
+ProtectSystem=$protect_system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
 EOF
   }
-  write_unit "${service_name}.service" "Metis AI" "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/server.mjs"
-  write_unit "${service_name}-worker.service" "Metis AI worker" "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/worker.ts"
-  write_unit "${service_name}-mcp.service" "Metis AI MCP gateway" "$install_dir/lib/mcp-core/gateway-core.mjs"
+  write_unit "${service_name}.service" "Metis AI" full true "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/server.mjs"
+  write_unit "${service_name}-worker.service" "Metis AI worker" full true "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/worker.ts"
+  # The MCP gateway is the explicit host-administration boundary. It keeps
+  # system writes and privilege transitions available, while app/worker agents
+  # run with a read-only system tree and no-new-privileges.
+  write_unit "${service_name}-mcp.service" "Metis AI MCP gateway" false false "$install_dir/lib/mcp-core/gateway-core.mjs"
   sudo systemctl daemon-reload
   sudo systemctl enable "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
   sudo systemctl restart "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"

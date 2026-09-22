@@ -86,6 +86,32 @@ test("linux installer defaults to native systemd and requires --docker", () => {
   }
 });
 
+test("linux systemd services apply a hardened sandbox around app and worker", () => {
+  const appUnit = readFileSync(path.join(root, "deploy", "systemd", "metis-ai.service.template"), "utf8");
+  const workerUnit = readFileSync(path.join(root, "deploy", "systemd", "metis-ai-worker.service.template"), "utf8");
+  const gatewayUnit = readFileSync(path.join(root, "deploy", "systemd", "metis-ai-mcp.service.template"), "utf8");
+  for (const unit of [appUnit, workerUnit]) {
+    assert.match(unit, /^UMask=0077$/m);
+    assert.match(unit, /^NoNewPrivileges=true$/m);
+    assert.match(unit, /^PrivateTmp=true$/m);
+    assert.match(unit, /^ProtectSystem=full$/m);
+    assert.match(unit, /^ProtectKernelModules=true$/m);
+    assert.match(unit, /^RestrictSUIDSGID=true$/m);
+  }
+  assert.match(gatewayUnit, /^UMask=0077$/m);
+  assert.match(gatewayUnit, /^NoNewPrivileges=false$/m);
+  assert.match(gatewayUnit, /^ProtectSystem=false$/m);
+
+  for (const file of ["install/linux.sh", "public/install/linux.sh"]) {
+    const source = readFileSync(path.join(root, file), "utf8");
+    assert.match(source, /write_unit "\$\{service_name\}\.service" "Metis AI" full true/);
+    assert.match(source, /write_unit "\$\{service_name\}-worker\.service" "Metis AI worker" full true/);
+    assert.match(source, /write_unit "\$\{service_name\}-mcp\.service" "Metis AI MCP gateway" false false/);
+    assert.match(source, /NoNewPrivileges=\$no_new_privileges/);
+    assert.match(source, /ProtectSystem=\$protect_system/);
+  }
+});
+
 test("all platform installers expose an explicit network-host option", () => {
   for (const file of ["linux.sh", "macos.sh", "windows.ps1"]) {
     const content = readFileSync(path.join(root, "install", file), "utf8");

@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
+import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
   listProviderModels,
   saveProviderModels,
@@ -284,7 +285,7 @@ async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWit
   const executable = path.join(config.root, "node_modules", ".bin", "codex");
   const child = spawn(executable, ["app-server", "--stdio"], {
     cwd: config.root,
-    env: { ...process.env, CODEX_HOME: codexHome.home },
+    env: providerProcessEnv({ CODEX_HOME: codexHome.home }),
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = createInterface({ input: child.stdout });

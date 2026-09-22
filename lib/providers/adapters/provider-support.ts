@@ -55,6 +55,7 @@ import { persistToolsForMessage } from "@/lib/tool-persistence";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { compress } from "@/lib/compression";
 import { stripRawToolMarkup } from "@/lib/providers/tool-schema";
+import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
   executeEmbeddedToolFallbacks,
   type EmbeddedToolExecution,
@@ -291,11 +292,7 @@ export function asString(value: unknown) {
 }
 
 export function inheritedEnv(extra: Record<string, string | undefined> = {}) {
-  return Object.fromEntries(
-    Object.entries({ ...process.env, ...extra }).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
+  return providerProcessEnv(extra);
 }
 
 export function providerTaskMessage(job: AgentJob) {

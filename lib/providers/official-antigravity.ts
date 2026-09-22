@@ -11,6 +11,7 @@ import { waitForOAuthManualCode } from "@/lib/providers/oauth";
 import { classifyTranscriptTool } from "@/lib/agent-transcript";
 import { todosFromToolPayload } from "@/lib/tool-call-display";
 import type { McpServerMap } from "@/lib/mcp";
+import { providerProcessEnv } from "@/lib/providers/process-env";
 import type { ToolPart } from "@/lib/store";
 
 function delay(ms: number) {
@@ -359,8 +360,7 @@ export async function runOfficialAntigravityOAuthFlow(input: {
     throw new Error(`Official Antigravity CLI was not found at ${command}.`);
   }
 
-  const environment = {
-    ...process.env,
+  const environment = providerProcessEnv({
     HOME: tempHome,
     USERPROFILE: tempHome,
     XDG_CONFIG_HOME: path.join(tempHome, ".config"),
@@ -370,7 +370,7 @@ export async function runOfficialAntigravityOAuthFlow(input: {
     SSH_CONNECTION: "198.51.100.10 50000 198.51.100.20 22",
     SSH_CLIENT: "198.51.100.10 50000 22",
     SSH_TTY: "/dev/pts/0",
-  };
+  });
 
   const terminal = pty.spawn(command, ["-i", "Authenticate this Antigravity session."], {
     name: "xterm-256color",
@@ -543,8 +543,7 @@ export async function runOfficialAntigravityJob(context: {
       cols: 1000,
       rows: 50,
       cwd: context.cwd || config.agentCwd,
-      env: {
-        ...process.env,
+      env: providerProcessEnv({
         HOME: sessionHome,
         USERPROFILE: sessionHome,
         XDG_CONFIG_HOME: path.join(sessionHome, ".config"),
@@ -555,7 +554,7 @@ export async function runOfficialAntigravityJob(context: {
         SSH_CLIENT: "198.51.100.10 50000 22",
         SSH_TTY: "/dev/pts/0",
         ...(context.extraEnv || {}),
-      } as Record<string, string>,
+      }),
     },
   );
   let output = "";
@@ -673,12 +672,11 @@ export async function runAntigravitySdkJob(context: {
   }
   const child = spawn(python, ["-u", script], {
     cwd: context.cwd || config.agentCwd,
-    env: {
-      ...process.env,
+    env: providerProcessEnv({
       PYTHONUNBUFFERED: "1",
       ...(context.apiKey ? { GEMINI_API_KEY: context.apiKey, GOOGLE_API_KEY: context.apiKey } : {}),
       ...(context.extraEnv || {}),
-    },
+    }),
     stdio: ["pipe", "pipe", "pipe"],
   });
   const payload = {
