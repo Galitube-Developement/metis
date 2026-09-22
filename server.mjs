@@ -51,7 +51,9 @@ remoteClientWebsocketServer.on("error", (error) => {
 });
 const browserStreamSubscribers = new Map();
 const browserContextSignatures = new Map();
+const MAX_BROWSER_CONTEXT_SIGNATURES = 2_000;
 let lastBrowserCleanupAt = 0;
+let browserCleanupInFlight = null;
 // Action-driven stream fanout. This also catches steps inside browser_batch, so
 // the sidebar advances while a long form is being completed instead of only
 // showing the final page. Background redirects are intentionally ignored.
@@ -104,7 +106,13 @@ function persistBrowserContext(userId, chatId, result) {
     tabs: (result.tabs || []).map((tab) => [tab.id, tab.url]),
   });
   if (browserContextSignatures.get(key) === signature) return;
+  browserContextSignatures.delete(key);
   browserContextSignatures.set(key, signature);
+  while (browserContextSignatures.size > MAX_BROWSER_CONTEXT_SIGNATURES) {
+    const oldest = browserContextSignatures.keys().next().value;
+    if (oldest === undefined) break;
+    browserContextSignatures.delete(oldest);
+  }
   updateChat(chatId, {
     browserContext: {
       tabs: result.tabs,
@@ -344,6 +352,17 @@ remoteClientWebsocketServer.on("connection", (socket, request) => {
 
 await nextApp.prepare();
 startUpdateScheduler();
+
+const browserCleanupTimer = setInterval(() => {
+  if (browserCleanupInFlight) return;
+  browserCleanupInFlight = cleanupBrowserSessions()
+    .catch(() => undefined)
+    .finally(() => {
+      browserCleanupInFlight = null;
+    });
+}, 60_000);
+browserCleanupTimer.unref?.();
+
 const server = http.createServer(async (request, response) => {
   try {
     const url = streamUrl(request);

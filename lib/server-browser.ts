@@ -10,7 +10,9 @@ import { isPrivateAddress } from "@/lib/url-security";
 import { isPlaywrightBrowserMissing } from "@/lib/playwright-install";
 
 const MAX_SNAPSHOT_LENGTH = 120_000;
-const SESSION_IDLE_MS = 30 * 60 * 1000;
+const SESSION_IDLE_MS = 15 * 60 * 1000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_EPHEMERAL_CACHE_ENTRIES = 2_000;
 const MAX_TABS = 12;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -209,6 +211,25 @@ const sessions = new Map<string, BrowserContextState>();
 const actionLocks = new Map<string, Promise<void>>();
 const allowedAddressCache = new Map<string, { expiresAt: number }>();
 const browserProfilesDir = path.join(config.dataDir, "browser-profiles");
+
+function pruneEphemeralCaches(now = Date.now()) {
+  for (const [key, entry] of recentBrowserHistory) {
+    if (now - entry.ts > CACHE_TTL_MS) recentBrowserHistory.delete(key);
+  }
+  for (const [key, timestamp] of recentOriginAccess) {
+    if (now - timestamp > CACHE_TTL_MS) recentOriginAccess.delete(key);
+  }
+  for (const [key, entry] of allowedAddressCache) {
+    if (entry.expiresAt <= now) allowedAddressCache.delete(key);
+  }
+  for (const cache of [recentBrowserHistory, recentOriginAccess, allowedAddressCache]) {
+    while (cache.size > MAX_EPHEMERAL_CACHE_ENTRIES) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
+}
 const BROWSER_ACTION_QUEUE_TIMEOUT_MS = 90_000;
 const BROWSER_ACTION_TIMEOUT_MS = 120_000;
 
@@ -956,6 +977,7 @@ export async function closeBrowserSession(ownerId: string, chatId: string) {
 }
 
 export async function cleanupBrowserSessions() {
+  pruneEphemeralCaches();
   const cutoff = Date.now() - SESSION_IDLE_MS;
   for (const [key, state] of [...sessions.entries()]) {
     if (state.lastUsed >= cutoff) continue;
