@@ -39,3 +39,7 @@ test("mobile controls avoid repeating the selected model heading", () => {
   assert.match(source, />Access<\/span>/);
   assert.match(source, />Model settings<\/span>/);
 });
+
+test("empty model options still explain that the model has no extra settings", () => {
+  assert.match(source, /This model has no extra options\./);
+});

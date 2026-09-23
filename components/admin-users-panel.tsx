@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { OsUserField } from "@/components/os-user-field";
 
 type AdminUser = {
   id: string;
@@ -26,53 +27,7 @@ type OsUser = {
 type OsPlatform = "win32" | "darwin" | "linux";
 
 function platformLabel(platform: OsPlatform) {
- return platform === "win32" ? "Windows user" : platform === "darwin" ? "Mac user" : "Linux user";
-}
-
-const selectClassName =
-  "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30";
-
-function OsUserField({
-  value,
-  onChange,
-  osUsers,
-  ariaLabel,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  osUsers: OsUser[];
-  ariaLabel: string;
-}) {
-  if (osUsers.length === 0) {
-    return (
-      <Input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="OS user (must exist on host)"
-        aria-label={ariaLabel}
-        className="h-8 font-normal"
-        autoComplete="off"
-      />
-    );
-  }
-  const options: OsUser[] = osUsers.some((user) => user.username === value) || !value
-    ? osUsers
-    : [{ username: value, uid: undefined, gid: undefined, home: "" }, ...osUsers];
-  return (
-    <select
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      aria-label={ariaLabel}
-      className={selectClassName}
-    >
-      <option value="">None</option>
-      {options.map((user) => (
-        <option key={user.username} value={user.username}>
-          {user.uid !== undefined ? `${user.username} · uid ${user.uid}` : user.username}
-        </option>
-      ))}
-    </select>
-  );
+  return platform === "win32" ? "Windows user" : platform === "darwin" ? "Mac user" : "Linux user";
 }
 
 export function AdminUsersPanel() {
@@ -271,6 +226,7 @@ export function AdminUsersPanel() {
 
       <div className="space-y-3 rounded-lg border border-border/60 p-4">
         <p className="text-sm font-medium">Create user</p>
+        <p className="text-xs text-muted-foreground">Pick a host user or type a custom name that exists on this machine.</p>
         <div className="grid gap-2 sm:grid-cols-2">
           <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" aria-label="New username" />
           <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password (min 8)" aria-label="New password" />

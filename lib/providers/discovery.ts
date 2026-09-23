@@ -569,6 +569,15 @@ export function persistDiscoveredModels(
   return persisted;
 }
 
+export function providerAdvertisedOptions(
+  model: Pick<ProviderModelDefinition, "parameters" | "defaultParams">,
+) {
+  return {
+    parameters: model.parameters || [],
+    defaultParams: model.defaultParams || [],
+  };
+}
+
 export function providerModelsForConnection(connection: ProviderConnectionWithSecret) {
   const provider = getProviderDefinition(connection.providerKey);
   if (!provider) return [] as ProviderModel[];
@@ -606,8 +615,9 @@ export function providerModelsForConnection(connection: ProviderConnectionWithSe
             ...(catalog?.capabilities || {}),
             ...(model.capabilities || {}),
           },
-          ...(model.parameters ? { parameters: model.parameters } : {}),
-          ...(model.defaultParams ? { defaultParams: model.defaultParams } : {}),
+          // A discovered model's option contract is authoritative. Do not
+          // inherit catalog/family options that its API did not advertise.
+          ...providerAdvertisedOptions(model),
           ...(model.tags ? { tags: model.tags } : {}),
         };
       })

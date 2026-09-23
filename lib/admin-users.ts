@@ -6,6 +6,7 @@ import {
   adminUserCount,
   ensureUserAccess,
   getUserAccess,
+  inferOsUsernameForWorkspace,
   resolveManagedWorkspaceRoot,
 } from "@/lib/user-access";
 
@@ -87,7 +88,7 @@ export function createManagedUser(input: {
   }
   ensureAllModelAccess(user.id);
   const workspace = resolveManagedWorkspaceRoot(input.workspaceRoot || config.agentCwd);
-  const osUsername = input.osUsername?.trim();
+  const osUsername = input.osUsername?.trim() || (existing === 0 ? inferOsUsernameForWorkspace(workspace) : undefined);
   ensureUserAccess(user.id, workspace, osUsername || undefined);
   const created = userRow(user.id);
   if (!created) throw new Error("Could not create user.");

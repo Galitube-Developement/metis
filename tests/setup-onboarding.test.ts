@@ -22,6 +22,10 @@ test("setup API and wizard exist for first-run onboarding", () => {
   assert.match(api, /markSetupComplete/);
   assert.match(wizard, /Welcome to Metis/);
   assert.match(wizard, /embedded/);
+  assert.match(wizard, /OsUserField/);
+  assert.match(wizard, /suggestedOsUsername/);
+  assert.match(api, /suggestedOsUsername/);
+  assert.match(api, /osUsername: body\.osUsername/);
   assert.match(helper, /setup_complete/);
   assert.match(helper, /markSetupIncomplete/);
   assert.match(api, /markSetupIncomplete/);

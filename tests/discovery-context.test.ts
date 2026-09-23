@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   mergeDiscoveredContextWindow,
   parseDiscoveredModel,
+  providerAdvertisedOptions,
 } from "../lib/providers/discovery";
 
 test("parseDiscoveredModel keeps API context windows and does not infer", () => {
@@ -46,4 +47,21 @@ test("mergeDiscoveredContextWindow prefers live API, then stored provider metada
  catalog: 400_000,
   }), 400_000);
   assert.equal(mergeDiscoveredContextWindow({}), undefined);
+});
+
+test("discovered model options come only from the provider payload", () => {
+  assert.deepEqual(providerAdvertisedOptions({}), {
+    parameters: [],
+    defaultParams: [],
+  });
+
+  const parameters = [{
+    id: "effort",
+    values: [{ value: "low" }, { value: "max" }],
+  }];
+  const defaultParams = [{ id: "effort", value: "max" }];
+  assert.deepEqual(providerAdvertisedOptions({ parameters, defaultParams }), {
+    parameters,
+    defaultParams,
+  });
 });

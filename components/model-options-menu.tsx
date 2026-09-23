@@ -244,6 +244,11 @@ export function ModelOptionsMenu({
         ) : null}
 
         <div className="space-y-2.5 md:space-y-4">
+          {parameters.length === 0 ? (
+            <p className="px-1 text-xs text-muted-foreground md:px-0">
+              This model has no extra options.
+            </p>
+          ) : null}
           {parameters.map((param) => {
             const current = paramValue(param.id);
             const isBool =

@@ -27,6 +27,16 @@ const docker = isDockerEnv();
 const internalOrigin = docker
   ? rewriteDockerServiceUrl(env("AI_CHAT_INTERNAL_ORIGIN") || "http://app:3100", "app", 3100)
   : env("AI_CHAT_INTERNAL_ORIGIN") || publicUrl;
+const agentCwd = env("AGENT_CWD") || env("HOME") || os.homedir() || process.cwd();
+
+function defaultAllowRootAgents() {
+  const flagged = env("AI_CHAT_ALLOW_ROOT_AGENTS");
+  if (flagged) return booleanEnv("AI_CHAT_ALLOW_ROOT_AGENTS");
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  const resolved = path.resolve(agentCwd);
+  const rootHome = path.resolve("/root");
+  return uid === 0 && (resolved === rootHome || resolved.startsWith(`${rootHome}${path.sep}`));
+}
 
 function internalUrl(name: string, route: string) {
   const resolved = env(name) || `${internalOrigin.replace(/\/+$/, "")}${route}`;
@@ -37,7 +47,7 @@ export const config = {
   appName: env("APP_NAME") || "Metis AI",
   appDescription: env("APP_DESCRIPTION") || "A private, configurable AI agent workspace.",
   chatUsername: env("CHAT_USERNAME") || "admin",
-  agentCwd: env("AGENT_CWD") || env("HOME") || os.homedir() || process.cwd(),
+  agentCwd,
   root,
   installDir: env("AI_CHAT_INSTALL_DIR") || root,
   dataDir,
@@ -68,7 +78,7 @@ export const config = {
   mcpAllowRemoteAdmin: booleanEnv("MCP_ALLOW_REMOTE_ADMIN"),
   docker,
   dockerWorkspace: "/workspace",
-  allowRootAgents: booleanEnv("AI_CHAT_ALLOW_ROOT_AGENTS"),
+  allowRootAgents: defaultAllowRootAgents(),
   enableOptionalMcp: booleanEnv("MCP_ENABLE_OPTIONAL_SERVERS"),
   enableRemoteMcp: booleanEnv("MCP_ENABLE_REMOTE_SERVERS"),
 } as const;

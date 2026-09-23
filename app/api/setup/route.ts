@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { authenticateUser, CHAT_COOKIE, getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { createManagedUser, patchManagedUser } from "@/lib/admin-users";
 import { getSetupStatus, markSetupComplete, markSetupIncomplete } from "@/lib/setup";
-import { isHostAdmin, listHostOsUsers } from "@/lib/user-access";
+import { isHostAdmin, inferOsUsernameForWorkspace, listHostOsUsers } from "@/lib/user-access";
 import { hostPlatform } from "@/lib/user-isolation";
+import { config } from "@/lib/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,12 +24,14 @@ function sessionCookie(res: NextResponse, token: string, maxAge: number, req: Re
 export async function GET(req: Request) {
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
   const status = getSetupStatus(ownerId);
+  const canListOsUsers = status.needed && (!status.hasUsers || (ownerId && isHostAdmin(ownerId)));
   return Response.json({
     ...status,
     platform: hostPlatform(),
-    osUsers: status.needed && ownerId && isHostAdmin(ownerId)
+    osUsers: canListOsUsers
       ? listHostOsUsers().map(({ username, home }) => ({ username, home }))
       : [],
+    suggestedOsUsername: canListOsUsers ? inferOsUsernameForWorkspace(config.agentCwd) || "" : "",
   });
 }
 
@@ -51,6 +54,7 @@ export async function POST(req: Request) {
         username: body.username || "",
         password: body.password || "",
         isAdmin: true,
+        osUsername: body.osUsername?.trim() || undefined,
       });
       markSetupIncomplete();
       const session = authenticateUser(user.username, body.password || "");

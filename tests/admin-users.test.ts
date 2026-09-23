@@ -13,6 +13,7 @@ process.env.AI_CHAT_ROOT = dir;
 delete process.env.CHAT_PASSWORD;
 delete process.env.METIS_AI_BOOTSTRAP_PASSWORD;
 delete process.env.METIS_AI_ADMIN_USERNAMES;
+delete process.env.AI_CHAT_ALLOW_ROOT_AGENTS;
 
 test("first created user is admin and later users are not", async () => {
   const { createManagedUser, deleteManagedUser, listAdminUsers, patchManagedUser } = await import("../lib/admin-users");
@@ -44,4 +45,19 @@ test("first created user is admin and later users are not", async () => {
   assert.equal(mapped.osUsername, posix.username);
   const cleared = patchManagedUser(mapped.id, { osUsername: null });
   assert.equal(cleared.osUsername, undefined);
+
+  const { lookupHostOsUser, listHostOsUsers } = await import("../lib/user-access");
+  const listedNames = listHostOsUsers().map((user) => user.username);
+  const root = lookupHostOsUser("root");
+  assert.equal(root?.username.toLowerCase(), "root");
+  assert.equal(root?.uid, 0);
+  assert.equal(lookupHostOsUser("ROOT")?.uid, 0);
+  assert.equal(lookupHostOsUser("no-such-os-user-xyz-metis"), undefined);
+  if (!listedNames.includes("root")) {
+    assert.ok(root, "root must still be assignable by typed name when omitted from the dropdown");
+  }
+  assert.throws(
+    () => createManagedUser({ username: "rootbind", password: "password1", workspaceRoot: dir, osUsername: "root" }),
+    /explicitly configured/,
+  );
 });

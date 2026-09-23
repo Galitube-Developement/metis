@@ -33,64 +33,6 @@ export type ModelParameterModel = {
   variants?: ReadonlyArray<ReadonlyArray<ModelParamSelection>>;
 };
 
-export const FAST_PARAMETER: ModelParameter = {
-  id: "fast",
-  displayName: "Fast",
-  values: [
-    { value: "false" },
-    { value: "true", displayName: "Fast" },
-  ],
-};
-
-const COMPATIBLE_REASONING_PARAMETER: ModelParameter = {
-  id: "effort",
-  displayName: "Reasoning",
-  values: [
-    { value: "none", displayName: "Provider default" },
-    { value: "low", displayName: "Low" },
-    { value: "medium", displayName: "Medium" },
-    { value: "high", displayName: "High" },
-  ],
-};
-
-const COMPATIBLE_OPENAI_REASONING_PARAMETER: ModelParameter = {
-  id: "effort",
-  displayName: "Reasoning",
-  values: [
-    { value: "none", displayName: "Provider default" },
-    { value: "minimal", displayName: "Minimal" },
-    { value: "low", displayName: "Low" },
-    { value: "medium", displayName: "Medium" },
-    { value: "high", displayName: "High" },
-    { value: "xhigh", displayName: "Extra high" },
-  ],
-};
-
-const GLM_53_REASONING_PARAMETER: ModelParameter = {
-  id: "effort",
-  displayName: "Reasoning",
-  values: [
-    { value: "low", displayName: "Low" },
-    { value: "high", displayName: "High" },
-    { value: "max", displayName: "Max" },
-  ],
-};
-
-function isGlm53Model(id = "") {
-  return /(?:^|[\/:_-])glm[-_.]?5(?:[.-]?3|p3)(?:$|[\/:_-])/i.test(id.trim());
-}
-
-function inferredCompatibleReasoningParameter(model: ModelParameterModel): ModelParameter | null {
-  if (model.providerId !== "compatible") return null;
-  if (model.parameters?.some((parameter) => REASONING_IDS.has(parameter.id))) return null;
-  const id = model.id || "";
-  if (isGlm53Model(id)) return GLM_53_REASONING_PARAMETER;
-  if (/(?:^|[\/:_-])(?:gpt[-_.]?5|o[134](?:[-_.]|$)|codex)(?:$|[\/:_-])/i.test(id)) {
-    return COMPATIBLE_OPENAI_REASONING_PARAMETER;
-  }
-  return COMPATIBLE_REASONING_PARAMETER;
-}
-
 const REASONING_IDS = new Set(["effort", "reasoning"]);
 const CONTEXT_IDS = new Set(["context", "contextWindow", "context_window"]);
 const REMOVED_PARAM_IDS = new Set(["uncensored"]);
@@ -215,24 +157,6 @@ export function modelParametersForModel(model: ModelParameterModel): ModelParame
     parameters.push(parameter);
   }
 
-  // OpenAI-compatible /models endpoints usually expose model IDs only. The
-  // compatible transport itself supports reasoning_effort, so offer a safe
-  // provider-default selector even when the endpoint does not advertise one.
-  const compatibleReasoning = inferredCompatibleReasoningParameter(model);
-  if (compatibleReasoning && !seen.has("effort")) {
-    parameters.push(cloneParameter(compatibleReasoning));
-    seen.add("effort");
-  }
-
-  // Fast is only offered when the provider/model explicitly exposes it.
-  if (
-    !seen.has("fast") &&
-    Boolean(model.capabilities?.fast)
-  ) {
-    parameters.push(FAST_PARAMETER);
-    seen.add("fast");
-  }
-
   return orderModelParams(parameters);
 }
 
@@ -246,16 +170,6 @@ export function defaultParamsForModel(model: ModelParameterModel): ModelParamSel
     const definition = allowed.get(id);
     if (!definition || !definition.values.some((value) => value.value === param.value)) continue;
     result.push({ id, value: param.value });
-  }
-  if (!result.some((param) => param.id === "effort") && model.providerId === "compatible") {
-    const effort = allowed.get("effort");
-    const fallback = isGlm53Model(model.id) ? "max" : "none";
-    if (effort?.values.some((value) => value.value === fallback)) {
-      result.push({ id: "effort", value: fallback });
-    }
-  }
-  if (parameters.some((parameter) => parameter.id === "fast") && !result.some((param) => param.id === "fast")) {
-    result.push({ id: "fast", value: "false" });
   }
   return orderModelParams(result);
 }

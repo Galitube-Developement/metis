@@ -151,29 +151,14 @@ test("native provider params keep context only when the provider owns that selec
 
 
 
-test("OpenAI-compatible models get usable reasoning options when discovery exposes only an id", () => {
-  const generic = { id: "custom-reasoner", providerId: "compatible" };
-  assert.deepEqual(
-    modelParametersForModel(generic).find((parameter) => parameter.id === "effort")?.values,
-    [
-      { value: "none", displayName: "Provider default" },
-      { value: "low", displayName: "Low" },
-      { value: "medium", displayName: "Medium" },
-      { value: "high", displayName: "High" },
-    ],
-  );
-  assert.deepEqual(defaultParamsForModel(generic), [{ id: "effort", value: "none" }]);
-});
-
-test("GLM-5.3 compatible models expose the provider's low/high/max effort ladder", () => {
-  const glm = { id: "glm-5.3", providerId: "compatible" };
-  assert.deepEqual(
-    modelParametersForModel(glm).find((parameter) => parameter.id === "effort")?.values,
-    [
-      { value: "low", displayName: "Low" },
-      { value: "high", displayName: "High" },
-      { value: "max", displayName: "Max" },
-    ],
-  );
-  assert.deepEqual(defaultParamsForModel(glm), [{ id: "effort", value: "max" }]);
+test("models do not get options or defaults inferred from provider or model ids", () => {
+  for (const model of [
+    { id: "gpt-5.4", providerId: "openai" },
+    { id: "gpt-5.4", providerId: "compatible" },
+    { id: "glm-5.3", providerId: "compatible" },
+    { id: "custom-reasoner", providerId: "compatible", capabilities: { fast: true } },
+  ]) {
+    assert.deepEqual(modelParametersForModel(model), []);
+    assert.deepEqual(defaultParamsForModel(model), []);
+  }
 });

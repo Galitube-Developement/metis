@@ -743,6 +743,12 @@ adopt_env_stash "$install_dir"
   write_env_line METIS_WORKSPACE "$agent_cwd"
   write_env_line METIS_DATA_DIR "$data_dir"
   write_env_line AI_CHAT_BIND "$ai_chat_host"
+  if (( use_docker == 0 )); then
+    uid_now="$(id -u 2>/dev/null || echo 1)"
+    if [[ "$uid_now" == "0" || "$agent_cwd" == /root || "$agent_cwd" == /root/* ]]; then
+      printf 'AI_CHAT_ALLOW_ROOT_AGENTS=true\n'
+    fi
+  fi
   if (( use_docker )); then
     printf 'METIS_DOCKER=1\n'
     write_env_line AGENT_CWD "/workspace"

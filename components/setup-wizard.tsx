@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { HandsStage } from "@/components/hands-stage";
 import { ProviderSetupDialog } from "@/components/provider-setup-dialog";
 import { resolveSetupStep, type SetupStep } from "@/lib/setup-step";
+import { OsUserField } from "@/components/os-user-field";
 
 type OsPlatform = "linux" | "darwin" | "win32";
 type OsUser = { username: string; home?: string };
@@ -35,7 +36,6 @@ export function SetupWizard({
   const [platform, setPlatform] = useState<OsPlatform>("linux");
   const [osUsers, setOsUsers] = useState<OsUser[]>([]);
   const [users, setUsers] = useState<CreatedUser[]>([]);
-  const [showOsBind, setShowOsBind] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -59,9 +59,11 @@ export function SetupWizard({
           platform?: OsPlatform;
           osUsers?: OsUser[];
           hasUsers?: boolean;
+          suggestedOsUsername?: string;
         };
         setPlatform(body.platform || "linux");
         setOsUsers(body.osUsers || []);
+        setOsUsername((current) => current || body.suggestedOsUsername || "");
       })
       .catch(() => undefined);
     if (hasUsers && users.length === 0) {
@@ -95,7 +97,7 @@ export function SetupWizard({
       const response = await fetch("/api/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "bootstrap", username, password }),
+        body: JSON.stringify({ action: "bootstrap", username, password, osUsername: osUsername.trim() || undefined }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -106,13 +108,6 @@ export function SetupWizard({
       setUsers([created]);
       setUsername("");
       setPassword("");
-      if (osUsername) {
-        await fetch("/api/setup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "os-user", osUsername }),
-        });
-      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not create account.");
     } finally {
@@ -242,28 +237,17 @@ export function SetupWizard({
                 <Switch checked={makeAdmin} onCheckedChange={setMakeAdmin} aria-label="Admin" />
               </label>
             ) : null}
-            {users.length ? (
-              <button type="button" className="text-left text-xs text-muted-foreground underline-offset-4 hover:underline" onClick={() => setShowOsBind((current) => !current)}>
-                {showOsBind ? "Hide host user" : `Optionally bind a ${platformLabel(platform).toLowerCase()}`}
-              </button>
-            ) : null}
-            {showOsBind && users.length ? (
-              <label className="grid gap-1 text-sm">
-                {platformLabel(platform)}
-                <select
-                  className="h-11 rounded-md border border-input bg-background px-2 text-sm"
-                  value={osUsername}
-                  onChange={(event) => setOsUsername(event.target.value)}
-                >
-                  <option value="">None</option>
-                  {osUsers.map((user) => (
-                    <option key={user.username} value={user.username}>
-                      {user.username}{user.home ? ` · ${user.home}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
+            <label className="grid gap-1 text-sm">
+              {platformLabel(platform)}
+              <OsUserField
+                value={osUsername}
+                onChange={setOsUsername}
+                osUsers={osUsers}
+                ariaLabel={platformLabel(platform)}
+                className="h-11 font-normal"
+              />
+              <span className="text-xs font-normal text-muted-foreground">Pick a host user or type a custom name that exists on this machine.</span>
+            </label>
             <div className="flex flex-wrap gap-2">
               <Button type="submit" className="h-11 min-h-11 rounded-xl" disabled={busy}>
                 {busy ? <LoaderCircle className="size-4 animate-spin" /> : users.length ? <><Plus className="size-4" /> Add person</> : <>Create admin <ArrowRight className="size-4" /></>}

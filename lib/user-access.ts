@@ -59,8 +59,51 @@ export function lookupPosixUser(username: string): PosixIdentity | undefined {
   }
 }
 
+export function currentHostOsUser(): HostOsUser | undefined {
+  try {
+    const current = os.userInfo();
+    return {
+      username: current.username,
+      uid: current.uid,
+      gid: current.gid,
+      home: current.homedir,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function hostOsUserMatches(user: HostOsUser, username: string) {
+  return user.username.toLowerCase() === username.trim().toLowerCase();
+}
+
 export function lookupHostOsUser(username: string): HostOsUser | undefined {
- return listHostOsUsers().find((user) => user.username.toLowerCase() === username.trim().toLowerCase());
+  const clean = username.trim();
+  if (!clean) return undefined;
+  const listed = listHostOsUsers().find((user) => hostOsUserMatches(user, clean));
+  if (listed) return listed;
+  const current = currentHostOsUser();
+  if (current && hostOsUserMatches(current, clean)) return current;
+  const platform = hostPlatform();
+  if (platform === "linux") {
+    const posix = lookupPosixUser(clean);
+    return posix ? { username: posix.username, uid: posix.uid, gid: posix.gid, home: posix.home } : undefined;
+  }
+  if (platform === "darwin") {
+    const uid = Number(runHostCommand("id", ["-u", clean]).trim());
+    if (!Number.isInteger(uid)) return undefined;
+    const gid = Number(runHostCommand("id", ["-g", clean]).trim());
+    const home = runHostCommand("dscl", [".", "-read", `/Users/${clean}`, "NFSHomeDirectory"]).match(/NFSHomeDirectory:\s+(.+)/)?.[1]?.trim()
+      || `/Users/${clean}`;
+    return { username: clean, uid, gid: Number.isInteger(gid) ? gid : undefined, home };
+  }
+  const named = runHostCommand("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `Get-LocalUser -Name ${JSON.stringify(clean)} | ForEach-Object { $_.Name }`,
+  ]).trim().split("\n").map((line) => line.trim()).find(Boolean);
+  return named ? { username: named, home: "" } : undefined;
 }
 
 function runHostCommand(command: string, args: string[]) {
@@ -89,10 +132,25 @@ function listWindowsUsers(): HostOsUser[] {
 }
 
 export function listHostOsUsers(platform = hostPlatform()): HostOsUser[] {
- if (platform === "darwin") return listMacOsUsers();
- if (platform === "win32") return listWindowsUsers();
- try { return listAssignablePosixUsers(readFileSync("/etc/passwd", "utf8"), { includeRoot: config.allowRootAgents }); }
- catch { return []; }
+  let users: HostOsUser[] = [];
+  if (platform === "darwin") users = listMacOsUsers();
+  else if (platform === "win32") users = listWindowsUsers();
+  else {
+    try {
+      users = listAssignablePosixUsers(readFileSync("/etc/passwd", "utf8"), { includeRoot: config.allowRootAgents });
+    } catch {
+      users = [];
+    }
+  }
+  const current = currentHostOsUser();
+  if (
+    current
+    && !users.some((user) => hostOsUserMatches(user, current.username))
+    && (platform === "win32" || (current.uid !== undefined && current.uid > 0) || config.allowRootAgents)
+  ) {
+    users = [...users, current].sort((a, b) => a.username.localeCompare(b.username));
+  }
+  return users;
 }
 export function getUserAccess(userId?: string): UserAccess {
   if (!userId?.trim()) return { userId: "", workspaceRoot: path.resolve(config.agentCwd) };
@@ -198,6 +256,20 @@ export function isHostAdmin(userId?: string | null) {
   return isHostAdminUsername(user.username, {}, first?.username);
 }
 
+export function inferOsUsernameForWorkspace(workspaceRoot = config.agentCwd): string | undefined {
+  const current = currentHostOsUser();
+  if (!current?.username) return undefined;
+  if (hostPlatform() === "win32") return current.username;
+  if (current.uid === 0) {
+    if (config.allowRootAgents && isRootWorkspace(workspaceRoot, current.home || "/root")) {
+      return current.username;
+    }
+    return undefined;
+  }
+  if (current.uid !== undefined && current.uid > 0) return current.username;
+  return undefined;
+}
+
 export function resolveManagedWorkspaceRoot(workspaceRoot?: string | null) {
   const resolved = path.resolve((workspaceRoot || "").trim() || config.agentCwd);
   if (!path.isAbsolute(resolved) || resolved === path.sep) {
@@ -276,6 +348,11 @@ export function provisionMissingAccountAccess(userId: string, username: string) 
   const matching = lookupHostOsUser(username);
   if (matching && (hostPlatform() === "win32" || (matching.uid !== undefined && matching.uid > 0))) {
     ensureUserAccess(userId, access.workspaceRoot, matching.username);
+    return true;
+  }
+  const inferred = inferOsUsernameForWorkspace(access.workspaceRoot);
+  if (inferred) {
+    ensureUserAccess(userId, access.workspaceRoot, inferred);
     return true;
   }
   return false;
