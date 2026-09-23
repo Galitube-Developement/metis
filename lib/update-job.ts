@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import {
+  initializeInstallerUpdateLog,
+  installerLogForJob,
   installerLogIndicatesFailure,
   installerLogIndicatesSuccess,
   installerUpdateIsRunning,
@@ -25,6 +27,7 @@ export type UpdateJob = {
   jobId: string;
   status: "preparing" | "ready" | "failed";
   startedAt: string;
+  startedByPid?: number;
   finishedAt?: string;
   result?: UpdateJobResult;
   error?: string;
@@ -55,6 +58,7 @@ function parseStoredJob(raw: string): UpdateJob | null {
       jobId: parsed.jobId,
       status: parsed.status,
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : new Date().toISOString(),
+      ...(typeof parsed.startedByPid === "number" ? { startedByPid: parsed.startedByPid } : {}),
       ...(parsed.finishedAt ? { finishedAt: parsed.finishedAt } : {}),
       ...(parsed.result ? { result: parsed.result } : {}),
       ...(parsed.error ? { error: parsed.error } : {}),
@@ -75,19 +79,29 @@ async function readPersistedJob(): Promise<UpdateJob | null> {
 
 export function settleUpdateJobFromInstaller(
   job: UpdateJob,
-  input: { installerRunning: boolean; logText: string; now?: string },
+  input: { installerRunning: boolean; logText: string; currentPid?: number; now?: string },
 ): UpdateJob {
   if (job.status !== "preparing") return job;
-  const logs = input.logText.trim() ? input.logText.trim().split(/\r?\n/) : job.logs;
+  const scopedLog = installerLogForJob(input.logText, job.jobId);
+  if (!scopedLog) return job;
+
+  const logs = scopedLog.trim().split(/\r?\n/);
   if (input.installerRunning) return { ...job, logs };
+
   const now = input.now || new Date().toISOString();
   const last = logs.filter(Boolean).at(-1);
-  if (installerLogIndicatesFailure(input.logText)) {
+  if (installerLogIndicatesFailure(scopedLog)) {
     return { ...job, status: "failed", error: last || "Installer update failed.", finishedAt: now, logs };
   }
-  if (!installerLogIndicatesSuccess(input.logText)) {
+  if (!installerLogIndicatesSuccess(scopedLog)) {
     return { ...job, logs };
   }
+
+  const currentPid = input.currentPid ?? process.pid;
+  if (!job.startedByPid || currentPid === job.startedByPid) {
+    return { ...job, logs };
+  }
+
   return {
     ...job,
     status: "ready",
@@ -103,7 +117,11 @@ async function applyInstallerState(job: UpdateJob) {
     installerUpdateIsRunning(config.serviceName),
     readInstallerUpdateLog(config.dataDir, 200),
   ]);
-  const next = settleUpdateJobFromInstaller(job, { installerRunning: running, logText: logs.join("\n") });
+  const next = settleUpdateJobFromInstaller(job, {
+    installerRunning: running,
+    logText: logs.join("\n"),
+    currentPid: process.pid,
+  });
   jobs.set(next.jobId, next);
   if (next.status !== "preparing") {
     await persistJob(next);
@@ -117,25 +135,34 @@ async function applyInstallerState(job: UpdateJob) {
 async function startUpdateJob(
   prepare: (logger: (message: string) => void) => Promise<UpdateJobResult>,
   reason = INSTALLER_REASON,
+  initialize?: (job: UpdateJob) => Promise<void>,
 ) {
-  const job: UpdateJob = { jobId: randomUUID(), status: "preparing", startedAt: new Date().toISOString(), logs: ["Update job created."] };
+  const job: UpdateJob = {
+    jobId: randomUUID(),
+    status: "preparing",
+    startedAt: new Date().toISOString(),
+    startedByPid: process.pid,
+    logs: ["Update job created."],
+  };
   const log = (message: string) => { job.logs.push(`${new Date().toISOString()} ${message}`); };
+
+  await initialize?.(job);
   log("Maintenance mode enabled.");
   await setMaintenanceState(job.jobId, reason);
   jobs.set(job.jobId, job);
   await persistJob(job);
+
   void prepare(log).then(async (result) => {
-    job.status = "ready";
     job.result = result;
-    job.finishedAt = new Date().toISOString();
-    log("Update prepared successfully.");
+    log("Installer process finished; waiting for the restarted Metis process.");
+    jobs.set(job.jobId, job);
     await persistJob(job);
-    await clearMaintenanceState();
   }).catch(async (error) => {
     job.status = "failed";
     job.error = error instanceof Error ? error.message : String(error);
     job.finishedAt = new Date().toISOString();
     log(`Update failed: ${job.error}`);
+    jobs.set(job.jobId, job);
     await persistJob(job);
     await clearMaintenanceState();
   });
@@ -146,7 +173,7 @@ export function startInstallerUpdateJob(input: InstallerUpdateInput) {
   return startUpdateJob(async (log) => {
     const result = await runInstallerUpdate(input, log);
     return { ...result, commit: input.commit };
-  });
+  }, INSTALLER_REASON, (job) => initializeInstallerUpdateLog(input.dataDir, job.jobId));
 }
 
 export function getUpdateJob(jobId: string) {
@@ -161,12 +188,5 @@ export async function resolveUpdateJob(jobId: string): Promise<UpdateJob | null>
     jobs.set(remembered.jobId, remembered);
     return applyInstallerState(remembered);
   }
-  const recovered: UpdateJob = {
-    jobId: id,
-    status: "preparing",
-    startedAt: new Date().toISOString(),
-    logs: ["Recovered update job after the installer restarted Metis."],
-  };
-  jobs.set(id, recovered);
-  return applyInstallerState(recovered);
+  return null;
 }

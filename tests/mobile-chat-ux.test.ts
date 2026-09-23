@@ -48,6 +48,13 @@ test("intermediate progress narration is visually quieter than the final answer"
   assert.match(shell, /hasLaterActivity && "text-\[14px\] leading-6 text-foreground\/75"/);
 });
 
+test("assistant response footer copies the raw Markdown beside run metadata", () => {
+  assert.match(shell, /mt-2\.5 flex flex-wrap items-center gap-1\.5 text-\[11px\] tabular-nums/);
+  assert.match(shell, /aria-label="Copy raw Markdown response"/);
+  assert.match(shell, /await navigator\.clipboard\.writeText\(raw\)/);
+  const rawMessageCopyHandlers = shell.match(/copyRawMessage\(m\.content \|\| ""\)/g) || [];
+  assert.equal(rawMessageCopyHandlers.length, 2);
+});
 
 test("legacy Codex diagnostic rows are hidden from existing chat history", () => {
   assert.match(shell, /function isLegacyCodexNoiseTool/);

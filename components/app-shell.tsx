@@ -99,6 +99,10 @@ import { BrowserSettingsControls } from "@/components/browser-settings-controls"
 import { BrowserPageEmpty, BrowserPageSkeleton } from "@/components/browser-page-skeleton";
 import { UpdateStatusProbe } from "@/components/update-channel-nav";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
+import {
+  INSTALLER_MAINTENANCE_EVENT,
+  type InstallerMaintenanceDetail,
+} from "@/lib/update-job-client";
 import type { MemoryItem } from "@/components/memories-panel";
 import type { ChatLogEntry, ChatLogCategory } from "@/lib/chat-logs";
 import { ApprovalPanel, type ApprovalDecisionValue, type PendingApprovalView } from "@/components/approval-panel";
@@ -270,6 +274,36 @@ function formatMetricBytes(value: number | null | undefined) {
 
 function formatMetricNumber(value: number) {
   return Math.max(0, Math.round(value)).toLocaleString();
+}
+
+function copyTextAreaFallback(raw: string) {
+  const area = document.createElement("textarea");
+  area.value = raw;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  if (!copied) throw new Error("Clipboard copy failed");
+}
+
+async function copyRawMessage(raw: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(raw);
+      } catch {
+        copyTextAreaFallback(raw);
+      }
+    } else {
+      copyTextAreaFallback(raw);
+    }
+    toast.success("Copied");
+  } catch {
+    toast.error("Could not copy message");
+  }
 }
 
 function MetricSparkline({ values, color }: { values: number[]; color: string }) {
@@ -9643,10 +9677,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
          })
          .catch(() => undefined);
      };
+     const activateMaintenance = (event: Event) => {
+       const detail = (event as CustomEvent<InstallerMaintenanceDetail>).detail;
+       if (detail?.active) setMaintenanceState(detail);
+     };
      loadMaintenance();
+     window.addEventListener(INSTALLER_MAINTENANCE_EVENT, activateMaintenance);
      const timer = window.setInterval(loadMaintenance, 2_000);
      return () => {
        active = false;
+       window.removeEventListener(INSTALLER_MAINTENANCE_EVENT, activateMaintenance);
        window.clearInterval(timer);
      };
    }, []);
@@ -10537,19 +10577,32 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     )}
                     {sourceLinks.length ? <MessageSources sources={sourceLinks} /> : null}
                     {m.role === "assistant" && !m.streaming && m.runMetadata ? (
-                      <div
-                        className="mt-2.5 text-[11px] tabular-nums text-muted-foreground/75"
-                        title={[
-                          typeof m.runMetadata.outputTokens === "number" ? `${formatMetricNumber(m.runMetadata.outputTokens)} output tokens` : null,
-                          m.runMetadata.modelId ? `Model ${m.runMetadata.modelId}` : null,
-                          `Completed ${formatCompletedAt(m.runMetadata.completedAt)}`,
-                        ].filter(Boolean).join(" · ")}
-                      >
-                        {[
-                          typeof m.runMetadata.outputTokens === "number" ? formatMetricNumber(m.runMetadata.outputTokens) : null,
-                          m.runMetadata.modelId || null,
-                          formatCompletedAt(m.runMetadata.completedAt),
-                        ].filter(Boolean).join(" · ")}
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/75">
+                        <span
+                          title={[
+                            typeof m.runMetadata.outputTokens === "number" ? `${formatMetricNumber(m.runMetadata.outputTokens)} output tokens` : null,
+                            m.runMetadata.modelId ? `Model ${m.runMetadata.modelId}` : null,
+                            `Completed ${formatCompletedAt(m.runMetadata.completedAt)}`,
+                          ].filter(Boolean).join(" · ")}
+                        >
+                          {[
+                            typeof m.runMetadata.outputTokens === "number" ? formatMetricNumber(m.runMetadata.outputTokens) : null,
+                            m.runMetadata.modelId || null,
+                            formatCompletedAt(m.runMetadata.completedAt),
+                          ].filter(Boolean).join(" · ")}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          className="h-9 gap-1 rounded-lg px-2 text-[11px] text-muted-foreground opacity-100 sm:h-6 sm:rounded-md sm:px-1.5 sm:opacity-60 sm:hover:opacity-100"
+                          onClick={() => void copyRawMessage(m.content || "")}
+                          title="Copy raw Markdown response"
+                          aria-label="Copy raw Markdown response"
+                        >
+                          <Copy className="size-3" />
+                          Copy
+                        </Button>
                       </div>
                     ) : null}
                     {m.role === "assistant" && m.suggestions?.length ? (
@@ -10634,31 +10687,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         variant="ghost"
                         size="xs"
                         className="h-9 gap-1 rounded-lg px-2 text-[11px] text-muted-foreground opacity-100 sm:h-6 sm:rounded-md sm:px-1.5 sm:opacity-60 sm:hover:opacity-100"
-                        onClick={() => {
-                          const raw = m.content || "";
-                          const done = () => toast.success("Copied");
-                          if (navigator.clipboard?.writeText) {
-                            navigator.clipboard.writeText(raw).then(done).catch(() => {
-                              const area = document.createElement("textarea");
-                              area.value = raw;
-                              document.body.appendChild(area);
-                              area.select();
-                              document.execCommand("copy");
-                              area.remove();
-                              done();
-                            });
-                          } else {
-                            const area = document.createElement("textarea");
-                            area.value = raw;
-                            document.body.appendChild(area);
-                            area.select();
-                            document.execCommand("copy");
-                            area.remove();
-                            done();
-                          }
-                        }}
-                        title="Copy message"
-                        aria-label="Copy message"
+                        onClick={() => void copyRawMessage(m.content || "")}
+                        title="Copy raw message"
+                        aria-label="Copy raw message"
                       >
                         <Copy className="size-3" />
                         Copy

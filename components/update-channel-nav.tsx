@@ -5,7 +5,11 @@ import { GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatUpdateInstalledLabel } from "@/lib/update-display";
 import { UpdateVersionDialog } from "@/components/update-version-dialog";
-import { installerJobFinishedMessage, pollInstallerJob } from "@/lib/update-job-client";
+import {
+  activateInstallerMaintenanceScreen,
+  installerJobFinishedMessage,
+  pollInstallerJob,
+} from "@/lib/update-job-client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -292,10 +296,12 @@ export function UpdateSettingsPanel({
         throw new Error(result.error || raw.trim() || `Update preparation failed (HTTP ${response.status}).`);
       }
       if (result.status === "preparing" && result.jobId) {
+        const updateMessage = result.message || "Installer update started. The updating screen stays up until Metis restarts.";
         setPreparing(true);
         setJobId(result.jobId);
         window.localStorage.setItem(UPDATE_JOB_STORAGE_KEY, result.jobId);
-        setMessage(result.message || "Installer update started. The updating screen stays up until Metis restarts.");
+        setMessage(updateMessage);
+        activateInstallerMaintenanceScreen(updateMessage);
         return;
       }
       setInstallerUrl(result.status === "external-installer" ? result.installerUrl || null : null);

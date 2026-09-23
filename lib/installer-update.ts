@@ -71,6 +71,24 @@ export function installerUpdateLogPath(dataDir: string) {
   return path.join(dataDir, INSTALLER_UPDATE_LOG);
 }
 
+export function installerUpdateJobMarker(jobId: string) {
+  return `[metis-update-job:${jobId}]`;
+}
+
+export function installerLogForJob(logText: string, jobId: string) {
+  const marker = installerUpdateJobMarker(jobId);
+  const markerIndex = logText.lastIndexOf(marker);
+  return markerIndex >= 0 ? logText.slice(markerIndex) : "";
+}
+
+export async function initializeInstallerUpdateLog(dataDir: string, jobId: string) {
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(installerUpdateLogPath(dataDir), `${installerUpdateJobMarker(jobId)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
 export function buildInstallerUpdatePlan(input: InstallerUpdateInput): InstallerUpdatePlan {
   const platform = platformOf(input.platform);
   const logFile = installerUpdateLogPath(input.dataDir);
@@ -301,7 +319,6 @@ export async function runInstallerUpdate(
 ): Promise<InstallerUpdateResult> {
   const plan = buildInstallerUpdatePlan(input);
   await mkdir(input.dataDir, { recursive: true });
-  await writeFile(plan.logFile, "", "utf8");
   const script = await copyScriptToTemp(plan.scriptSource);
   const args = plan.args.map((value) => (value === plan.scriptSource ? script : value));
   log(`Running ${plan.kind} installer: ${plan.command} ${args.join(" ")}`);

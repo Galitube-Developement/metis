@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { installerJobFinishedMessage, pollInstallerJob } from "@/lib/update-job-client";
+import {
+ activateInstallerMaintenanceScreen,
+ installerJobFinishedMessage,
+ pollInstallerJob,
+} from "@/lib/update-job-client";
 
 type UpdateData = {
  status?: "development" | "up-to-date" | "available" | "external-installer";
@@ -86,12 +90,14 @@ export function UpdateBanner() {
  const response = await fetch("/api/admin/system/update", { method: "POST" });
  const result = (await response.json().catch(() => ({}))) as { message?: string; error?: string; status?: string; jobId?: string };
  if (!response.ok) throw new Error(result.error || "Update failed.");
+ const updateMessage = result.message || "Installer update started. The updating screen stays up until Metis restarts.";
  if (result.status === "preparing" && result.jobId) {
    setPreparing(true);
    setJobId(result.jobId);
    window.localStorage.setItem(UPDATE_JOB_STORAGE_KEY, result.jobId);
+   activateInstallerMaintenanceScreen(updateMessage);
  }
- setMessage(result.message || "Installer update started. The updating screen stays up until Metis restarts.");
+ setMessage(updateMessage);
  } catch (error) {
  setMessage(error instanceof Error ? error.message : "Update failed.");
  } finally {
