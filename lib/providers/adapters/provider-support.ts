@@ -789,16 +789,29 @@ export function compactProviderMessages(
   return compactIfNeeded(messages, contextWindow, contextMode, onCompaction, measuredTokens);
 }
 
+type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent";
+
+const CODEX_REASONING_EFFORTS = new Set<CodexReasoningEffort>([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+  "persistent",
+]);
+
 export function codexReasoningEffortForSelection(
   modelId: string,
   params?: ReadonlyArray<{ id: string; value: string }> | null,
-): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
-  if (!/^(?:gpt[-_.]?5|codex)/i.test(modelId.trim())) return undefined;
+): CodexReasoningEffort | undefined {
+  if (!/^(?:gpt[-_.]?(?:5|6)|codex)/i.test(modelId.trim())) return undefined;
   const value = params?.find(
     (param) => param.id === "effort" || param.id === "reasoning",
   )?.value;
-  return value && ["minimal", "low", "medium", "high", "xhigh"].includes(value)
-    ? (value as "minimal" | "low" | "medium" | "high" | "xhigh")
+  return value && CODEX_REASONING_EFFORTS.has(value as CodexReasoningEffort)
+    ? (value as CodexReasoningEffort)
     : undefined;
 }
 

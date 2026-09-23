@@ -95,7 +95,10 @@ test("contextWindowForSelection follows the selected provider context parameter"
  assert.equal(contextWindowForSelection({ id: "grok-4.6", providerId: "cursor", contextWindow: 2_000_000 }), 200_000);
 });
 
-test("current GPT-5 family fallbacks keep long-context and mini variants distinct", () => {
+test("current GPT-5 and GPT-6 family fallbacks keep long-context and mini variants distinct", () => {
+  assert.equal(contextWindowForSelection({ id: "gpt-6-astra", providerId: "codex" }), 1_050_000);
+  assert.equal(contextWindowForSelection({ id: "gpt-6-sol", providerId: "codex" }), 1_050_000);
+  assert.equal(contextWindowForSelection({ id: "gpt-6-luna", providerId: "codex" }), 1_050_000);
   assert.equal(contextWindowForSelection({ id: "gpt-5.6-terra", providerId: "codex" }), 1_050_000);
   assert.equal(contextWindowForSelection({ id: "gpt-5.5", providerId: "codex" }), 1_050_000);
   assert.equal(contextWindowForSelection({ id: "gpt-5.4-mini", providerId: "codex" }), 400_000);

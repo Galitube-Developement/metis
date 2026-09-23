@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  codexModelDiscoveryUrl,
   mergeDiscoveredContextWindow,
   parseDiscoveredModel,
   providerAdvertisedOptions,
@@ -64,4 +65,11 @@ test("discovered model options come only from the provider payload", () => {
     parameters,
     defaultParams,
   });
+});
+
+test("Codex fallback discovery reports the installed client version", () => {
+  assert.equal(
+    codexModelDiscoveryUrl("0.156.1"),
+    "https://chatgpt.com/backend-api/codex/models?client_version=0.156.1",
+  );
 });

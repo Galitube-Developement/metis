@@ -30,7 +30,7 @@ export function activeInFlightTool<T extends { status?: unknown }>(
 }
 
 export function openAIUsesResponsesApi(modelId: string) {
-  return /codex/i.test(String(modelId || "").trim());
+  return /codex|^gpt[-_.]?6(?:[.\-_]|$)/i.test(String(modelId || "").trim());
 }
 
 export function abortError(message = "Provider run aborted.") {

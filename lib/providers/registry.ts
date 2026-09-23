@@ -56,6 +56,8 @@ const CODEX_EFFORT_PARAMETER = {
     { value: "medium", displayName: "Medium" },
     { value: "high", displayName: "High" },
     { value: "xhigh", displayName: "Extra high" },
+    { value: "max", displayName: "Max" },
+    { value: "ultra", displayName: "Ultra" },
   ],
 } as const;
 
@@ -212,6 +214,33 @@ export const PROVIDERS: ProviderDefinition[] = [
     capabilities: agentCapabilities,
     models: models(
       {
+        id: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        tags: ["reasoning", "coding", "agent"],
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        parameters: [CODEX_EFFORT_PARAMETER],
+        defaultParams: [{ id: "effort", value: "medium" }],
+      },
+      {
+        id: "gpt-6-sol",
+        displayName: "GPT-6 Sol",
+        tags: ["reasoning", "coding", "agent"],
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        parameters: [CODEX_EFFORT_PARAMETER],
+        defaultParams: [{ id: "effort", value: "medium" }],
+      },
+      {
+        id: "gpt-6-luna",
+        displayName: "GPT-6 Luna",
+        tags: ["fast", "coding", "agent"],
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        parameters: [CODEX_EFFORT_PARAMETER],
+        defaultParams: [{ id: "effort", value: "medium" }],
+      },
+      {
         id: "gpt-5.4",
         displayName: "GPT-5.4",
         tags: ["reasoning", "coding", "agent"],
@@ -341,7 +370,7 @@ export function getProviderModelDefinition(providerKey: string, modelId: string)
   // registry. Reuse the provider's parameter contract for the same model
   // family, while keeping the discovered id and metadata authoritative.
   const family = provider.models.find((model) => {
-    if (providerKey === "codex") return /^gpt-5(?:[.-]|$)/i.test(model.id) && /^gpt-5(?:[.-]|$)/i.test(modelId);
+    if (providerKey === "codex") return /^gpt-(?:5|6)(?:[.-]|$)/i.test(model.id) && /^gpt-(?:5|6)(?:[.-]|$)/i.test(modelId);
     if (providerKey === "antigravity") return /^(gemini|gpt-oss)/i.test(model.id) && /^(gemini|gpt-oss)/i.test(modelId);
     return false;
   });

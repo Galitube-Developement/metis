@@ -66,6 +66,7 @@ test("usage selection maps Samuel gateway plan aliases to their real quota owner
     { key: "cursor", name: "Cursor", status: "live" as const, windows: [{ label: "included", usedPercent: 20, resetsAt: null }] },
   ];
   assert.equal(matchUsageProvider(providers, { providerId: "compatible", connectionLabel: "Samuel AI Gateway", modelId: "gpt-5.6-luna" })?.key, "codex");
+  assert.equal(matchUsageProvider(providers, { providerId: "compatible", connectionLabel: "Samuel AI Gateway", modelId: "gpt-6-sol" })?.key, "codex");
   assert.equal(matchUsageProvider(providers, { providerId: "compatible", connectionLabel: "Samuel AI Gateway", modelId: "agy-gemini-3.6-flash-high" })?.key, "antigravity");
   assert.equal(matchUsageProvider(providers, { providerId: "compatible", connectionLabel: "Samuel AI Gateway", modelId: "gemini-3-flash" })?.key, "antigravity");
   assert.equal(matchUsageProvider(providers, { providerId: "compatible", connectionLabel: "Samuel AI Gateway", modelId: "glm-5" })?.key, "zai");

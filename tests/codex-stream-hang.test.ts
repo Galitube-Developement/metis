@@ -11,6 +11,9 @@ test("OpenAI Codex model IDs use the Responses API, not Chat Completions", () =>
   assert.equal(openAIUsesResponsesApi("gpt-5-codex"), true);
   assert.equal(openAIUsesResponsesApi("gpt-5.3-codex"), true);
   assert.equal(openAIUsesResponsesApi("gpt-5.1-codex-mini"), true);
+  assert.equal(openAIUsesResponsesApi("gpt-6-astra"), true);
+  assert.equal(openAIUsesResponsesApi("gpt-6-sol"), true);
+  assert.equal(openAIUsesResponsesApi("gpt-6-luna"), true);
   assert.equal(openAIUsesResponsesApi("gpt-5"), false);
   assert.equal(openAIUsesResponsesApi("gpt-5.4"), false);
 });

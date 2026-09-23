@@ -57,7 +57,7 @@ export function usageKeyForSelection(selection: UsageSelection): string | null {
   const model = (selection.modelId || "").toLowerCase();
   if (localGateway && /(?:^|[-_.])(agy|gemini)(?:[-_.]|$)/i.test(model)) return "antigravity";
   if (localGateway && /(?:^|[-_.])(glm|zai|z-ai)(?:[-_.]|$)/i.test(model)) return "zai";
-  if (localGateway && /^gpt[-_.]?5(?:[.\-_]|$)/i.test(model)) return "codex";
+  if (localGateway && /^gpt[-_.]?(?:5|6)(?:[.\-_]|$)/i.test(model)) return "codex";
   if (/\bz\.?ai\b|\bz-ai\b|\bglm(?:[-_. ]?\d)?/i.test(haystack)) return "zai";
   if (/\bantigravity\b|\bagy\b/i.test(haystack)) return "antigravity";
   if (/\bcodex\b|\bchatgpt\b/i.test(haystack)) return "codex";

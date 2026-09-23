@@ -200,6 +200,10 @@ test("Codex reasoning effort accepts only supported values", () => {
     "xhigh",
   );
   assert.equal(
+    codexReasoningEffortForSelection("gpt-6-astra", [{ id: "effort", value: "ultra" }]),
+    "ultra",
+  );
+  assert.equal(
     codexReasoningEffortForSelection("claude-opus-4-6", [{ id: "effort", value: "high" }]),
     undefined,
   );

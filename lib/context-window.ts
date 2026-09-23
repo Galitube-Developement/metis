@@ -8,6 +8,7 @@ const KNOWN_WINDOWS: Array<{ test: RegExp; tokens: number }> = [
   { test: /claude/i, tokens: 200_000 },
   { test: /gpt-4\.1/i, tokens: 1_048_576 },
   { test: /gpt-4o|o3|o4/i, tokens: 200_000 },
+  { test: /gpt-6(?:[.\-_]|$)/i, tokens: 1_050_000 },
   { test: /gpt-5\.6/i, tokens: 1_050_000 },
   { test: /gpt-5\.5/i, tokens: 1_050_000 },
   { test: /gpt-5\.4-(?:mini|nano)/i, tokens: 400_000 },

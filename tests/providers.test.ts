@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decryptSecret, encryptSecret, maskSecret } from "../lib/secrets";
-import { listProviderDefinitions } from "../lib/providers/registry";
+import { getProviderModelDefinition, listProviderDefinitions } from "../lib/providers/registry";
 import { providerExecution } from "../lib/providers/run-kind";
 import { codexTool } from "../lib/providers/runner";
 import { antigravitySupportsEffort } from "../lib/providers/official-antigravity";
@@ -55,11 +55,15 @@ test("Codex exposes the supported credential paths and official model IDs", () =
   const provider = listProviderDefinitions().find((item) => item.key === "codex");
   assert.deepEqual(provider?.authTypes, ["oauth", "account", "api_key"]);
   assert.deepEqual(provider?.models.map((model) => model.id), [
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.4",
     "gpt-5.6",
     "gpt-5.3-codex",
     "gpt-5.2",
   ]);
+  assert.equal(getProviderModelDefinition("codex", "gpt-6-sol")?.contextWindow, 1_050_000);
 });
 
 test("Antigravity defaults to the official SDK API key and still offers OAuth", () => {

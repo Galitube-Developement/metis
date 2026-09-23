@@ -1,6 +1,7 @@
 import { Cursor } from "@cursor/sdk";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
@@ -276,6 +277,24 @@ type CodexAppServerModel = {
   hidden?: boolean;
 };
 
+export function codexClientVersion() {
+  try {
+    const packageJson = JSON.parse(readFileSync(
+      path.join(config.root, "node_modules", "@openai", "codex", "package.json"),
+      "utf8",
+    )) as { version?: unknown };
+    return typeof packageJson.version === "string" ? packageJson.version.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+export function codexModelDiscoveryUrl(clientVersion = codexClientVersion()) {
+  const url = new URL("https://chatgpt.com/backend-api/codex/models");
+  if (clientVersion) url.searchParams.set("client_version", clientVersion);
+  return url.toString();
+}
+
 async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWithSecret): Promise<DiscoveredModel[]> {
   if (connection.authType !== "oauth" && connection.authType !== "account") {
     throw new Error("Codex app-server discovery requires account or OAuth authentication.");
@@ -384,7 +403,7 @@ export async function discoverProviderModels(connection: ProviderConnectionWithS
       if (connection.authType !== "oauth") throw appServerError;
       const credentials = readCodexOAuthCredentials(connection.secret || "");
       const response = await fetch(
-        "https://chatgpt.com/backend-api/codex/models?client_version=0.147.0",
+        codexModelDiscoveryUrl(),
         {
           headers: { Authorization: `Bearer ${credentials.access}`, "ChatGPT-Account-Id": credentials.accountId, Accept: "application/json" },
           signal: AbortSignal.timeout(10_000),
