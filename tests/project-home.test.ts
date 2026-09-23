@@ -108,3 +108,13 @@ test("the unfiltered project chip is labelled All instead of None", () => {
   assert.match(projectNavSource, />\s*All\s*<\/button>/);
   assert.doesNotMatch(projectNavSource, />\s*None\s*<\/button>/);
 });
+
+test("project hub uses a reloadable /?c=project: URL", () => {
+  assert.match(shellSource, /const PROJECT_ROUTE_PREFIX = "project:"/);
+  assert.match(shellSource, /function projectRouteId\(projectId: string\)/);
+  assert.match(shellSource, /function parseProjectRouteId\(routeId: string \| null\)/);
+  assert.match(shellSource, /navigateChat\(projectRouteId\(projectId\)\)/);
+  assert.match(shellSource, /const routeProjectId = parseProjectRouteId\(routeChatId\)/);
+  assert.match(shellSource, /setProjectHomeId\(routeProjectId\)/);
+  assert.match(shellSource, /draftProjectIdRef\.current = routeProjectId/);
+});

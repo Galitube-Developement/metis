@@ -922,6 +922,18 @@ function chatHref(id: string | null): string {
   return id ? `/?c=${encodeURIComponent(id)}` : "/";
 }
 
+const PROJECT_ROUTE_PREFIX = "project:";
+
+function projectRouteId(projectId: string): string {
+  return `${PROJECT_ROUTE_PREFIX}${projectId}`;
+}
+
+function parseProjectRouteId(routeId: string | null): string | null {
+  if (!routeId?.startsWith(PROJECT_ROUTE_PREFIX)) return null;
+  const id = routeId.slice(PROJECT_ROUTE_PREFIX.length).trim();
+  return id || null;
+}
+
 async function fetchReadWithRetry(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -5040,6 +5052,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => {
     if (!authed) return;
     const current = activeChatIdRef.current;
+    const routeProjectId = parseProjectRouteId(routeChatId);
     if (routeChatId === "automations" || routeView === "automations") {
       setAutomationsOpen(true);
       setNotesOpen(false);
@@ -5048,6 +5061,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setActiveChatId(null);
         activeChatIdRef.current = null;
         setProjectHomeId(null);
+    } else if (routeProjectId) {
+      setAutomationsOpen(false);
+      setNotesOpen(false);
+      setWorkspaceOpen(false);
+      setWorkspaceFullscreen(false);
+      persistActiveSnapshot();
+      setActiveChatId(null);
+      activeChatIdRef.current = null;
+      setProjectHomeId(routeProjectId);
+      draftProjectIdRef.current = routeProjectId;
+      setDraftProjectId(routeProjectId);
     } else if (routeChatId === "notes") {
       if (suppressNotesRouteRef.current) return;
       setNotesOpen(true);
@@ -9318,7 +9342,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  setProjectHomeId(projectId);
  draftProjectIdRef.current = projectId;
  setDraftProjectId(projectId);
- navigateChat(null);
+ navigateChat(projectRouteId(projectId));
  setMobileNavOpen(false);
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setDesktopSidebarOpen(false);
