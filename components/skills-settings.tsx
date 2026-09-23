@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, Puzzle } from "lucide-react";
+import { SkillFacts } from "@/components/skill-facts";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
@@ -14,6 +15,9 @@ type SkillItem = {
   source: string;
   sourceType: string;
   skillPath: string;
+  license?: string;
+  category?: string;
+  tags?: string[];
   enabled: boolean;
   alwaysOn: boolean;
 };
@@ -138,9 +142,13 @@ export function SkillsSettings() {
                       <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium" title={skill.title}>{skill.title}</p>
-                        <p className="truncate text-xs text-muted-foreground" title={skill.alwaysOn ? "Always on" : "Match-based"}>
+                        {skill.description ? (
+                          <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground" title={skill.description}>{skill.description}</p>
+                        ) : null}
+                        <p className="truncate text-[11px] text-muted-foreground" title={`${skill.alwaysOn ? "Always on" : "Match-based"}${skill.source ? ` · ${skill.source}` : ""}`}>
                           {skill.alwaysOn ? "Always on" : "Match-based"}
                           {skill.enabled ? "" : " · disabled"}
+                          {skill.source ? ` · ${skill.source}` : ""}
                         </p>
                       </div>
                     </CollapsibleTrigger>
@@ -154,8 +162,7 @@ export function SkillsSettings() {
                   </div>
                   <CollapsibleContent className="px-3 pb-3">
                     <div className="ml-6 grid gap-3 border-l border-border/60 pl-3">
-                      {skill.description ? <p className="text-xs leading-relaxed text-muted-foreground">{skill.description}</p> : null}
-                      <p className="truncate text-[11px] text-muted-foreground" title={`${skill.source} · ${skill.skillPath}`}>{skill.source}</p>
+                      <SkillFacts skill={skill} />
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-sm">Always on</p>

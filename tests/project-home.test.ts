@@ -73,6 +73,36 @@ test("project hub header stays usable on narrow screens", () => {
   assert.match(homeSource, /project-home-scroll/);
 });
 
+test("project hub uses clickable tiles that open bulky sections in a modal and keeps notes at the bottom", () => {
+  assert.match(homeSource, /data-slot="project-home-tiles"/);
+  assert.match(homeSource, /data-project-home-tile=\{id\}/);
+  assert.match(homeSource, /id="instructions"/);
+  assert.match(homeSource, /id="memory"/);
+  assert.match(homeSource, /id="skills"/);
+  assert.match(homeSource, /id="files"/);
+  assert.match(homeSource, /data-slot="project-home-panel-dialog"/);
+  assert.match(homeSource, /<Dialog open onOpenChange=/);
+  assert.match(homeSource, /data-project-home-panel="instructions"/);
+  assert.match(homeSource, /data-project-home-panel="memory"/);
+  assert.match(homeSource, /data-project-home-panel="skills"/);
+  assert.match(homeSource, /data-project-home-panel="files"/);
+  assert.match(homeSource, /activePanel === "instructions" \? \(/);
+  assert.match(homeSource, />Appearance</);
+  assert.match(homeSource, />Memory scope</);
+  const appearanceAt = homeSource.indexOf(">Appearance<");
+  const scopeAt = homeSource.indexOf(">Memory scope<");
+  const tilesAt = homeSource.indexOf('data-slot="project-home-tiles"');
+  const notesAt = homeSource.indexOf('data-slot="project-home-notes"');
+  assert.ok(appearanceAt > 0 && scopeAt > appearanceAt, "Memory scope stays visible after Appearance");
+  assert.ok(tilesAt > scopeAt, "tiles come after Memory scope");
+  assert.ok(notesAt > tilesAt, "Notes stay at the bottom");
+});
+
+test("project hub notes list shows a notes icon in the note color", () => {
+  assert.match(homeSource, /notes: Array<\{ id: string; title: string; color\?: string \}>/);
+  assert.match(homeSource, /<StickyNote className="size-3\.5 shrink-0" style=\{\{ color: note\.color \|\| "#fef08a" \}\} \/>/);
+});
+
 test("the unfiltered project chip is labelled All instead of None", () => {
   const projectNavSource = readFileSync(new URL("../components/project-nav.tsx", import.meta.url), "utf8");
   assert.match(projectNavSource, />\s*All\s*<\/button>/);

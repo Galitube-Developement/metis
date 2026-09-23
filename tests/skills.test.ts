@@ -105,24 +105,32 @@ test("users can turn always-on off or on per skill", () => {
   assert.match(extra, /Always-on skill playwright/);
 });
 
-test("skill settings expose frontmatter titles", () => {
-  const adhd = parseSkillFrontmatter(`---\nname: i-have-adhd\ndescription: 'Shape output. Invoke with /i-have-adhd; stays on until "stop adhd mode".'\n---\n\n# Title\n`);
+test("skill settings expose frontmatter titles and extra metadata", () => {
+  const adhd = parseSkillFrontmatter(`---\nname: i-have-adhd\ndescription: 'Shape output. Invoke with /i-have-adhd; stays on until "stop adhd mode".'\nlicense: MIT\nmetadata:\n  tags: "ADHD, Output Style, Productivity"\n  category: "productivity"\n---\n\n# Title\n`);
   assert.equal(adhd.title, "i-have-adhd");
   assert.match(adhd.description, /stop adhd mode/);
+  assert.equal(adhd.license, "MIT");
+  assert.equal(adhd.category, "productivity");
+  assert.deepEqual(adhd.tags, ["ADHD", "Output Style", "Productivity"]);
   const listed = listSkillSettings();
   const frontend = listed.find((skill) => skill.id === "frontend-design");
   assert.ok(frontend);
   assert.equal(frontend.title, "frontend-design");
   assert.ok(frontend.description.length > 20);
   assert.equal(frontend.alwaysOn, false);
+  assert.ok(frontend.skillPath);
   const alwaysOn = listed.find((skill) => skill.id === "i-have-adhd");
   assert.equal(alwaysOn?.alwaysOn, true);
   assert.equal(alwaysOn?.title, "i-have-adhd");
+  assert.equal(alwaysOn?.category, "productivity");
+  assert.ok((alwaysOn?.tags || []).includes("ADHD"));
 });
 
-test("skills settings UI lists titles and always-on inside a collapsible", () => {
+test("skills settings UI lists titles, descriptions, and always-on inside a collapsible", () => {
   const source = readFileSync(path.join(process.cwd(), "components", "skills-settings.tsx"), "utf8");
   assert.match(source, /skill\.title/);
+  assert.match(source, /skill\.description/);
+  assert.match(source, /SkillFacts/);
   assert.match(source, /alwaysOnSkills/);
   assert.match(source, /Collapsible/);
   assert.match(source, /Always on/);

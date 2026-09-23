@@ -1,12 +1,19 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { ImagePlus, Paperclip, Plus, StickyNote, Trash2, Upload, X } from "lucide-react";
+import { Brain, FileText, Folder, ImagePlus, Layers, Paperclip, Plus, StickyNote, Trash2, Upload, X, type LucideIcon } from "lucide-react";
 import { ProjectAvatar, ProjectIconGlyph } from "@/components/project-avatar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ProjectMemoryManager, type ProjectMemoryItem } from "@/components/project-memory-manager";
 import { ProjectSkillsManager, type ProjectSkillItem } from "@/components/project-skills-manager";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS, PROJECT_ICONS } from "@/lib/project-constants";
@@ -26,15 +33,73 @@ type ProjectHomeData = {
   updatedAt?: string;
  };
  files: Array<{ id: string; name: string; mimeType: string; size: number }>;
- notes: Array<{ id: string; title: string }>;
+ notes: Array<{ id: string; title: string; color?: string }>;
  chats: Array<{ id: string; title: string }>;
  skills: ProjectSkillItem[];
+};
+
+type ProjectHomePanel = "instructions" | "memory" | "skills" | "files";
+
+const PROJECT_HOME_PANELS: Record<ProjectHomePanel, { title: string; description: string }> = {
+ instructions: {
+  title: "Project instructions",
+  description: "Override global custom instructions while a chat is in this project.",
+ },
+ memory: {
+  title: "Project memory",
+  description: "",
+ },
+ skills: {
+  title: "Skills",
+  description: "Drag skills between lists or use the arrow buttons. Click a skill for source, path, and SKILL.md. New skills start enabled for this project.",
+ },
+ files: {
+  title: "Files",
+  description: "Upload files for chats in this project.",
+ },
 };
 
 function formatBytes(size: number) {
  if (size < 1024) return `${size} B`;
  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ProjectHomeTile({
+ id,
+ title,
+ meta,
+ icon: Icon,
+ selected,
+ onSelect,
+}: {
+ id: ProjectHomePanel;
+ title: string;
+ meta: string;
+ icon: LucideIcon;
+ selected: boolean;
+ onSelect: (id: ProjectHomePanel) => void;
+}) {
+ return (
+  <button
+   type="button"
+   data-project-home-tile={id}
+   aria-pressed={selected}
+   aria-controls={selected ? `project-home-panel-${id}` : undefined}
+   onClick={() => onSelect(id)}
+   className={cn(
+    "flex min-h-[5.75rem] flex-col items-start justify-between rounded-xl px-3.5 py-3 text-left transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    selected ? "bg-muted text-foreground" : "bg-muted/35 text-foreground hover:bg-muted/55",
+   )}
+  >
+   <Icon className="size-4 text-muted-foreground" />
+   <span className="mt-3 min-w-0">
+    <span className="block text-sm font-medium">{title}</span>
+    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{meta}</span>
+   </span>
+  </button>
+ );
 }
 
 function ProjectHomeSkeleton() {
@@ -58,11 +123,14 @@ function ProjectHomeSkeleton() {
  </div>
  </header>
  <div className="h-28 animate-pulse rounded-xl border border-border/40 bg-muted/40" />
- <div className="grid gap-4 sm:grid-cols-2">
- <div className="h-36 animate-pulse rounded-xl border border-border/40 bg-muted/40" />
- <div className="h-36 animate-pulse rounded-xl border border-border/40 bg-muted/40" />
+ <div className="h-20 animate-pulse rounded-xl bg-muted/40" />
+ <div className="grid grid-cols-2 gap-2">
+  <div className="h-24 animate-pulse rounded-xl bg-muted/40" />
+  <div className="h-24 animate-pulse rounded-xl bg-muted/40" />
+  <div className="h-24 animate-pulse rounded-xl bg-muted/40" />
+  <div className="h-24 animate-pulse rounded-xl bg-muted/40" />
  </div>
- <div className="h-40 animate-pulse rounded-xl border border-border/40 bg-muted/40" />
+ <div className="h-16 animate-pulse rounded-xl bg-muted/40" />
  </div>
  );
 }
@@ -102,6 +170,10 @@ export function ProjectHome({
  const [busy, setBusy] = useState(false);
  const [deleteOpen, setDeleteOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
+ const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
+ const togglePanel = (id: ProjectHomePanel) => {
+  setActivePanel((current) => (current === id ? null : id));
+ };
  const logoInputRef = useRef<HTMLInputElement>(null);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const loadGenerationRef = useRef(0);
@@ -136,6 +208,7 @@ export function ProjectHome({
  setData(null);
  setName("");
  setInstructions("");
+ setActivePanel(null);
  setError("");
  load(controller.signal);
  return () => controller.abort();
@@ -338,19 +411,6 @@ export function ProjectHome({
    </section>
 
    <section className="grid gap-2">
-    <h3 className="text-sm font-medium">Project instructions</h3>
-    <p className="text-xs text-muted-foreground">Override global custom instructions while a chat is in this project.</p>
-    <Textarea
-     value={instructions}
-     onChange={(event) => setInstructions(event.target.value)}
-     onBlur={() => void save({ instructions })}
-     placeholder="How the agent should work in this project…"
-     rows={6}
-     className="min-h-32 rounded-xl"
-    />
-   </section>
-
-   <section className="grid gap-2">
     <h3 className="text-sm font-medium">Memory scope</h3>
     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
      {(["default", "project_only"] as const).map((mode) => (
@@ -370,122 +430,189 @@ export function ProjectHome({
     </div>
    </section>
 
-   <section className="grid gap-3">
-    <div>
-     <h3 className="text-sm font-medium">Project memory</h3>
-    </div>
-    <ProjectMemoryManager projectId={projectId} memories={data.project.memories} onChanged={load} />
-   </section>
-
-   <section className="grid gap-3">
-    <div>
-     <h3 className="text-sm font-medium">Skills</h3>
-     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-      Drag skills between lists or use the arrow buttons. New skills start enabled for this project.
-     </p>
-    </div>
-    <ProjectSkillsManager
-     skills={data.skills}
-     disabledSkillIds={data.project.disabledSkillIds}
-     onChange={(disabledSkillIds) => {
-      setData((current) => current ? {
-       ...current,
-       project: { ...current.project, disabledSkillIds },
-       skills: current.skills.map((skill) => ({ ...skill, enabled: !disabledSkillIds.includes(skill.id) })),
-      } : current);
-      void save({ disabledSkillIds });
-     }}
+   <div className="grid grid-cols-2 gap-2" data-slot="project-home-tiles">
+    <ProjectHomeTile
+     id="instructions"
+     title="Instructions"
+     meta={instructions.trim() ? "Custom instructions set" : "None yet"}
+     icon={FileText}
+     selected={activePanel === "instructions"}
+     onSelect={togglePanel}
     />
-   </section>
+    <ProjectHomeTile
+     id="memory"
+     title="Memory"
+     meta={data.project.memories.length ? `${data.project.memories.length} ${data.project.memories.length === 1 ? "fact" : "facts"}` : "No facts yet"}
+     icon={Brain}
+     selected={activePanel === "memory"}
+     onSelect={togglePanel}
+    />
+    <ProjectHomeTile
+     id="skills"
+     title="Skills"
+     meta={data.skills.length ? `${data.skills.filter((skill) => skill.enabled).length} of ${data.skills.length} enabled` : "None installed"}
+     icon={Layers}
+     selected={activePanel === "skills"}
+     onSelect={togglePanel}
+    />
+    <ProjectHomeTile
+     id="files"
+     title="Files"
+     meta={data.files.length ? `${data.files.length} ${data.files.length === 1 ? "file" : "files"}` : "No files yet"}
+     icon={Folder}
+     selected={activePanel === "files"}
+     onSelect={togglePanel}
+    />
+   </div>
 
-   <section className="grid gap-3">
-    <h3 className="text-sm font-medium">Files</h3>
-    <div
+   {activePanel ? (
+    <Dialog open onOpenChange={(open) => { if (!open) setActivePanel(null); }}>
+     <DialogContent
+      data-slot="project-home-panel-dialog"
       className={cn(
-        "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center transition-colors",
-        dragOver ? "border-foreground/40 bg-white/[0.04]" : "border-border/70 hover:border-foreground/25 hover:bg-white/[0.02]",
-        busy && "pointer-events-none opacity-70",
+       "max-h-[min(85dvh,42rem)] overflow-y-auto",
+       activePanel === "skills" ? "sm:max-w-3xl" : "sm:max-w-lg",
       )}
-      role="button"
-      tabIndex={busy ? -1 : 0}
-      onClick={() => {
-        if (!busy) fileInputRef.current?.click();
-      }}
-      onKeyDown={(event) => {
-        if (!busy && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          fileInputRef.current?.click();
-        }
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDragOver(false);
-        if (event.dataTransfer.files.length) void uploadFiles(event.dataTransfer.files);
-      }}
-    >
-      <Upload className="size-5 text-muted-foreground" />
-      <div className="text-sm text-muted-foreground">
-        {busy ? "Uploading…" : "Drop files here or click to upload"}
-      </div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        aria-label="Upload project files"
-        className="hidden"
-        onChange={(event) => {
-          const files = event.target.files;
-          event.target.value = "";
-          if (files?.length) void uploadFiles(files);
-        }}
-      />
-    </div>
-    <ul className="grid gap-1">
-     {data.files.map((file) => (
-      <li key={file.id} className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-muted/40">
-       <a
-        href={`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(file.id)}`}
-        className="min-w-0 flex-1 truncate text-sm hover:underline"
-        target="_blank"
-        rel="noreferrer"
-       >
-        {file.name}
-        <span className="ml-2 text-xs text-muted-foreground">{formatBytes(file.size)}</span>
-       </a>
-       <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={`Attach ${file.name} to the next chat`}
-        title="Attach to next chat"
-        onClick={() => onAttachFile(file)}
-       >
-        <Paperclip className="size-3.5" />
-       </Button>
-       <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={`Delete ${file.name}`}
-        onClick={() => {
-         void fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(file.id)}`, {
-          method: "DELETE",
-         }).then(() => load());
-        }}
-       >
-        <X className="size-3.5" />
-       </Button>
-      </li>
-     ))}
-    </ul>
-   </section>
+     >
+      <DialogHeader>
+       <DialogTitle>{PROJECT_HOME_PANELS[activePanel].title}</DialogTitle>
+       {PROJECT_HOME_PANELS[activePanel].description ? (
+        <DialogDescription>{PROJECT_HOME_PANELS[activePanel].description}</DialogDescription>
+       ) : (
+        <DialogDescription className="sr-only">Edit this project section.</DialogDescription>
+       )}
+      </DialogHeader>
 
-   <section className="grid gap-2 pb-10">
+      {activePanel === "instructions" ? (
+       <section id="project-home-panel-instructions" data-project-home-panel="instructions" className="grid gap-2">
+        <Textarea
+         value={instructions}
+         onChange={(event) => setInstructions(event.target.value)}
+         onBlur={() => void save({ instructions })}
+         placeholder="How the agent should work in this project…"
+         rows={6}
+         className="min-h-32 rounded-xl"
+        />
+       </section>
+      ) : null}
+
+      {activePanel === "memory" ? (
+       <section id="project-home-panel-memory" data-project-home-panel="memory" className="grid gap-3">
+        <ProjectMemoryManager projectId={projectId} memories={data.project.memories} onChanged={load} />
+       </section>
+      ) : null}
+
+      {activePanel === "skills" ? (
+       <section id="project-home-panel-skills" data-project-home-panel="skills" className="grid gap-3">
+        <ProjectSkillsManager
+         skills={data.skills}
+         disabledSkillIds={data.project.disabledSkillIds}
+         onChange={(disabledSkillIds) => {
+          setData((current) => current ? {
+           ...current,
+           project: { ...current.project, disabledSkillIds },
+           skills: current.skills.map((skill) => ({ ...skill, enabled: !disabledSkillIds.includes(skill.id) })),
+          } : current);
+          void save({ disabledSkillIds });
+         }}
+        />
+       </section>
+      ) : null}
+
+      {activePanel === "files" ? (
+       <section id="project-home-panel-files" data-project-home-panel="files" className="grid gap-3">
+        <div
+          className={cn(
+            "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center transition-colors",
+            dragOver ? "border-foreground/40 bg-white/[0.04]" : "border-border/70 hover:border-foreground/25 hover:bg-white/[0.02]",
+            busy && "pointer-events-none opacity-70",
+          )}
+          role="button"
+          tabIndex={busy ? -1 : 0}
+          onClick={() => {
+            if (!busy) fileInputRef.current?.click();
+          }}
+          onKeyDown={(event) => {
+            if (!busy && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragOver(false);
+            if (event.dataTransfer.files.length) void uploadFiles(event.dataTransfer.files);
+          }}
+        >
+          <Upload className="size-5 text-muted-foreground" />
+          <div className="text-sm text-muted-foreground">
+            {busy ? "Uploading…" : "Drop files here or click to upload"}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            aria-label="Upload project files"
+            className="hidden"
+            onChange={(event) => {
+              const files = event.target.files;
+              event.target.value = "";
+              if (files?.length) void uploadFiles(files);
+            }}
+          />
+        </div>
+        {data.files.length ? (
+         <ul className="grid gap-1">
+          {data.files.map((file) => (
+           <li key={file.id} className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-muted/40">
+            <a
+             href={`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(file.id)}`}
+             className="min-w-0 flex-1 truncate text-sm hover:underline"
+             target="_blank"
+             rel="noreferrer"
+            >
+             {file.name}
+             <span className="ml-2 text-xs text-muted-foreground">{formatBytes(file.size)}</span>
+            </a>
+            <Button
+             type="button"
+             variant="ghost"
+             size="icon-sm"
+             aria-label={`Attach ${file.name} to the next chat`}
+             title="Attach to next chat"
+             onClick={() => onAttachFile(file)}
+            >
+             <Paperclip className="size-3.5" />
+            </Button>
+            <Button
+             type="button"
+             variant="ghost"
+             size="icon-sm"
+             aria-label={`Delete ${file.name}`}
+             onClick={() => {
+              void fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(file.id)}`, {
+               method: "DELETE",
+              }).then(() => load());
+             }}
+            >
+             <X className="size-3.5" />
+            </Button>
+           </li>
+          ))}
+         </ul>
+        ) : null}
+       </section>
+      ) : null}
+     </DialogContent>
+    </Dialog>
+   ) : null}
+
+   <section className="grid gap-2 pb-10" data-slot="project-home-notes">
     <h3 className="text-sm font-medium">Notes</h3>
     {data.notes.length === 0 ? (
      <button
@@ -500,8 +627,13 @@ export function ProjectHome({
      <ul className="grid gap-1 text-sm">
       {data.notes.map((note) => (
        <li key={note.id}>
-        <button type="button" className="w-full rounded-xl px-2 py-1.5 text-left hover:bg-muted/40" onClick={() => onOpenNotes(note.id)}>
-         {note.title || "Untitled note"}
+        <button
+         type="button"
+         className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left hover:bg-muted/40"
+         onClick={() => onOpenNotes(note.id)}
+        >
+         <StickyNote className="size-3.5 shrink-0" style={{ color: note.color || "#fef08a" }} />
+         <span className="min-w-0 truncate">{note.title || "Untitled note"}</span>
         </button>
        </li>
       ))}

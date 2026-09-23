@@ -15,6 +15,9 @@ export type SkillRecord = {
 export type SkillSettingsView = SkillRecord & {
  title: string;
  description: string;
+ license: string;
+ category: string;
+ tags: string[];
  enabled: boolean;
  alwaysOn: boolean;
 };
@@ -52,16 +55,33 @@ function resolvedSkillPath(id: string, configuredPath: string) {
  return configuredPath;
 }
 
+function frontmatterScalar(block: string, key: string, indented = false) {
+ const prefix = indented ? "[ \\t]+" : "";
+ const quoted = block.match(new RegExp(`^${prefix}${key}:\\s*(['"])([\\s\\S]*?)\\1\\s*$`, "m"));
+ if (quoted?.[2]) return quoted[2].replace(/\s+/g, " ").trim();
+ const plain = block.match(new RegExp(`^${prefix}${key}:\\s*(.+)$`, "m"));
+ return (plain?.[1] || "").replace(/\s+/g, " ").trim();
+}
+
+function frontmatterTags(block: string) {
+ const raw = frontmatterScalar(block, "tags", true) || frontmatterScalar(block, "tags");
+ return raw.split(/[,|]/).map((item) => item.trim()).filter(Boolean);
+}
+
 export function parseSkillFrontmatter(content: string) {
+ const empty = { title: "", description: "", license: "", category: "", tags: [] as string[] };
  const fence = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
- if (!fence) return { title: "", description: "" };
+ if (!fence) return empty;
  const block = fence[1];
- const nameMatch = block.match(/^name:\s*(?:['"]([^'"]+)['"]|(\S+))/m);
- const title = (nameMatch?.[1] || nameMatch?.[2] || "").trim();
- const quoted = block.match(/^description:\s*(['"])([\s\S]*?)\1\s*$/m);
- const plain = block.match(/^description:\s*(.+)$/m);
- const description = (quoted?.[2] || (!quoted ? plain?.[1] : "") || "").replace(/\s+/g, " ").trim();
- return { title, description };
+ const title = frontmatterScalar(block, "name");
+ const description = frontmatterScalar(block, "description");
+ return {
+  title,
+  description,
+  license: frontmatterScalar(block, "license"),
+  category: frontmatterScalar(block, "category", true) || frontmatterScalar(block, "category"),
+  tags: frontmatterTags(block),
+ };
 }
 
 export function listInstalledSkills(): SkillRecord[] {
@@ -120,6 +140,9 @@ export function listSkillSettings(settings?: GlobalModelSettings): SkillSettings
  ...skill,
  title: meta.title || skill.id,
  description: meta.description,
+ license: meta.license,
+ category: meta.category,
+ tags: meta.tags,
  enabled: skillEnabled(skill.id, settings),
  alwaysOn: isAlwaysOnSkill(skill.id, settings),
  };

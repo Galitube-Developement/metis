@@ -91,11 +91,11 @@ export function ProjectMemoryManager({
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Add a project-specific fact or preference"
           aria-label="New project memory"
-          rows={2}
-          className="min-h-20 resize-y rounded-xl"
+          rows={1}
+          className="min-h-8 resize-y rounded-lg py-1 leading-5"
           disabled={busy}
         />
-        <Button type="button" className="h-10 sm:self-end" onClick={() => void addMemory()} disabled={busy || !draft.trim()}>
+        <Button type="button" className="h-8 shrink-0 sm:self-end" onClick={() => void addMemory()} disabled={busy || !draft.trim()}>
           <Plus className="size-4" />
           Add memory
         </Button>

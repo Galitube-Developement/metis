@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -10,7 +11,8 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { ArrowLeft, ArrowRight, GripVertical } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, GripVertical } from "lucide-react";
+import { SkillFacts } from "@/components/skill-facts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +21,11 @@ export type ProjectSkillItem = {
   title: string;
   description: string;
   source: string;
+  sourceType?: string;
+  skillPath?: string;
+  license?: string;
+  category?: string;
+  tags?: string[];
   enabled: boolean;
   alwaysOn: boolean;
 };
@@ -26,21 +33,33 @@ export type ProjectSkillItem = {
 function SkillRow({
   skill,
   enabled,
+  open,
+  preview,
+  previewBusy,
   onMove,
+  onToggleDetails,
+  onTogglePreview,
 }: {
   skill: ProjectSkillItem;
   enabled: boolean;
+  open: boolean;
+  preview: string;
+  previewBusy: boolean;
   onMove: () => void;
+  onToggleDetails: () => void;
+  onTogglePreview: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `project-skill:${skill.id}`,
     data: { skillId: skill.id, enabled },
   });
+  const meta = [skill.alwaysOn ? "Always on" : "Match-based", skill.source, skill.category].filter(Boolean).join(" · ");
 
   return (
     <div
       ref={setNodeRef}
       data-project-skill-id={skill.id}
+      data-project-skill-open={open ? "true" : "false"}
       className={cn(
         "flex min-w-0 items-start gap-2 rounded-lg border border-border/45 bg-background px-2.5 py-2.5",
         isDragging && "opacity-45",
@@ -57,15 +76,36 @@ function SkillRow({
         <GripVertical className="size-4" />
       </button>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{skill.title}</span>
-          {skill.alwaysOn ? (
-            <span className="shrink-0 text-[10px] font-medium text-muted-foreground">Always on</span>
-          ) : null}
-        </div>
-        <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
-          {skill.description || skill.id}
-        </p>
+        <button
+          type="button"
+          className="grid w-full min-w-0 gap-0.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          aria-expanded={open}
+          aria-label={`${open ? "Hide" : "Show"} details for ${skill.title}`}
+          onClick={onToggleDetails}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium">{skill.title}</span>
+            {skill.alwaysOn ? (
+              <span className="shrink-0 text-[10px] font-medium text-muted-foreground">Always on</span>
+            ) : null}
+            <ChevronDown className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+          </div>
+          <p className={cn("text-xs leading-4 text-muted-foreground", open ? "" : "line-clamp-2")}>
+            {skill.description || skill.id}
+          </p>
+          <p className="truncate text-[11px] leading-4 text-muted-foreground">{meta}</p>
+        </button>
+        {open ? (
+          <div data-slot="project-skill-details" className="mt-2 grid gap-2 border-t border-border/50 pt-2">
+            <SkillFacts skill={skill} showDescription={false} />
+            <Button type="button" size="xs" variant="ghost" className="w-fit px-0" onClick={onTogglePreview}>
+              {preview ? "Hide SKILL.md" : previewBusy ? "Loading…" : "Show SKILL.md"}
+            </Button>
+            {preview ? (
+              <pre className="max-h-56 overflow-auto rounded-lg bg-muted/40 p-3 text-[11px] leading-relaxed whitespace-pre-wrap">{preview}</pre>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <Button
         type="button"
@@ -88,14 +128,24 @@ function SkillColumn({
   description,
   skills,
   enabled,
+  openId,
+  previews,
+  previewBusyId,
   onMove,
+  onToggleDetails,
+  onTogglePreview,
 }: {
   id: "disabled" | "enabled";
   title: string;
   description: string;
   skills: ProjectSkillItem[];
   enabled: boolean;
+  openId: string | null;
+  previews: Record<string, string>;
+  previewBusyId: string | null;
   onMove: (skillId: string) => void;
+  onToggleDetails: (skillId: string) => void;
+  onTogglePreview: (skillId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `project-skills:${id}` });
 
@@ -118,7 +168,17 @@ function SkillColumn({
       {skills.length ? (
         <div className="grid gap-2">
           {skills.map((skill) => (
-            <SkillRow key={skill.id} skill={skill} enabled={enabled} onMove={() => onMove(skill.id)} />
+            <SkillRow
+              key={skill.id}
+              skill={skill}
+              enabled={enabled}
+              open={openId === skill.id}
+              preview={previews[skill.id] || ""}
+              previewBusy={previewBusyId === skill.id}
+              onMove={() => onMove(skill.id)}
+              onToggleDetails={() => onToggleDetails(skill.id)}
+              onTogglePreview={() => onTogglePreview(skill.id)}
+            />
           ))}
         </div>
       ) : (
@@ -143,6 +203,9 @@ export function ProjectSkillsManager({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor),
   );
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewBusyId, setPreviewBusyId] = useState<string | null>(null);
   const disabled = new Set(disabledSkillIds);
   const disabledSkills = skills.filter((skill) => disabled.has(skill.id));
   const enabledSkills = skills.filter((skill) => !disabled.has(skill.id));
@@ -165,6 +228,30 @@ export function ProjectSkillsManager({
     if (destination) move(skillId, destination);
   };
 
+  const toggleDetails = (skillId: string) => {
+    setOpenId((current) => current === skillId ? null : skillId);
+  };
+
+  const togglePreview = async (skillId: string) => {
+    if (previews[skillId]) {
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[skillId];
+        return next;
+      });
+      return;
+    }
+    setPreviewBusyId(skillId);
+    try {
+      const response = await fetch(`/api/skills?read=${encodeURIComponent(skillId)}`, { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as { content?: string; error?: string };
+      if (!response.ok) return;
+      setPreviews((current) => ({ ...current, [skillId]: body.content || "" }));
+    } finally {
+      setPreviewBusyId(null);
+    }
+  };
+
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -174,7 +261,12 @@ export function ProjectSkillsManager({
           description="Unavailable to chats in this project."
           skills={disabledSkills}
           enabled={false}
+          openId={openId}
+          previews={previews}
+          previewBusyId={previewBusyId}
           onMove={(skillId) => move(skillId, "enabled")}
+          onToggleDetails={toggleDetails}
+          onTogglePreview={(skillId) => void togglePreview(skillId)}
         />
         <SkillColumn
           id="enabled"
@@ -182,7 +274,12 @@ export function ProjectSkillsManager({
           description="Available to every chat in this project."
           skills={enabledSkills}
           enabled
+          openId={openId}
+          previews={previews}
+          previewBusyId={previewBusyId}
           onMove={(skillId) => move(skillId, "disabled")}
+          onToggleDetails={toggleDetails}
+          onTogglePreview={(skillId) => void togglePreview(skillId)}
         />
       </div>
     </DndContext>

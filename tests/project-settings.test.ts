@@ -20,6 +20,10 @@ test("Project Home exposes two-column drag and button controls for per-project s
   assert.match(skills, /title="Disabled"/);
   assert.match(skills, /title="Enabled"/);
   assert.match(skills, /aria-label=\{enabled \? .*Disable/);
+  assert.match(skills, /data-slot="project-skill-details"/);
+  assert.match(skills, /Show SKILL\.md/);
+  assert.match(skills, /SkillFacts/);
+  assert.match(skills, /\/api\/skills\?read=/);
   assert.match(projectApi, /disabledSkillIds\?: string\[\]/);
 });
 
@@ -35,6 +39,11 @@ test("Project Home manages durable project memory used by agents and memory tool
   assert.match(memory, /Add memory/);
   assert.match(memory, /Save memory/);
   assert.match(memory, /Delete project memory/);
+  assert.match(memory, /rows=\{1\}/);
+  assert.match(memory, /min-h-8 resize-y rounded-lg py-1 leading-5/);
+  assert.match(memory, /className="h-8 shrink-0 sm:self-end"/);
+  assert.doesNotMatch(memory, /min-h-20/);
+  assert.doesNotMatch(memory, /className="h-10 sm:self-end"/);
   assert.match(projects, /Project memory \(durable facts managed from Project Home and memory tools\)/);
   assert.match(memoryGateway, /projectId \? listProjectMemories/);
   assert.match(memoryGateway, /projectId\s*\? createProjectMemory/);
