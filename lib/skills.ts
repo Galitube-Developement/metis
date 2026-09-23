@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "@/lib/config";
-import type { GlobalModelSettings } from "@/lib/store";
+import type { GlobalModelSettings, Project } from "@/lib/store";
 
 export type SkillRecord = {
  id: string;
@@ -77,6 +77,14 @@ export function listInstalledSkills(): SkillRecord[] {
  } catch {
  return [];
  }
+}
+
+export function projectSkillSettings(settings: GlobalModelSettings | undefined, project?: Pick<Project, "disabledSkillIds"> | null): GlobalModelSettings | undefined {
+ if (!project) return settings;
+ const disabled = new Set(project.disabledSkillIds || []);
+ const flags = { ...(settings?.enabledSkills || {}) };
+ for (const skill of listInstalledSkills()) flags[skill.id] = !disabled.has(skill.id);
+ return { ...(settings || {}), enabledSkills: flags };
 }
 
 export function skillEnabled(id: string, settings?: GlobalModelSettings) {

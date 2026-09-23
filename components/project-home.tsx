@@ -4,6 +4,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ImagePlus, Paperclip, Plus, StickyNote, Trash2, Upload, X } from "lucide-react";
 import { ProjectAvatar, ProjectIconGlyph } from "@/components/project-avatar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ProjectMemoryManager, type ProjectMemoryItem } from "@/components/project-memory-manager";
+import { ProjectSkillsManager, type ProjectSkillItem } from "@/components/project-skills-manager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,12 +20,15 @@ type ProjectHomeData = {
   color: string;
   instructions: string;
   memoryMode: "default" | "project_only";
+  disabledSkillIds: string[];
+  memories: ProjectMemoryItem[];
   logoStoredName?: string;
   updatedAt?: string;
  };
  files: Array<{ id: string; name: string; mimeType: string; size: number }>;
  notes: Array<{ id: string; title: string }>;
  chats: Array<{ id: string; title: string }>;
+ skills: ProjectSkillItem[];
 };
 
 function formatBytes(size: number) {
@@ -346,7 +351,7 @@ export function ProjectHome({
    </section>
 
    <section className="grid gap-2">
-    <h3 className="text-sm font-medium">Memory</h3>
+    <h3 className="text-sm font-medium">Memory scope</h3>
     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
      {(["default", "project_only"] as const).map((mode) => (
       <Button
@@ -363,6 +368,34 @@ export function ProjectHome({
       </Button>
      ))}
     </div>
+   </section>
+
+   <section className="grid gap-3">
+    <div>
+     <h3 className="text-sm font-medium">Project memory</h3>
+    </div>
+    <ProjectMemoryManager projectId={projectId} memories={data.project.memories} onChanged={load} />
+   </section>
+
+   <section className="grid gap-3">
+    <div>
+     <h3 className="text-sm font-medium">Skills</h3>
+     <p className="mt-1 text-xs leading-5 text-muted-foreground">
+      Drag skills between lists or use the arrow buttons. New skills start enabled for this project.
+     </p>
+    </div>
+    <ProjectSkillsManager
+     skills={data.skills}
+     disabledSkillIds={data.project.disabledSkillIds}
+     onChange={(disabledSkillIds) => {
+      setData((current) => current ? {
+       ...current,
+       project: { ...current.project, disabledSkillIds },
+       skills: current.skills.map((skill) => ({ ...skill, enabled: !disabledSkillIds.includes(skill.id) })),
+      } : current);
+      void save({ disabledSkillIds });
+     }}
+    />
    </section>
 
    <section className="grid gap-3">

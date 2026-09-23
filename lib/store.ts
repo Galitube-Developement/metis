@@ -172,6 +172,8 @@ export type Project = {
   color: string;
   instructions: string;
   memoryMode: "default" | "project_only";
+  disabledSkillIds: string[];
+  memories: Memory[];
   logoMimeType?: string;
   logoStoredName?: string;
   createdAt: string;

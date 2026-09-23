@@ -9,6 +9,7 @@ import {
   listInstalledSkills,
   listSkillSettings,
   parseSkillFrontmatter,
+  projectSkillSettings,
   skillEnabled,
  addManualSkill,
   skillsCatalogPrompt,
@@ -31,6 +32,20 @@ test("disabled skills are omitted from the agent catalog", () => {
   const catalog = skillsCatalogPrompt();
   assert.match(catalog, /Installed skills/);
   assert.ok(skills.some((skill) => catalog.includes(skill.id)));
+});
+
+test("project skill settings default every installed skill on and apply project disables", () => {
+  const installed = listInstalledSkills();
+  assert.ok(installed.length > 1);
+  const first = installed[0];
+  const second = installed[1];
+  const settings = projectSkillSettings(
+    { enabledSkills: { [first.id]: false, [second.id]: false } },
+    { disabledSkillIds: [second.id] },
+  );
+  assert.equal(skillEnabled(first.id, settings), true);
+  assert.equal(skillEnabled(second.id, settings), false);
+  assert.equal(enabledSkills(projectSkillSettings(undefined, { disabledSkillIds: [] })).length, installed.length);
 });
 
 test("manual skills reject unsafe ids", () => {

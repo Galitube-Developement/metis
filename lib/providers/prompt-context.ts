@@ -5,7 +5,7 @@ import {
   loadContextScope,
   resolveScopeReferences,
 } from "@/lib/context-scope";
-import { alwaysOnSkillsPrompt, skillsCatalogPrompt } from "@/lib/skills";
+import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
 import { autoSkillActivationPrompt } from "@/lib/skill-routing";
 import { METIS_SHARED_AGENT_CONTROL, toolContractPrompt } from "@/lib/agent-control";
 import { metisAgentIdentity } from "@/lib/agent-identity";
@@ -86,6 +86,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     includeGlobal: !incognito,
   });
   const project = !incognito ? scope?.project : undefined;
+  const skillSettings = projectSkillSettings(getGlobalModelSettings(ownerId), project);
   const globalFacts = incognito
     ? []
     : globalFactsForScope({
@@ -134,9 +135,9 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   return [
     // Layer 1 — Core Context: stable identity, policy, mode and tool contract.
     metisAgentIdentity(),
-    skillsCatalogPrompt(getGlobalModelSettings(ownerId)),
-    alwaysOnSkillsPrompt(getGlobalModelSettings(ownerId)),
-    autoSkillActivationPrompt(job.message, getGlobalModelSettings(ownerId), {
+    skillsCatalogPrompt(skillSettings),
+    alwaysOnSkillsPrompt(skillSettings),
+    autoSkillActivationPrompt(job.message, skillSettings, {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
     "Working style: precise, technically fluent, proactive. Act with tools instead of narrating steps. Reply in the user's language. On clear orders decide and act; ask only when genuinely ambiguous or destructive.",

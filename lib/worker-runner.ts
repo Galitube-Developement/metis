@@ -11,7 +11,7 @@ import {
   type WorkspaceItem,
 } from "@/lib/db-store";
 import { getProject, projectContextBlock } from "@/lib/projects";
-import { alwaysOnSkillsPrompt, skillsCatalogPrompt } from "@/lib/skills";
+import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
 import { autoSkillActivationPrompt } from "@/lib/skill-routing";
 import { getUserAgentCwd, getMcpServers } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
@@ -1011,14 +1011,15 @@ export async function runQueuedJob(job: AgentJob) {
     updateJob(job.id, { agentId: agent.agentId, runId: job.id });
     updateChat(job.chatId, { agentId: agent.agentId }, job.userId);
     const project = !job.incognito && !chat.incognito && chat.projectId ? getProject(chat.projectId, job.userId) : null;
+    const skillSettings = projectSkillSettings(globalModelSettings, project);
 
     // Build prompt: native resume gets ONLY current turn + context; fresh/recovery gets bootstrap recap once
     let prompt = [
     metisAgentIdentity(),
     project ? projectContextBlock(project, job.userId) : "",
-    skillsCatalogPrompt(getGlobalModelSettings(job.userId)),
-    alwaysOnSkillsPrompt(getGlobalModelSettings(job.userId)),
-    autoSkillActivationPrompt(job.message, getGlobalModelSettings(job.userId), {
+    skillsCatalogPrompt(skillSettings),
+    alwaysOnSkillsPrompt(skillSettings),
+    autoSkillActivationPrompt(job.message, skillSettings, {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
       `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,

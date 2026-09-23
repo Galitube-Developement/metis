@@ -1,8 +1,9 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { listChatsForUser, updateChat } from "@/lib/db-store";
+import { getGlobalModelSettings, listChatsForUser, updateChat } from "@/lib/db-store";
 import { captureApiError } from "@/lib/error-logs";
 import { deleteProject, getProject, listProjectFiles, updateProject } from "@/lib/projects";
 import { listNotes } from "@/lib/shared-context";
+import { listSkillSettings, projectSkillSettings } from "@/lib/skills";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export async function GET(req: Request, { params }: Params) {
     files: listProjectFiles(id, ownerId),
     notes: listNotes({ ownerId }).filter((note) => note.projectId === id),
     chats: listChatsForUser(ownerId).filter((chat) => chat.projectId === id),
+    skills: listSkillSettings(projectSkillSettings(getGlobalModelSettings(ownerId), project)),
   });
 }
 
@@ -34,6 +36,7 @@ export async function PATCH(req: Request, { params }: Params) {
       color?: string;
       instructions?: string;
       memoryMode?: "default" | "project_only";
+      disabledSkillIds?: string[];
     };
     const project = updateProject(id, body, ownerId);
     if (!project) return Response.json({ error: "Not found" }, { status: 404 });
