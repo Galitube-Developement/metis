@@ -29,10 +29,6 @@ export function activeInFlightTool<T extends { status?: unknown }>(
   return undefined;
 }
 
-export function openAIUsesResponsesApi(modelId: string) {
-  return /codex|^gpt[-_.]?6(?:[.\-_]|$)/i.test(String(modelId || "").trim());
-}
-
 export function abortError(message = "Provider run aborted.") {
   return Object.assign(new Error(message), { name: "AbortError" });
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codexModelDiscoveryUrl,
+  codexSpeedOptions,
   mergeDiscoveredContextWindow,
   parseDiscoveredModel,
   providerAdvertisedOptions,
@@ -72,4 +73,27 @@ test("Codex fallback discovery reports the installed client version", () => {
     codexModelDiscoveryUrl("0.156.1"),
     "https://chatgpt.com/backend-api/codex/models?client_version=0.156.1",
   );
+});
+
+test("Codex speed options preserve provider-advertised service tiers", () => {
+  assert.deepEqual(codexSpeedOptions({
+    serviceTiers: [
+      { id: "priority", name: "Fast", description: "1.5x speed" },
+      { id: "ultrafast", name: "Ultrafast" },
+      { id: "priority", name: "Duplicate" },
+    ],
+    defaultServiceTier: "priority",
+  }), {
+    parameter: {
+      id: "speed",
+      displayName: "Speed",
+      values: [
+        { value: "default", displayName: "Standard" },
+        { value: "priority", displayName: "Fast" },
+        { value: "ultrafast", displayName: "Ultrafast" },
+      ],
+    },
+    defaultParam: { id: "speed", value: "priority" },
+  });
+  assert.deepEqual(codexSpeedOptions({ serviceTiers: [], defaultServiceTier: null }), {});
 });

@@ -8,7 +8,12 @@ import {
   estimateContextTokens,
   contextWindowForSelection,
 } from "../lib/context-window";
-import { compactChatHistoryForPrompt, compactProviderMessages, codexReasoningEffortForSelection } from "../lib/providers/runner";
+import {
+  compactChatHistoryForPrompt,
+  compactProviderMessages,
+  codexReasoningEffortForSelection,
+  codexServiceTierForSelection,
+} from "../lib/providers/runner";
 import { nativeRecoveryPrompt, providerConversationPrompt, type ProviderContext } from "../lib/providers/adapters/provider-support";
 import { providerSessionNeedsCompaction } from "../lib/providers/session-bindings";
 import { readFileSync } from "node:fs";
@@ -211,6 +216,13 @@ test("Codex reasoning effort accepts only supported values", () => {
     codexReasoningEffortForSelection("gpt-5.6", [{ id: "effort", value: "unsupported" }]),
     undefined,
   );
+});
+
+test("Codex speed selection maps provider tiers and legacy fast toggles", () => {
+  assert.equal(codexServiceTierForSelection([{ id: "speed", value: "ultrafast" }]), "ultrafast");
+  assert.equal(codexServiceTierForSelection([{ id: "fast", value: "true" }]), "priority");
+  assert.equal(codexServiceTierForSelection([{ id: "fast", value: "false" }]), "default");
+  assert.equal(codexServiceTierForSelection([{ id: "speed", value: "not valid" }]), undefined);
 });
 
 test("272K is selected only by an explicit matching context selection", () => {

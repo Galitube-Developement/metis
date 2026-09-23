@@ -4,19 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   activeInFlightTool,
   iterateUntilAborted,
-  openAIUsesResponsesApi,
 } from "../lib/providers/stream-guard";
-
-test("OpenAI Codex model IDs use the Responses API, not Chat Completions", () => {
-  assert.equal(openAIUsesResponsesApi("gpt-5-codex"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-5.3-codex"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-5.1-codex-mini"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-6-astra"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-6-sol"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-6-luna"), true);
-  assert.equal(openAIUsesResponsesApi("gpt-5"), false);
-  assert.equal(openAIUsesResponsesApi("gpt-5.4"), false);
-});
 
 test("stale earlier running tools do not keep the long stall window", () => {
   const tools = [
@@ -63,8 +51,9 @@ test("Codex adapter and OpenAI factory wire the hang guards", () => {
   const support = readFileSync(new URL("../lib/providers/adapters/provider-support.ts", import.meta.url), "utf8");
   const runner = readFileSync(new URL("../lib/providers/runner.ts", import.meta.url), "utf8");
   assert.match(codex, /iterateUntilAborted\(streamed\.events/);
-  assert.match(support, /openAIUsesResponsesApi\(modelId\)/);
-  assert.match(support, /\.responses\(modelId\)/);
+  assert.match(codex, /service_tier: serviceTier/);
+  assert.match(support, /return openai\.responses\(modelId\)/);
+  assert.doesNotMatch(support, /openai\.chat\(modelId\)/);
   assert.match(support, /iterateUntilAborted\(\s*streamResult\.stream/);
   assert.match(runner, /activeInFlightTool\(tools\)/);
 });

@@ -653,6 +653,7 @@ export {
   compactChatHistoryForPrompt,
   compactProviderMessages,
   codexReasoningEffortForSelection,
+  codexServiceTierForSelection,
   aiReasoningForSelection,
   anthropicProviderOptionsForSelection,
   compatibleProviderOptionsForSelection,

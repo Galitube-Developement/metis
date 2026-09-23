@@ -46,7 +46,7 @@ function canonicalParamId(id: string): string {
 function parameterRank(id: string): number {
   if (id === "context") return 0;
   if (REASONING_IDS.has(id)) return 1;
-  if (id === "fast") return 3;
+  if (id === "fast" || id === "speed") return 3;
   return 2;
 }
 

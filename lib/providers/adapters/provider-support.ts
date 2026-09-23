@@ -36,10 +36,7 @@ import {
 } from "@/lib/provider-connections";
 import { getProviderDefinition } from "@/lib/providers/registry";
 import type { ProviderResult } from "./contract";
-import {
-  iterateUntilAborted,
-  openAIUsesResponsesApi,
-} from "@/lib/providers/stream-guard";
+import { iterateUntilAborted } from "@/lib/providers/stream-guard";
 import type { AgentJob } from "@/lib/jobs";
 import { modeById } from "@/lib/modes";
 import {
@@ -815,6 +812,19 @@ export function codexReasoningEffortForSelection(
     : undefined;
 }
 
+export function codexServiceTierForSelection(
+  params?: ReadonlyArray<{ id: string; value: string }> | null,
+): string | undefined {
+  const selected = params?.find((param) => param.id === "speed" || param.id === "fast");
+  if (!selected) return undefined;
+  if (selected.id === "fast") {
+    if (selected.value === "true") return "priority";
+    if (selected.value === "false") return "default";
+  }
+  const value = selected.value.trim();
+  return /^[a-z0-9_-]{1,64}$/i.test(value) ? value : undefined;
+}
+
 export function aiReasoningForSelection(
   providerKey: string,
   params?: ReadonlyArray<{ id: string; value: string }> | null,
@@ -847,11 +857,9 @@ export function aiModel(
       apiKey: secret,
       ...(baseURL ? { baseURL } : {}),
     });
-    // Codex model IDs are Responses-only. Chat Completions can accept the
-    // request and then never send finish_reason, which leaves the chat spinning.
-    return openAIUsesResponsesApi(modelId)
-      ? (openai.responses(modelId) as LanguageModel)
-      : openai.chat(modelId);
+    // The OpenAI provider uses Responses for every language model. New models
+    // may reject Chat Completions outright, and Responses is the provider default.
+    return openai.responses(modelId) as LanguageModel;
   }
   if (providerKey === "anthropic") {
     return createAnthropic({

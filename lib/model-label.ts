@@ -53,8 +53,13 @@ export function modelAttrSummary(
     parts.push(displayLabel(effort.param, effort.value));
   }
 
-  const fast = paramSelection(model, params, "fast");
-  if (fast?.value === "true") parts.push("Fast");
+  const speed = paramSelection(model, params, "speed");
+  if (speed && speed.value !== "default") {
+    parts.push(displayLabel(speed.param, speed.value));
+  } else {
+    const fast = paramSelection(model, params, "fast");
+    if (fast?.value === "true") parts.push("Fast");
+  }
 
   return parts.join(" ");
 }

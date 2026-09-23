@@ -267,15 +267,49 @@ async function fetchDiscoveryJson(
 }
 
 
-type CodexAppServerModel = {
+export type CodexAppServerModel = {
   model?: string;
   id?: string;
   displayName?: string;
   description?: string;
   supportedReasoningEfforts?: Array<{ reasoningEffort?: string; description?: string }>;
   defaultReasoningEffort?: string;
+  additionalSpeedTiers?: string[];
+  serviceTiers?: Array<{ id?: string; name?: string; description?: string }>;
+  defaultServiceTier?: string | null;
   hidden?: boolean;
 };
+
+export function codexSpeedOptions(model: Pick<CodexAppServerModel, "serviceTiers" | "defaultServiceTier">) {
+  const tiers = (model.serviceTiers || [])
+    .flatMap((tier) => {
+      const value = tier.id?.trim();
+      if (!value) return [];
+      return [{
+        value,
+        ...(tier.name?.trim() ? { displayName: tier.name.trim() } : {}),
+      }];
+    })
+    .filter((tier, index, all) => all.findIndex((candidate) => candidate.value === tier.value) === index);
+  if (!tiers.length) return {};
+  const selectedDefault = model.defaultServiceTier?.trim();
+  return {
+    parameter: {
+      id: "speed",
+      displayName: "Speed",
+      values: [
+        { value: "default", displayName: "Standard" },
+        ...tiers,
+      ],
+    },
+    defaultParam: {
+      id: "speed",
+      value: selectedDefault && tiers.some((tier) => tier.value === selectedDefault)
+        ? selectedDefault
+        : "default",
+    },
+  };
+}
 
 export function codexClientVersion() {
   try {
@@ -367,18 +401,27 @@ async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWit
         displayName: model.displayName || id,
         allowInference: false,
       });
+      const speed = codexSpeedOptions(model);
+      const parameters: NonNullable<DiscoveredModel["parameters"]> = [
+        ...(reasoningValues.length
+          ? [{ id: "effort", displayName: "Reasoning", values: reasoningValues }]
+          : []),
+        ...(speed.parameter ? [speed.parameter] : []),
+      ];
+      const defaultParams: NonNullable<DiscoveredModel["defaultParams"]> = [
+        ...(model.defaultReasoningEffort && reasoningValues.some((entry) => entry.value === model.defaultReasoningEffort)
+          ? [{ id: "effort", value: model.defaultReasoningEffort }]
+          : []),
+        ...(speed.defaultParam ? [speed.defaultParam] : []),
+      ];
       return {
         id,
         displayName: model.displayName || id,
         description: model.description,
         ...(metadata.contextWindow ? { contextWindow: metadata.contextWindow, contextWindowSource: metadata.source } : {}),
         ...(metadata.maxOutputTokens ? { maxOutputTokens: metadata.maxOutputTokens } : {}),
-        ...(reasoningValues.length
-          ? { parameters: [{ id: "effort", displayName: "Reasoning", values: reasoningValues }] }
-          : {}),
-        ...(model.defaultReasoningEffort && reasoningValues.some((entry) => entry.value === model.defaultReasoningEffort)
-          ? { defaultParams: [{ id: "effort", value: model.defaultReasoningEffort }] }
-          : {}),
+        ...(parameters.length ? { parameters } : {}),
+        ...(defaultParams.length ? { defaultParams } : {}),
       };
     });
   } catch (error) {
@@ -412,7 +455,20 @@ export async function discoverProviderModels(connection: ProviderConnectionWithS
       if (!response.ok) throw appServerError;
       const body = await response.json() as { models?: unknown[] } | unknown[];
       const values = Array.isArray(body) ? body : Array.isArray(body.models) ? body.models : [];
-      const discovered = values.map(parseDiscoveredModel).filter(Boolean) as DiscoveredModel[];
+      const discovered = values.map((value) => {
+        const parsed = parseDiscoveredModel(value);
+        if (!parsed) return null;
+        const speed = codexSpeedOptions(value as CodexAppServerModel);
+        return {
+          ...parsed,
+          ...(speed.parameter
+            ? { parameters: [...(parsed.parameters || []), speed.parameter] }
+            : {}),
+          ...(speed.defaultParam
+            ? { defaultParams: [...(parsed.defaultParams || []), speed.defaultParam] }
+            : {}),
+        };
+      }).filter(Boolean) as DiscoveredModel[];
       if (!discovered.length) throw appServerError;
       return discovered.map((model) => {
         const catalog = provider.models.find((candidate) => candidate.id === model.id);

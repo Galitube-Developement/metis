@@ -19,6 +19,7 @@ import {
   asRecord,
   asString,
   codexReasoningEffortForSelection,
+  codexServiceTierForSelection,
   effectiveModelParams,
   inheritedEnv,
   nativeRecoveryPrompt,
@@ -237,8 +238,11 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
           ...(bearerToken ? { bearer_token_env_var: "METIS_MCP_SESSION_TOKEN" } : {}),
         }
       : { command: mcp.command, args: mcp.args, env: mcp.env };
+  const modelParams = effectiveModelParams(context.chat, context.job);
+  const serviceTier = codexServiceTierForSelection(modelParams);
   const codexConfig: NonNullable<CodexOptions["config"]> = {
     ...(codexHome ? { cli_auth_credentials_store: "file" } : {}),
+    ...(serviceTier ? { service_tier: serviceTier } : {}),
     ...codexMcpOnlyConfig(),
     mcp_servers: { metis_ai: codexMcp },
   };
@@ -260,14 +264,11 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
   const previousId = sessionBinding?.lastKnownGoodCursor || legacyPreviousId;
   const threadOptions = {
     model: context.modelId,
-    ...(codexReasoningEffortForSelection(
-      context.modelId,
-      effectiveModelParams(context.chat, context.job),
-    )
+    ...(codexReasoningEffortForSelection(context.modelId, modelParams)
       ? {
           modelReasoningEffort: codexReasoningEffortForSelection(
             context.modelId,
-            effectiveModelParams(context.chat, context.job),
+            modelParams,
           ),
         }
       : {}),
@@ -284,7 +285,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
         context.job,
         ["metis_ai"],
         true,
-        effectiveModelParams(context.chat, context.job),
+        modelParams,
       ),
       previousId
         ? providerCurrentTurnPrompt(context)

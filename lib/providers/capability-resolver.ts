@@ -34,7 +34,7 @@ export function resolveCapabilities(
   if (model?.parameters?.some((parameter) => parameter.id === "effort" || parameter.id === "reasoning")) {
     verified.reasoning = true;
   }
-  if (model?.parameters?.some((parameter) => parameter.id === "fast")) {
+  if (model?.parameters?.some((parameter) => parameter.id === "fast" || parameter.id === "speed")) {
     verified.fast = true;
   }
 
