@@ -1,200 +1,469 @@
-     1	import { execFile } from "node:child_process";
-     2	import { access, readFile, mkdtemp, rm, writeFile, cp, rename } from "node:fs/promises";
-     3	import os from "node:os";
-     4	import path from "node:path";
-     5	import { promisify } from "node:util";
-     6	import {
-     7	  loadReleaseManifest,
-     8	  normalizeReleaseTag,
-     9	  versionFromReleaseTag,
-    10	  type ReleaseManifest,
-    11	} from "@/lib/release-manifest";
-    12	import {
-    13	  commitChannelUpdateAvailable,
-    14	  sameGitSha,
-    15	  type UpdateCommitItem,
-    16	  type UpdateReleaseItem,
-    17	  type UpdateVersionList,
-    18	} from "@/lib/update-display";
-    19	
-    20	export {
-    21	  commitChannelUpdateAvailable,
-    22	  formatUpdateInstalledLabel,
-    23	  sameGitSha,
-    24	  shortGitSha,
-    25	} from "@/lib/update-display";
-    26	export type { UpdateCommitItem, UpdateReleaseItem, UpdateVersionList } from "@/lib/update-display";
-    27	
-    28	const execFileAsync = promisify(execFile);
-    29	
-    30	async function resolvePnpm(root: string) {
-    31	  if (process.env.PNPM_BIN) return process.env.PNPM_BIN;
-    32	  const installedPnpm = path.join(root, ".runtime", "pnpm", "bin", "pnpm");
-    33	  try {
-    34	    await access(installedPnpm);
-    35	    return installedPnpm;
-    36	  } catch {
-    37	    return "pnpm";
-    38	  }
-    39	}
-    40	const RELEASE_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest";
-    41	const COMMIT_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/commits/master";
-    42	const USER_AGENT = "metis-ai-update-checker";
-    43	const cache: { etag?: string; release?: GithubRelease; checkedAt?: number } = {};
-    44	const CACHE_TTL_MS = 5 * 60_000;
-    45	
-    46	export type GithubReleaseAsset = {
-    47	  name: string;
-    48	  browser_download_url: string;
-    49	  content_type?: string;
-    50	  size?: number;
-    51	};
-    52	
-    53	export type GithubRelease = {
-    54	  tag_name: string;
-    55	  target_commitish?: string;
-    56	  name?: string;
-    57	  body?: string;
-    58	  html_url?: string;
-    59	  published_at?: string;
-    60	  prerelease?: boolean;
-    61	  draft?: boolean;
-    62	  assets?: GithubReleaseAsset[];
-    63	};
-    64	
-    65	export type UpdateChannel = "releases" | "commits";
-    66	export type UpdateStatus = "development" | "up-to-date" | "available" | "commit-available";
-    67	
-    68	export type GithubCommit = {
-    69	  sha: string;
-    70	  html_url?: string;
-    71	  commit?: {
-    72	    message?: string;
-    73	    author?: { name?: string; date?: string };
-    74	    committer?: { name?: string; date?: string };
-    75	  };
-    76	  author?: { login?: string };
-    77	};
-    78	
-    79	export type UpdateCheck = {
-    80	  channel: UpdateChannel;
-    81	  status: UpdateStatus;
-    82	  latestTag: string;
-    83	  latestCommit?: string;
-    84	  commitUrl?: string;
-    85	  commitMessage?: string;
-    86	  currentRef: string;
-    87	  currentManifest: ReleaseManifest;
-    88	  updateAvailable: boolean;
-    89	  release?: GithubRelease;
-    90	};
-    91	
-    92	export async function fetchLatestRelease(fetcher: typeof fetch = fetch): Promise<GithubRelease> {
-    93	  const now = Date.now();
-    94	  if (cache.release && cache.checkedAt && now - cache.checkedAt < CACHE_TTL_MS) return cache.release;
-    95	  const headers: Record<string, string> = { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" };
-    96	  if (cache.etag) headers["If-None-Match"] = cache.etag;
-    97	  const response = await fetcher(RELEASE_URL, { headers, cache: "no-store" });
-    98	  if (response.status === 304 && cache.release) {
-    99	    cache.checkedAt = now;
-   100	    return cache.release;
-   101	  }
-   102	  if (!response.ok) throw new Error(`GitHub release lookup failed (${response.status}).`);
-   103	  const release = (await response.json()) as GithubRelease;
-   104	  if (!normalizeReleaseTag(release.tag_name)) throw new Error("GitHub returned a release without a valid SemVer tag.");
-   105	  if (release.draft || release.prerelease) throw new Error("GitHub returned a non-stable release for the stable channel.");
-   106	  cache.etag = response.headers.get("etag") || cache.etag;
-   107	  cache.release = release;
-   108	  cache.checkedAt = now;
-   109	  return release;
-   110	}
-   111	
-   112	export async function fetchLatestCommit(fetcher: typeof fetch = fetch): Promise<GithubCommit> {
-   113	  const response = await fetcher(COMMIT_URL, {
-   114	    headers: { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" },
-   115	    cache: "no-store",
-   116	  });
-   117	  if (!response.ok) throw new Error(`GitHub commit lookup failed (${response.status}).`);
-   118	  const commit = (await response.json()) as GithubCommit;
-   119	  if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
-   120	  return commit;
-   121	}
-   122	
-   123	const githubHeaders = () => ({ "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" });
-   124	
-   125	export function isGitCommitSha(value: string): boolean {
-   126	  return /^[0-9a-f]{7,40}$/i.test(value.trim());
-   127	}
-   128	
-   129	function splitCommitMessage(message?: string) {
-   130	  const text = message?.trim() || "";
-   131	  const [title, ...rest] = text.split(/\n/);
-   132	  return { title: title || "Untitled commit", body: rest.join("\n").trim() };
-   133	}
-   134	
-   135	export async function fetchReleaseByTag(tag: string, fetcher: typeof fetch = fetch): Promise<GithubRelease> {
-   136	  const normalized = normalizeReleaseTag(tag);
-   137	  if (!normalized) throw new Error("Release tag must look like v1.0.0.");
-   138	  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/releases/tags/${encodeURIComponent(normalized)}`, {
-   139	    headers: githubHeaders(),
-   140	    cache: "no-store",
-   141	  });
-   142	  if (!response.ok) throw new Error(`GitHub release ${normalized} was not found (${response.status}).`);
-   143	  const release = (await response.json()) as GithubRelease;
-   144	  if (release.draft) throw new Error(`GitHub release ${normalized} is a draft.`);
-   145	  return release;
-   146	}
-   147	
-   148	export async function fetchCommitBySha(sha: string, fetcher: typeof fetch = fetch): Promise<GithubCommit> {
-   149	  const value = sha.trim();
-   150	  if (!isGitCommitSha(value)) throw new Error("Commit must be a git SHA.");
-   151	  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/commits/${encodeURIComponent(value)}`, {
-   152	    headers: githubHeaders(),
-   153	    cache: "no-store",
-   154	  });
-   155	  if (!response.ok) throw new Error(`GitHub commit ${value.slice(0, 12)} was not found (${response.status}).`);
-   156	  const commit = (await response.json()) as GithubCommit;
-   157	  if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
-   158	  return commit;
-   159	}
-   160	
-   161	export async function listUpdateVersions(root: string, fetcher: typeof fetch = fetch): Promise<UpdateVersionList> {
-   162	  const manifest = await loadReleaseManifest(root);
-   163	  const head = await resolveCurrentGitHead(root);
-   164	  const currentCommit = head || manifest.commit || null;
-   165	  const currentTag = manifest.tag || null;
-   166	  const [releasesResponse, commitsResponse] = await Promise.all([
-   167	    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/releases?per_page=20", { headers: githubHeaders(), cache: "no-store" }),
-   168	    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/commits?sha=master&per_page=30", { headers: githubHeaders(), cache: "no-store" }),
-   169	  ]);
-   170	  if (!releasesResponse.ok) throw new Error(`GitHub release list failed (${releasesResponse.status}).`);
-   171	  if (!commitsResponse.ok) throw new Error(`GitHub commit list failed (${commitsResponse.status}).`);
-   172	  const rawReleases = (await releasesResponse.json()) as GithubRelease[];
-   173	  const rawCommits = (await commitsResponse.json()) as GithubCommit[];
-   174	  const releases = (Array.isArray(rawReleases) ? rawReleases : [])
-   175	    .filter((release) => !release.draft && normalizeReleaseTag(release.tag_name))
-   176	    .map((release) => {
-   177	      const tag = normalizeReleaseTag(release.tag_name) || release.tag_name;
-   178	      return {
-   179	        tag,
-   180	        name: release.name?.trim() || tag,
-   181	        body: release.body?.trim() || "",
-   182	        htmlUrl: release.html_url || `https://github.com/f1shyondrugs/metis-ai/releases/tag/${encodeURIComponent(tag)}`,
-   183	        publishedAt: release.published_at || null,
-   184	        prerelease: Boolean(release.prerelease),
-   185	        current: Boolean(currentTag && tag === currentTag),
-   186	      } satisfies UpdateReleaseItem;
-   187	    });
-   188	  const commits = (Array.isArray(rawCommits) ? rawCommits : [])
-   189	    .filter((commit) => commit.sha)
-   190	    .map((commit) => {
-   191	      const split = splitCommitMessage(commit.commit?.message);
-   192	      return {
-   193	        sha: commit.sha,
-   194	        shortSha: commit.sha.slice(0, 12),
-   195	        title: split.title,
-   196	        body: split.body,
-   197	        htmlUrl: commit.html_url || `https://github.com/f1shyondrugs/metis-ai/commit/${commit.sha}`,
-   198	        authoredAt: commit.commit?.author?.date || commit.commit?.committer?.date || null,
-   199	        author: commit.commit?.author?.name || commit.author?.login || null,
-   200	        current: sameGitSha(commit.sha, currentCommit),
+import { execFile } from "node:child_process";
+import { access, readFile, mkdtemp, rm, writeFile, cp, rename } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import {
+  loadReleaseManifest,
+  normalizeReleaseTag,
+  versionFromReleaseTag,
+  type ReleaseManifest,
+} from "@/lib/release-manifest";
+import {
+  commitChannelUpdateAvailable,
+  sameGitSha,
+  type UpdateCommitItem,
+  type UpdateReleaseItem,
+  type UpdateVersionList,
+} from "@/lib/update-display";
+
+export {
+  commitChannelUpdateAvailable,
+  formatUpdateInstalledLabel,
+  sameGitSha,
+  shortGitSha,
+} from "@/lib/update-display";
+export type { UpdateCommitItem, UpdateReleaseItem, UpdateVersionList } from "@/lib/update-display";
+
+const execFileAsync = promisify(execFile);
+
+async function resolvePnpm(root: string) {
+  if (process.env.PNPM_BIN) return process.env.PNPM_BIN;
+  const installedPnpm = path.join(root, ".runtime", "pnpm", "bin", "pnpm");
+  try {
+    await access(installedPnpm);
+    return installedPnpm;
+  } catch {
+    return "pnpm";
+  }
+}
+const RELEASE_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest";
+const COMMIT_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/commits/master";
+const USER_AGENT = "metis-ai-update-checker";
+const cache: { etag?: string; release?: GithubRelease; checkedAt?: number } = {};
+const CACHE_TTL_MS = 5 * 60_000;
+
+export type GithubReleaseAsset = {
+  name: string;
+  browser_download_url: string;
+  content_type?: string;
+  size?: number;
+};
+
+export type GithubRelease = {
+  tag_name: string;
+  target_commitish?: string;
+  name?: string;
+  body?: string;
+  html_url?: string;
+  published_at?: string;
+  prerelease?: boolean;
+  draft?: boolean;
+  assets?: GithubReleaseAsset[];
+};
+
+export type UpdateChannel = "releases" | "commits";
+export type UpdateStatus = "development" | "up-to-date" | "available" | "commit-available";
+
+export type GithubCommit = {
+  sha: string;
+  html_url?: string;
+  commit?: {
+    message?: string;
+    author?: { name?: string; date?: string };
+    committer?: { name?: string; date?: string };
+  };
+  author?: { login?: string };
+};
+
+export type UpdateCheck = {
+  channel: UpdateChannel;
+  status: UpdateStatus;
+  latestTag: string;
+  latestCommit?: string;
+  commitUrl?: string;
+  commitMessage?: string;
+  currentRef: string;
+  currentManifest: ReleaseManifest;
+  updateAvailable: boolean;
+  release?: GithubRelease;
+};
+
+export async function fetchLatestRelease(fetcher: typeof fetch = fetch): Promise<GithubRelease> {
+  const now = Date.now();
+  if (cache.release && cache.checkedAt && now - cache.checkedAt < CACHE_TTL_MS) return cache.release;
+  const headers: Record<string, string> = { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" };
+  if (cache.etag) headers["If-None-Match"] = cache.etag;
+  const response = await fetcher(RELEASE_URL, { headers, cache: "no-store" });
+  if (response.status === 304 && cache.release) {
+    cache.checkedAt = now;
+    return cache.release;
+  }
+  if (!response.ok) throw new Error(`GitHub release lookup failed (${response.status}).`);
+  const release = (await response.json()) as GithubRelease;
+  if (!normalizeReleaseTag(release.tag_name)) throw new Error("GitHub returned a release without a valid SemVer tag.");
+  if (release.draft || release.prerelease) throw new Error("GitHub returned a non-stable release for the stable channel.");
+  cache.etag = response.headers.get("etag") || cache.etag;
+  cache.release = release;
+  cache.checkedAt = now;
+  return release;
+}
+
+export async function fetchLatestCommit(fetcher: typeof fetch = fetch): Promise<GithubCommit> {
+  const response = await fetcher(COMMIT_URL, {
+    headers: { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`GitHub commit lookup failed (${response.status}).`);
+  const commit = (await response.json()) as GithubCommit;
+  if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
+  return commit;
+}
+
+const githubHeaders = () => ({ "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" });
+
+export function isGitCommitSha(value: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(value.trim());
+}
+
+function splitCommitMessage(message?: string) {
+  const text = message?.trim() || "";
+  const [title, ...rest] = text.split(/\n/);
+  return { title: title || "Untitled commit", body: rest.join("\n").trim() };
+}
+
+export async function fetchReleaseByTag(tag: string, fetcher: typeof fetch = fetch): Promise<GithubRelease> {
+  const normalized = normalizeReleaseTag(tag);
+  if (!normalized) throw new Error("Release tag must look like v1.0.0.");
+  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/releases/tags/${encodeURIComponent(normalized)}`, {
+    headers: githubHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`GitHub release ${normalized} was not found (${response.status}).`);
+  const release = (await response.json()) as GithubRelease;
+  if (release.draft) throw new Error(`GitHub release ${normalized} is a draft.`);
+  return release;
+}
+
+export async function fetchCommitBySha(sha: string, fetcher: typeof fetch = fetch): Promise<GithubCommit> {
+  const value = sha.trim();
+  if (!isGitCommitSha(value)) throw new Error("Commit must be a git SHA.");
+  const response = await fetcher(`https://api.github.com/repos/f1shyondrugs/metis-ai/commits/${encodeURIComponent(value)}`, {
+    headers: githubHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`GitHub commit ${value.slice(0, 12)} was not found (${response.status}).`);
+  const commit = (await response.json()) as GithubCommit;
+  if (!commit.sha) throw new Error("GitHub returned a commit without a SHA.");
+  return commit;
+}
+
+export async function listUpdateVersions(root: string, fetcher: typeof fetch = fetch): Promise<UpdateVersionList> {
+  const manifest = await loadReleaseManifest(root);
+  const head = await resolveCurrentGitHead(root);
+  const currentCommit = head || manifest.commit || null;
+  const currentTag = manifest.tag || null;
+  const [releasesResponse, commitsResponse] = await Promise.all([
+    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/releases?per_page=20", { headers: githubHeaders(), cache: "no-store" }),
+    fetcher("https://api.github.com/repos/f1shyondrugs/metis-ai/commits?sha=master&per_page=30", { headers: githubHeaders(), cache: "no-store" }),
+  ]);
+  if (!releasesResponse.ok) throw new Error(`GitHub release list failed (${releasesResponse.status}).`);
+  if (!commitsResponse.ok) throw new Error(`GitHub commit list failed (${commitsResponse.status}).`);
+  const rawReleases = (await releasesResponse.json()) as GithubRelease[];
+  const rawCommits = (await commitsResponse.json()) as GithubCommit[];
+  const releases = (Array.isArray(rawReleases) ? rawReleases : [])
+    .filter((release) => !release.draft && normalizeReleaseTag(release.tag_name))
+    .map((release) => {
+      const tag = normalizeReleaseTag(release.tag_name) || release.tag_name;
+      return {
+        tag,
+        name: release.name?.trim() || tag,
+        body: release.body?.trim() || "",
+        htmlUrl: release.html_url || `https://github.com/f1shyondrugs/metis-ai/releases/tag/${encodeURIComponent(tag)}`,
+        publishedAt: release.published_at || null,
+        prerelease: Boolean(release.prerelease),
+        current: Boolean(currentTag && tag === currentTag),
+      } satisfies UpdateReleaseItem;
+    });
+  const commits = (Array.isArray(rawCommits) ? rawCommits : [])
+    .filter((commit) => commit.sha)
+    .map((commit) => {
+      const split = splitCommitMessage(commit.commit?.message);
+      return {
+        sha: commit.sha,
+        shortSha: commit.sha.slice(0, 12),
+        title: split.title,
+        body: split.body,
+        htmlUrl: commit.html_url || `https://github.com/f1shyondrugs/metis-ai/commit/${commit.sha}`,
+        authoredAt: commit.commit?.author?.date || commit.commit?.committer?.date || null,
+        author: commit.commit?.author?.name || commit.author?.login || null,
+        current: sameGitSha(commit.sha, currentCommit),
+      } satisfies UpdateCommitItem;
+    });
+  return {
+    currentRef: currentTag || currentCommit || manifest.version,
+    currentCommit,
+    currentTag,
+    releases,
+    commits,
+  };
+}
+
+export async function resolveCurrentRef(root: string): Promise<string> {
+  const configured = process.env.METIS_RELEASE_TAG?.trim();
+  if (configured) return configured;
+  const head = await resolveCurrentGitHead(root);
+  if (head) return head;
+  try {
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { version?: unknown };
+    return typeof packageJson.version === "string" ? packageJson.version.trim() : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+export async function resolveCurrentGitHead(root: string): Promise<string | null> {
+  const configured = process.env.METIS_RELEASE_COMMIT?.trim() || process.env.GITHUB_SHA?.trim();
+  if (configured) return configured;
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root, timeout: 2_000 });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseVersion(value: string) {
+  const tag = normalizeReleaseTag(value);
+  if (!tag) return null;
+  const version = versionFromReleaseTag(tag);
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4]?.split(".") || [],
+  };
+}
+
+export function compareReleaseVersions(left: string, right: string): number {
+  const a = parseVersion(left);
+  const b = parseVersion(right);
+  if (!a || !b) return 0;
+  for (const key of ["major", "minor", "patch"] as const) {
+    if (a[key] !== b[key]) return a[key] > b[key] ? 1 : -1;
+  }
+  if (!a.prerelease.length && !b.prerelease.length) return 0;
+  if (!a.prerelease.length) return 1;
+  if (!b.prerelease.length) return -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const left = a.prerelease[index];
+    const right = b.prerelease[index];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+    const leftNumeric = /^\\d+$/.test(left);
+    const rightNumeric = /^\\d+$/.test(right);
+    if (leftNumeric && rightNumeric) return Number(left) > Number(right) ? 1 : -1;
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return left > right ? 1 : -1;
+  }
+  return 0;
+}
+
+export function isReleaseNewer(release: GithubRelease, currentRef: string) {
+  const current = currentRef.trim();
+  const releaseTag = normalizeReleaseTag(release.tag_name);
+  if (!releaseTag || !current || current === "unknown") return false;
+  const currentTag = normalizeReleaseTag(current);
+  if (currentTag) return compareReleaseVersions(releaseTag, currentTag) > 0;
+  // A commit checkout is a development build. It is not safe to infer that a
+  // stable release is newer without a versioned release marker.
+  return false;
+}
+
+export async function checkForUpdate(
+  root: string,
+  fetcher: typeof fetch = fetch,
+  channel: UpdateChannel = "releases",
+): Promise<UpdateCheck> {
+  const currentManifest = await loadReleaseManifest(root);
+  const currentRef = currentManifest.tag || currentManifest.commit || "unknown";
+  if (channel === "commits") {
+    const commit = await fetchLatestCommit(fetcher);
+    const checkoutSha = await resolveCurrentGitHead(root);
+    const updateAvailable = commitChannelUpdateAvailable(commit.sha, currentManifest.commit, checkoutSha);
+    const currentCheckout = checkoutSha || currentManifest.commit || currentRef;
+    return {
+      channel,
+      status: updateAvailable ? "commit-available" : "up-to-date",
+      latestTag: currentManifest.tag || currentManifest.version,
+      latestCommit: commit.sha,
+      commitUrl: commit.html_url,
+      commitMessage: commit.commit?.message,
+      currentRef: currentCheckout,
+      currentManifest,
+      updateAvailable,
+    };
+  }
+
+  const release = await fetchLatestRelease(fetcher);
+  const latestTag = normalizeReleaseTag(release.tag_name);
+  if (!latestTag) throw new Error("Latest GitHub release has no valid SemVer tag.");
+  const updateAvailable = compareReleaseVersions(latestTag, currentManifest.version) > 0;
+  return {
+    channel,
+    status: updateAvailable ? "available" : "up-to-date",
+    latestTag,
+    currentRef,
+    currentManifest,
+    updateAvailable,
+    release,
+  };
+}
+
+export function releaseBundleAsset(release: GithubRelease) {
+  const tag = normalizeReleaseTag(release.tag_name);
+  if (!tag) return null;
+  const expectedName = `metis-ai-${tag}.tar.gz`;
+  return release.assets?.find((asset) => asset.name === expectedName) || null;
+}
+
+export async function prepareNativeReleaseUpdate(
+  root: string,
+  release: GithubRelease,
+  activeSlot: ".next-a" | ".next-b",
+  fetcher: typeof fetch = fetch,
+  logger?: (message: string) => void,
+) {
+  const asset = releaseBundleAsset(release);
+  if (!asset) throw new Error("The latest release does not contain the required native bundle asset.");
+  const tag = normalizeReleaseTag(release.tag_name);
+  if (!tag) throw new Error("The latest release does not have a valid SemVer tag.");
+  const inactiveSlot = activeSlot === ".next-a" ? ".next-b" : ".next-a";
+  const stage = await mkdtemp(path.join(os.tmpdir(), "metis-release-"));
+  const archive = path.join(stage, asset.name);
+  let operation = "starting native release update";
+  const log = (message: string) => logger?.(message);
+  log(operation);
+  try {
+    operation = "downloading the verified release bundle";
+    log(operation);
+    const response = await fetcher(asset.browser_download_url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/octet-stream" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Release bundle download failed (${response.status}).`);
+    await writeFile(archive, Buffer.from(await response.arrayBuffer()));
+    const source = path.join(stage, "source");
+    operation = "creating the temporary update workspace";
+    log(operation);
+    await execFileAsync("mkdir", ["-p", source]);
+    operation = "extracting the release bundle";
+    log(operation);
+    await execFileAsync("tar", ["-xzf", archive, "-C", source, "--strip-components=1"], { timeout: 60_000 });
+    operation = "installing locked release dependencies";
+    log(operation);
+    await execFileAsync(await resolvePnpm(root), ["install", "--frozen-lockfile"], {
+      cwd: source,
+      timeout: 15 * 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    operation = `building the inactive production slot ${inactiveSlot}`;
+    log(operation);
+    await execFileAsync("bash", ["scripts/build-production-slot.sh", inactiveSlot], {
+      cwd: source,
+      env: {
+        ...process.env,
+        AI_CHAT_ROOT: source,
+        PNPM_BIN: await resolvePnpm(root),
+        METIS_RELEASE_TAG: tag,
+        METIS_RELEASE_VERSION: versionFromReleaseTag(tag),
+        METIS_RELEASE_COMMIT: release.target_commitish || "",
+        NODE_ENV: "production",
+      },
+      timeout: 30 * 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    operation = `installing the prepared ${inactiveSlot} slot`;
+    log(operation);
+    const preparedSlot = path.join(root, inactiveSlot);
+    const incomingSlot = `${preparedSlot}.incoming`;
+    await rm(incomingSlot, { recursive: true, force: true });
+    await cp(path.join(source, inactiveSlot), incomingSlot, { recursive: true });
+    await rm(preparedSlot, { recursive: true, force: true });
+    await rename(incomingSlot, preparedSlot);
+    return { tag, activeSlot, preparedSlot: inactiveSlot, asset: asset.name };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stderr = error && typeof error === "object" && "stderr" in error
+      ? String((error as { stderr?: unknown }).stderr || "").trim()
+      : "";
+    log(`${operation} failed: ${message}`);
+    throw new Error(`${operation} failed: ${message}${stderr ? ` — ${stderr.slice(-1200)}` : ""}`);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+
+export async function prepareNativeCommitUpdate(
+  root: string,
+  commit: GithubCommit,
+  activeSlot: ".next-a" | ".next-b",
+  fetcher: typeof fetch = fetch,
+  logger?: (message: string) => void,
+) {
+  const sha = commit.sha.trim();
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) throw new Error("The master commit SHA is invalid.");
+  const inactiveSlot = activeSlot === ".next-a" ? ".next-b" : ".next-a";
+  const stage = await mkdtemp(path.join(os.tmpdir(), "metis-commit-"));
+  const archive = path.join(stage, `metis-ai-master-${sha}.tar.gz`);
+  let operation = "starting native master commit update";
+  const log = (message: string) => logger?.(message);
+  log(operation);
+  try {
+    operation = `downloading master commit ${sha.slice(0, 12)}`;
+    log(operation);
+    const response = await fetcher(`https://github.com/f1shyondrugs/metis-ai/archive/${sha}.tar.gz`, {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/octet-stream" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Master commit download failed (${response.status}).`);
+    await writeFile(archive, Buffer.from(await response.arrayBuffer()));
+    const source = path.join(stage, "source");
+    operation = "creating the temporary update workspace";
+    log(operation);
+    await execFileAsync("mkdir", ["-p", source]);
+    operation = "extracting the master commit";
+    log(operation);
+    await execFileAsync("tar", ["-xzf", archive, "-C", source, "--strip-components=1"], { timeout: 60_000 });
+    operation = "installing locked commit dependencies";
+    log(operation);
+    await execFileAsync(await resolvePnpm(root), ["install", "--frozen-lockfile"], { cwd: source, timeout: 15 * 60_000, maxBuffer: 2 * 1024 * 1024 });
+    operation = `building the inactive production slot ${inactiveSlot}`;
+    log(operation);
+    await execFileAsync("bash", ["scripts/build-production-slot.sh", inactiveSlot], {
+      cwd: source,
+      env: { ...process.env, AI_CHAT_ROOT: source, PNPM_BIN: await resolvePnpm(root), METIS_RELEASE_TAG: "", METIS_RELEASE_COMMIT: sha, NODE_ENV: "production" },
+      timeout: 30 * 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    operation = `installing the prepared ${inactiveSlot} slot`;
+    log(operation);
+    const preparedSlot = path.join(root, inactiveSlot);
+    const incomingSlot = `${preparedSlot}.incoming`;
+    await rm(incomingSlot, { recursive: true, force: true });
+    await cp(path.join(source, inactiveSlot), incomingSlot, { recursive: true });
+    await rm(preparedSlot, { recursive: true, force: true });
+    await rename(incomingSlot, preparedSlot);
+    return { tag: "master", commit: sha, activeSlot, preparedSlot: inactiveSlot, asset: archive };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stderr = error && typeof error === "object" && "stderr" in error ? String((error as { stderr?: unknown }).stderr || "").trim() : "";
+    log(`${operation} failed: ${message}`);
+    throw new Error(`${operation} failed: ${message}${stderr ? ` — ${stderr.slice(-1200)}` : ""}`);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
