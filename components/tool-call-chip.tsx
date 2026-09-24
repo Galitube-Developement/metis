@@ -717,12 +717,14 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   const planTools = includePlans ? tools.filter((tool) => tool.kind === "plan") : [];
   const noteTools = tools.filter((tool) => tool.kind === "note");
   const canvasTools = tools.filter((tool) => tool.kind === "canvas");
+  const memoryTools = tools.filter((tool) => tool.kind === "memory");
   const todoTools = tools.filter((tool) => isTodoTool(tool));
   const regularTools = tools.filter(
     (tool) =>
       tool.kind !== "note" &&
       tool.kind !== "plan" &&
       tool.kind !== "canvas" &&
+      tool.kind !== "memory" &&
       !isTodoTool(tool),
   );
   const automationTools = tools.filter((tool) => isAutomationCardTool(tool));
@@ -785,6 +787,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  {canvasTools.map((tool, index) => (
  <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
  ))}
+ {memoryTools.map((tool, index) => (
+ <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ ))}
  {todoTools.map((tool, index) => (
  <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
  ))}
@@ -804,6 +809,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
  ))}
  {canvasTools.map((tool, index) => (
+ <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ ))}
+ {memoryTools.map((tool, index) => (
  <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
  ))}
  {automationTools.map((tool, index) => (

@@ -96,4 +96,11 @@ test("Codex speed options preserve provider-advertised service tiers", () => {
     defaultParam: { id: "speed", value: "priority" },
   });
   assert.deepEqual(codexSpeedOptions({ serviceTiers: [], defaultServiceTier: null }), {});
+  assert.deepEqual(codexSpeedOptions({ additionalSpeedTiers: ["fast"] }), {
+    parameter: { id: "speed", displayName: "Speed", values: [
+      { value: "default", displayName: "Standard" },
+      { value: "fast", displayName: "Fast" },
+    ] },
+    defaultParam: { id: "speed", value: "default" },
+  });
 });

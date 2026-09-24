@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -10,6 +10,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Download,
   ExternalLink,
   Globe2,
   KeyRound,
@@ -20,7 +21,7 @@ import {
   Monitor,
   MoreHorizontal,
   PlugZap,
- Puzzle,
+  Puzzle,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -28,6 +29,7 @@ import {
   Settings2,
   Trash2,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Apple as AppleLogo, Github as GithubLogo, Microsoft as MicrosoftLogo } from "@lobehub/icons";
@@ -67,6 +69,7 @@ import type { AgentMode, ToolPermissionCategory } from "@/lib/store";
 import { TOOL_PERMISSION_CATEGORIES } from "@/lib/modes";
 import { PlanUsagePanel } from "@/components/quota-gauges";
 import { UpdateSettingsPanel, UpdateStatusProbe } from "@/components/update-channel-nav";
+import { CliVersionsPanel } from "@/components/cli-versions-panel";
 import { BrowserSettingsControls } from "@/components/browser-settings-controls";
 import type { UsageSnapshot } from "@/lib/usage-display";
 
@@ -365,7 +368,8 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
   ],
   models: [
     { id: "settings-usage", label: "Usage" },
- { id: "settings-providers", label: "Providers" },
+    { id: "settings-providers", label: "Providers" },
+    { id: "settings-versions", label: "Versions" },
   ],
   agent: [
     { id: "settings-skills", label: "Skills" },
@@ -402,6 +406,96 @@ function visibleSettingsSections(tab: string, isHostAdmin: boolean) {
 
 function scrollSettingsSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+type SettingsPaneId =
+  | "tab"
+  | "browser-storage"
+  | "providers"
+  | "versions"
+  | "skills"
+  | "modes"
+  | "mcp"
+  | "memories";
+
+const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "tab">>> = {
+  "settings-browser-storage": "browser-storage",
+  "settings-providers": "providers",
+  "settings-versions": "versions",
+  "settings-skills": "skills",
+  "settings-modes": "modes",
+  "settings-mcp": "mcp",
+  "settings-memories": "memories",
+};
+
+function SettingsTile({
+  id,
+  title,
+  meta,
+  icon: Icon,
+  onOpen,
+}: {
+  id: string;
+  title: string;
+  meta: string;
+  icon: LucideIcon;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      id={id}
+      data-settings-tile={id}
+      onClick={onOpen}
+      className={cn(
+        "flex min-h-[6.25rem] flex-col items-start justify-between rounded-xl px-3.5 py-3 text-left transition-colors",
+        "bg-muted/35 text-foreground hover:bg-muted/55",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
+      <Icon className="size-4 text-muted-foreground" />
+      <span className="mt-3 min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{meta}</span>
+      </span>
+    </button>
+  );
+}
+
+function SettingsFeaturePane({
+  backLabel,
+  title,
+  description,
+  slot,
+  onBack,
+  children,
+}: {
+  backLabel: string;
+  title?: string;
+  description?: string;
+  slot: string;
+  onBack: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-5 px-6 py-6 sm:px-8 sm:py-8" data-slot={slot}>
+      <button
+        type="button"
+        className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        onClick={onBack}
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to {backLabel}
+      </button>
+      {title ? (
+      <div>
+        <h3 className="text-sm font-medium">{title}</h3>
+        {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
+      </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
 }
 
 export function SettingsPanel({
@@ -479,7 +573,7 @@ export function SettingsPanel({
   const [browserStorageError, setBrowserStorageError] = useState("");
   const [browserStorageDeleteTarget, setBrowserStorageDeleteTarget] = useState<string | null>(null);
   const [browserStorageClearAll, setBrowserStorageClearAll] = useState(false);
-  const [settingsPane, setSettingsPane] = useState<"tab" | "browser-storage">("tab");
+  const [settingsPane, setSettingsPane] = useState<SettingsPaneId>("tab");
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [browserStorageQuery, setBrowserStorageQuery] = useState("");
   const [compressionPreview, setCompressionPreview] = useState("");
@@ -1055,6 +1149,7 @@ export function SettingsPanel({
       location: typeof connection.config?.location === "string" ? connection.config.location : "",
     });
     onSettingsTabChange("models");
+    setSettingsPane("providers");
     requestAnimationFrame(() => {
       document.getElementById("provider-connection-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
@@ -1409,11 +1504,12 @@ export function SettingsPanel({
             type="button"
             className={cn(
             "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground md:block",
-            item.id === "settings-browser-storage" && settingsPane === "browser-storage" && "bg-muted/60 text-foreground",
+            SETTINGS_SECTION_TO_PANE[item.id] === settingsPane && "bg-muted/60 text-foreground",
             )}
             onClick={() => {
-            if (item.id === "settings-browser-storage") {
-            setSettingsPane("browser-storage");
+            const pane = SETTINGS_SECTION_TO_PANE[item.id];
+            if (pane) {
+            setSettingsPane(pane);
             return;
             }
             setSettingsPane("tab");
@@ -1541,6 +1637,538 @@ export function SettingsPanel({
  })}
  </div>
  </div>
+ ) : settingsPane === "providers" ? (
+ <SettingsFeaturePane
+ backLabel="Models"
+ slot="providers-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+<section className="flex flex-col gap-4">
+                <div>
+                  <h3 id="settings-providers" className="text-sm font-medium">AI providers and connections</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Credentials are stored encrypted on the server and are never returned to the browser.
+                    Configure API keys, OAuth, SDK, CLI, and local connections together in one list.
+                  </p>
+                </div>
+                <div id="provider-connection-form" className={`space-y-3 rounded-xl border p-4 ${providerDraft.id ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20"}`}>
+                  {providerDraft.id ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-medium text-primary">
+                        Editing existing connection · {providerDraft.id.slice(0, 8)}…
+                      </p>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setProviderDraft((current) => ({
+                          ...current,
+                          id: "",
+                          slug: `${current.providerKey}-main`,
+                          label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
+                          secret: "",
+                        }))}
+                      >
+                        New connection instead
+                      </Button>
+                    </div>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                  <CustomSelect
+                    value={providerDraft.providerKey}
+                    onValueChange={selectProvider}
+                    ariaLabel="Provider"
+                    disabled={Boolean(providerDraft.id)}
+                    className="w-full"
+                    options={selectableProviders.map((provider) => ({
+                      value: provider.key,
+                      label: provider.name,
+                      providerLogo: provider.key,
+                    }))}
+                  />
+                  <CustomSelect
+                    value={providerDraft.authType}
+                    onValueChange={(authType) => setProviderDraft((current) => ({ ...current, authType }))}
+                    ariaLabel="Authentication method"
+                    disabled={Boolean(providerDraft.id)}
+                    className="w-full"
+                    options={(providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.authTypes || ["api_key"]).map((authType) => ({
+                      value: authType,
+                      label: authType === "api_key"
+                        ? (providerDraft.providerKey === "antigravity" ? "Gemini API key (SDK)" : "API key")
+                        : authType === "oauth"
+                          ? (providerDraft.providerKey === "antigravity" ? "OAuth (agy CLI)" : "OAuth")
+                          : authType === "vertex_adc"
+                            ? "Google Vertex / ADC"
+                            : authType === "account"
+                              ? "Official account credentials"
+                              : authType === "local" ? "CLI on this machine" : "Local endpoint",
+                    }))}
+                  />
+                  <Input
+                    value={providerDraft.slug}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, slug: event.target.value }))}
+                    placeholder="connection-id"
+                    aria-label="Connection ID"
+                    disabled={Boolean(providerDraft.id)}
+                  />
+                  <Input
+                    value={providerDraft.label}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, label: event.target.value }))}
+                    placeholder="Connection name"
+                    aria-label="Connection name"
+                  />
+                </div>
+                {providerDraft.authType === "vertex_adc" ||
+                (providerDraft.providerKey === "antigravity" && providerDraft.authType === "oauth") ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Input
+                      value={providerDraft.project}
+                      onChange={(event) => setProviderDraft((current) => ({ ...current, project: event.target.value }))}
+                      placeholder={providerDraft.authType === "oauth" ? "Optional GCP project (workspace accounts need this)" : "GCP project"}
+                      aria-label="GCP project"
+                    />
+                    <Input
+                      value={providerDraft.location}
+                      onChange={(event) => setProviderDraft((current) => ({ ...current, location: event.target.value }))}
+                      placeholder="us-central1"
+                      aria-label="GCP location"
+                    />
+                  </div>
+                ) : providerDraft.providerKey !== "cursor" &&
+        providerDraft.providerKey !== "grok-build" &&
+        providerDraft.providerKey !== "opencode" &&
+        providerDraft.authType !== "oauth" &&
+        providerDraft.authType !== "local" ? (
+                  <Input
+                    value={providerDraft.baseUrl}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                    placeholder="https://api.example.com/v1"
+                    aria-label="Provider base URL"
+                  />
+                ) : null}
+                {providerDraft.authType !== "local" &&
+                providerDraft.authType !== "vertex_adc" &&
+                providerDraft.authType !== "oauth" ? (
+                  <Input
+                    type="password"
+                    value={providerDraft.secret}
+                    onChange={(event) => setProviderDraft((current) => ({ ...current, secret: event.target.value }))}
+                    placeholder={providerDraft.authType === "account" ? "Paste official auth.json content" : "Secret is write-only"}
+                    aria-label="Provider credential"
+                    autoComplete="new-password"
+                  />
+                ) : null}
+                {providerDraft.authType === "api_key" && API_KEY_URLS[providerDraft.providerKey] ? (
+                  <a
+                    href={API_KEY_URLS[providerDraft.providerKey]}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-primary underline underline-offset-2"
+                  >
+                    Get {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.name || "provider"} API key
+                  </a>
+                ) : null}
+                {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.setupHint ? (
+                  <p className="text-xs text-muted-foreground">
+                    {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.setupHint}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                {providerDraft.authType === "oauth" ? (
+                  <>
+                    {providerDraft.id ? (
+                      <Button type="button" onClick={() => void saveProviderConnection()} disabled={providerBusy || !providersLoaded || !providerDraft.label.trim()}>
+                        {providerBusy ? "Saving…" : "Save changes"}
+                      </Button>
+                    ) : null}
+                    <Button type="button" variant={providerDraft.id ? "outline" : "default"} onClick={() => void connectProviderOAuth()} disabled={providerBusy || !providersLoaded}>
+                      {providerBusy ? "Connecting…" : providerDraft.id ? "Reconnect OAuth" : "Connect via OAuth"}
+                    </Button>
+                  </>
+                ) : (
+                    <Button type="button" onClick={() => void saveProviderConnection()} disabled={providerBusy || !providersLoaded || !providerDraft.label.trim()}>
+                      {providerBusy ? "Saving…" : providerDraft.id ? "Update connection" : "Save connection"}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setProviderDraft((current) => ({
+                      ...current,
+                      id: "",
+                      slug: `${current.providerKey}-main`,
+                      label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
+                      secret: "",
+                    }))}
+                  >
+                    Clear
+                  </Button>
+                </div>
+                </div>
+                {oauthFlow ? (
+                  <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                    <div>
+                      <p className="text-sm font-medium">
+                        OAuth: {oauthFlow.status}
+                      </p>
+                      {oauthFlow.instructions ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {oauthFlow.instructions}
+                        </p>
+                      ) : null}
+                    </div>
+                    {oauthFlow.authUrl ? (
+                      <a
+                        href={oauthFlow.authUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block break-all text-xs text-primary underline underline-offset-2"
+                      >
+                        Open OAuth authorization link
+                      </a>
+                    ) : null}
+                    {oauthFlow.userCode ? (
+                      <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Device code
+                        </p>
+                        <p className="mt-1 select-all font-mono text-xl font-semibold tracking-[0.18em] text-foreground">
+                          {oauthFlow.userCode}
+                        </p>
+                      </div>
+                    ) : null}
+                    {oauthFlow.manualInputRequired ? (
+                      <div className="flex gap-2">
+                        <Input
+                          value={oauthCode}
+                          onChange={(event) => setOauthCode(event.target.value)}
+                          placeholder="Code or complete callback URL"
+                          aria-label="OAuth code or callback URL"
+                        />
+                        <Button type="button" onClick={() => void submitOAuthCode()} disabled={!oauthCode.trim()}>
+                          Submit
+                        </Button>
+                      </div>
+                    ) : null}
+                    {oauthFlow.providerKey === "claude-code" ? (
+                      <p className="text-xs text-amber-400">
+                        Claude OAuth is an experimental personal-use flow and may conflict with Anthropic's current third-party usage restrictions.
+                      </p>
+                    ) : null}
+                    {oauthFlow.providerKey === "antigravity" ? (
+                      <p className="text-xs text-amber-400">
+                        Antigravity OAuth uses the official agy CLI remote-login flow and stores its token profile per connection.
+                      </p>
+                    ) : null}
+                    {oauthFlow.error ? (
+                      <p className="text-xs text-red-400">{oauthFlow.error}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {!providersLoaded ? (
+                  <div className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+                    Loading provider connections…
+                  </div>
+                ) : providerConnections.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+                    No provider connections configured yet.
+                  </div>
+                ) : (
+                  <ul className="flex flex-col gap-2">
+                    {sortedProviderConnections.map((connection) => {
+                      const definition = providerDefinitions.find((provider) => provider.key === connection.providerKey);
+                      return (
+                        <li key={connection.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 bg-card/40 p-3">
+                          <ProviderLogo providerId={connection.providerKey} className="size-5" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">
+                              {connection.label}
+                              <span className="ml-2 text-xs font-normal text-muted-foreground">{definition?.name || connection.providerKey}</span>
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {connection.slug} · {connection.authType} · {connection.enabled ? "enabled" : "disabled"}
+                              {connection.hasSecret ? " · credential set" : ""}
+                            </p>
+                            {connection.lastError ? <p className="mt-1 text-xs text-red-400">{connection.lastError}</p> : null}
+                          </div>
+                          <Button type="button" size="sm" variant={connection.enabled ? "outline" : "default"} onClick={() => void toggleProviderConnection(connection)}>
+                            {connection.enabled ? "Disable" : "Enable"}
+                          </Button>
+                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Test ${connection.label}`} onClick={() => void testProviderConnection(connection)}><PlugZap className="size-3.5" /></Button>
+                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Refresh models for ${connection.label}`} onClick={() => void discoverProviderModels(connection)}><RefreshCw className="size-3.5" /></Button>
+                          <Button type="button" size="sm" variant="ghost" onClick={() => editProviderConnection(connection)}>Edit</Button>
+                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Delete ${connection.label}`} onClick={() => setDeleteTarget({ type: "provider", item: connection })}><Trash2 className="size-3.5" /></Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+ </SettingsFeaturePane>
+ ) : settingsPane === "versions" ? (
+ <SettingsFeaturePane
+ backLabel="Models"
+ title="CLI versions"
+ description="Installed agent CLI and SDK versions on this server."
+ slot="versions-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+ <CliVersionsPanel isHostAdmin={Boolean(isHostAdmin)} />
+ </SettingsFeaturePane>
+ ) : settingsPane === "skills" ? (
+ <SettingsFeaturePane
+ backLabel="Agent"
+ title="Skills"
+ description="Installed skills from skills-lock.json, plus skills you add for this account. Open a skill to change Always on. Enabled skills stay available; Always on injects the skill into every chat."
+ slot="skills-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+ <SkillsSettings hideHeading />
+ </SettingsFeaturePane>
+ ) : settingsPane === "modes" ? (
+ <SettingsFeaturePane
+ backLabel="Agent"
+ slot="modes-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+<section className="flex flex-col gap-4">
+                <div>
+                  <h3 id="settings-modes" className="text-sm font-medium">Agent modes</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">Create reusable modes with custom instructions and server-enforced tool permissions.</p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Input value={modeDraft.name} onChange={(event) => setModeDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Mode name" aria-label="Mode name" />
+                    <Input value={modeDraft.icon} onChange={(event) => setModeDraft((current) => ({ ...current, icon: event.target.value }))} placeholder="Icon name" aria-label="Mode icon" />
+                  </div>
+                  <Input value={modeDraft.description} onChange={(event) => setModeDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Short description" aria-label="Mode description" />
+                  <Textarea value={modeDraft.instructions} onChange={(event) => setModeDraft((current) => ({ ...current, instructions: event.target.value }))} placeholder="Custom instructions for this mode" aria-label="Mode instructions" />
+                  <div className="flex flex-wrap gap-1.5">
+                    {TOOL_PERMISSION_CATEGORIES.map((category) => {
+                      const active = modeDraft.allowedCategories.includes(category);
+                      return <Button key={category} type="button" size="xs" variant={active ? "default" : "outline"} onClick={() => setModeDraft((current) => ({ ...current, allowedCategories: active ? current.allowedCategories.filter((item) => item !== category) : [...current.allowedCategories, category as ToolPermissionCategory] }))}>{category}</Button>;
+                    })}
+                  </div>
+                  <Textarea value={modeOverridesDraft} onChange={(event) => setModeOverridesDraft(event.target.value)} placeholder='{"write_file": false}' aria-label="Individual tool overrides" className="min-h-16 font-mono text-xs" />
+                  <p className="text-[11px] text-muted-foreground">Optional individual overrides as JSON, for example {"{"}"write_file": false{"}"}</p>
+                  <div className="flex justify-end">
+                    <Button type="button" onClick={() => void saveCustomMode()} disabled={!modeDraft.name.trim()}>Save mode</Button>
+                  </div>
+                </div>
+                {customModes.length ? (
+                  <div className="divide-y rounded-xl border">
+                    {customModes.map((mode) => (
+                      <div key={mode.id} className="flex items-center gap-3 px-3 py-2.5">
+                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{mode.name}</p><p className="truncate text-xs text-muted-foreground">{mode.description || "Custom mode"}</p></div>
+                        <Button type="button" size="xs" variant="ghost" onClick={() => { setModeDraft(mode); setModeOverridesDraft(JSON.stringify(mode.toolOverrides || {}, null, 2)); }}>Edit</Button>
+                        <Button type="button" size="xs" variant="ghost" className="text-destructive" onClick={() => void deleteCustomMode(mode)}>Delete</Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+
+               </SettingsFeaturePane>
+ ) : settingsPane === "mcp" ? (
+ <SettingsFeaturePane
+ backLabel="Agent"
+ slot="mcp-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+<section className="flex flex-col gap-4">
+                <div>
+                  <h3 id="settings-mcp" className="text-sm font-medium">Custom MCP servers</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Each account can add its own remote HTTP or local stdio MCP servers. They are not shared with other users. Secret values are write-only.
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input
+                    value={mcpDraft.id}
+                    onChange={(e) => setMcpDraft((current) => ({ ...current, id: e.target.value }))}
+                    placeholder="server-id"
+                    aria-label="MCP server ID"
+                  />
+                  <Input
+                    value={mcpDraft.name}
+                    onChange={(e) => setMcpDraft((current) => ({ ...current, name: e.target.value }))}
+                    placeholder="Display name"
+                    aria-label="MCP server name"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={mcpDraft.kind === "remote" ? "default" : "outline"}
+                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "remote" }))}
+                  >
+                    Remote HTTP
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={mcpDraft.kind === "stdio" ? "default" : "outline"}
+                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "stdio" }))}
+                  >
+                    Local stdio
+                  </Button>
+                </div>
+                {mcpDraft.kind === "remote" ? (
+                  <Input
+                    value={mcpDraft.url}
+                    onChange={(e) => setMcpDraft((current) => ({ ...current, url: e.target.value }))}
+                    placeholder="https://example.com/mcp"
+                    aria-label="MCP server URL"
+                  />
+                ) : (
+                  <>
+                    <Input
+                      value={mcpDraft.command}
+                      onChange={(e) => setMcpDraft((current) => ({ ...current, command: e.target.value }))}
+                      placeholder="npx"
+                      aria-label="MCP command"
+                    />
+                    <Textarea
+                      value={mcpDraft.args}
+                      onChange={(e) => setMcpDraft((current) => ({ ...current, args: e.target.value }))}
+                      placeholder={"One argument per line\n-y\n@modelcontextprotocol/server-filesystem\n/path/to/allowed-directory"}
+                      aria-label="MCP arguments"
+                      rows={4}
+                    />
+                  </>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Textarea
+                    value={mcpDraft.env}
+                    onChange={(e) => setMcpDraft((current) => ({ ...current, env: e.target.value }))}
+                    placeholder={"Environment (NAME=value)\nAPI_KEY=..."}
+                    aria-label="MCP environment"
+                    rows={4}
+                  />
+                  <Textarea
+                    value={mcpDraft.headers}
+                    onChange={(e) => setMcpDraft((current) => ({ ...current, headers: e.target.value }))}
+                    placeholder={"Headers (NAME=value)\nAuthorization=Bearer ..."}
+                    aria-label="MCP headers"
+                    rows={4}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" onClick={() => void saveMcpServer()} disabled={mcpBusy}>
+                    {mcpBusy ? "Saving…" : "Save server"}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setMcpDraft(emptyMcpDraft)}>
+                    Clear
+                  </Button>
+                </div>
+                <ul className="flex flex-col gap-2">
+                  {!mcpLoaded ? (
+                    [0, 1, 2].map((item) => (
+                      <li key={item} className="space-y-2 rounded-lg border border-border/60 bg-card/40 p-3" aria-label="Loading MCP servers" role="status">
+                        <Skeleton className="h-4 w-2/5" />
+                        <Skeleton className="h-3 w-3/5" />
+                      </li>
+                    ))
+                  ) : mcpServers.map((server) => (
+                    <li key={server.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/40 p-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{server.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {server.id} · {server.kind} · {server.enabled ? "enabled" : "disabled"}
+                        </p>
+                        {(server.configured_env_keys?.length || server.configured_header_keys?.length) ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Secrets configured: {[...(server.configured_env_keys || []), ...(server.configured_header_keys || [])].join(", ")}
+                          </p>
+                        ) : null}
+                      </div>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void toggleMcpServer(server)}>
+                        {server.enabled ? "Disable" : "Enable"}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => editMcpServer(server)}>
+                        Edit
+                      </Button>
+                      <Button type="button" size="icon-sm" variant="ghost" onClick={() => setDeleteTarget({ type: "mcp", item: server })} aria-label={`Delete ${server.name}`}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+               </SettingsFeaturePane>
+ ) : settingsPane === "memories" ? (
+ <SettingsFeaturePane
+ backLabel="Agent"
+ slot="memories-manager"
+ onBack={() => setSettingsPane("tab")}
+ >
+<section className="flex flex-col gap-3">
+                <div>
+                  <h3 id="settings-memories" className="text-sm font-medium">Memories</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Durable facts injected into every turn. The agent can
+                    write these itself.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder="Add a memory…"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void addMemory();
+                      }
+                    }}
+                  />
+                  <Button
+                    size="icon"
+                    onClick={() => void addMemory()}
+                    disabled={busy || !draft.trim()}
+                    aria-label="Add memory"
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+                <ul className="flex flex-col gap-2">
+                  {memories.length === 0 ? (
+                    <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+                      No memories yet.
+                    </li>
+                  ) : (
+                    memories.map((m) => (
+                      <li
+                        key={m.id}
+                        className="group flex items-start gap-2 rounded-lg border border-border/60 bg-card/40 p-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm whitespace-pre-wrap">
+                            {m.content}
+                          </p>
+                          {m.tags && m.tags.length > 0 ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {m.tags.join(" · ")}
+                            </p>
+                          ) : null}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="opacity-100 sm:opacity-60 sm:group-hover:opacity-100"
+                          onClick={() => void removeMemory(m.id)}
+                          disabled={deletingMemoryIds.has(m.id)}
+                          aria-label="Delete memory"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </section>
+ </SettingsFeaturePane>
  ) : (
  <>
 <TabsContent value="updates" className="mt-0 px-6 py-6 sm:px-8 sm:py-8">
@@ -1931,7 +2559,7 @@ export function SettingsPanel({
                   <Lock className="size-4" />
                   Lock screen
                 </Button>
-                
+
               </section>
 
               <section className="flex flex-col gap-3">
@@ -1964,500 +2592,56 @@ export function SettingsPanel({
               </section>
 
  </TabsContent>
-<TabsContent value="models" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8 min-w-0">
-
+<TabsContent value="models" className="mt-0 space-y-8 px-6 py-6 sm:px-8 sm:py-8 min-w-0">
               <div id="settings-usage"><PlanUsagePanel snapshot={usageSnapshot} onRefresh={onRefreshUsage} /></div>
-
-              <section className="flex flex-col gap-4">
-                <div>
-                  <h3 id="settings-providers" className="text-sm font-medium">AI providers and connections</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Credentials are stored encrypted on the server and are never returned to the browser.
-                    Configure API keys, OAuth, SDK, CLI, and local connections together in one list.
-                  </p>
-                </div>
-                <div id="provider-connection-form" className={`space-y-3 rounded-xl border p-4 ${providerDraft.id ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20"}`}>
-                  {providerDraft.id ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-primary">
-                        Editing existing connection · {providerDraft.id.slice(0, 8)}…
-                      </p>
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => setProviderDraft((current) => ({
-                          ...current,
-                          id: "",
-                          slug: `${current.providerKey}-main`,
-                          label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
-                          secret: "",
-                        }))}
-                      >
-                        New connection instead
-                      </Button>
-                    </div>
-                  ) : null}
-                  <div className="grid gap-2 sm:grid-cols-2">
-                  <CustomSelect
-                    value={providerDraft.providerKey}
-                    onValueChange={selectProvider}
-                    ariaLabel="Provider"
-                    disabled={Boolean(providerDraft.id)}
-                    className="w-full"
-                    options={selectableProviders.map((provider) => ({
-                      value: provider.key,
-                      label: provider.name,
-                      providerLogo: provider.key,
-                    }))}
-                  />
-                  <CustomSelect
-                    value={providerDraft.authType}
-                    onValueChange={(authType) => setProviderDraft((current) => ({ ...current, authType }))}
-                    ariaLabel="Authentication method"
-                    disabled={Boolean(providerDraft.id)}
-                    className="w-full"
-                    options={(providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.authTypes || ["api_key"]).map((authType) => ({
-                      value: authType,
-                      label: authType === "api_key"
-                        ? (providerDraft.providerKey === "antigravity" ? "Gemini API key (SDK)" : "API key")
-                        : authType === "oauth"
-                          ? (providerDraft.providerKey === "antigravity" ? "OAuth (agy CLI)" : "OAuth")
-                          : authType === "vertex_adc"
-                            ? "Google Vertex / ADC"
-                            : authType === "account"
-                              ? "Official account credentials"
-                              : authType === "local" ? "CLI on this machine" : "Local endpoint",
-                    }))}
-                  />
-                  <Input
-                    value={providerDraft.slug}
-                    onChange={(event) => setProviderDraft((current) => ({ ...current, slug: event.target.value }))}
-                    placeholder="connection-id"
-                    aria-label="Connection ID"
-                    disabled={Boolean(providerDraft.id)}
-                  />
-                  <Input
-                    value={providerDraft.label}
-                    onChange={(event) => setProviderDraft((current) => ({ ...current, label: event.target.value }))}
-                    placeholder="Connection name"
-                    aria-label="Connection name"
-                  />
-                </div>
-                {providerDraft.authType === "vertex_adc" ||
-                (providerDraft.providerKey === "antigravity" && providerDraft.authType === "oauth") ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input
-                      value={providerDraft.project}
-                      onChange={(event) => setProviderDraft((current) => ({ ...current, project: event.target.value }))}
-                      placeholder={providerDraft.authType === "oauth" ? "Optional GCP project (workspace accounts need this)" : "GCP project"}
-                      aria-label="GCP project"
-                    />
-                    <Input
-                      value={providerDraft.location}
-                      onChange={(event) => setProviderDraft((current) => ({ ...current, location: event.target.value }))}
-                      placeholder="us-central1"
-                      aria-label="GCP location"
-                    />
-                  </div>
-                ) : providerDraft.providerKey !== "cursor" &&
-        providerDraft.providerKey !== "grok-build" &&
-        providerDraft.providerKey !== "opencode" &&
-        providerDraft.authType !== "oauth" &&
-        providerDraft.authType !== "local" ? (
-                  <Input
-                    value={providerDraft.baseUrl}
-                    onChange={(event) => setProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                    placeholder="https://api.example.com/v1"
-                    aria-label="Provider base URL"
-                  />
-                ) : null}
-                {providerDraft.authType !== "local" &&
-                providerDraft.authType !== "vertex_adc" &&
-                providerDraft.authType !== "oauth" ? (
-                  <Input
-                    type="password"
-                    value={providerDraft.secret}
-                    onChange={(event) => setProviderDraft((current) => ({ ...current, secret: event.target.value }))}
-                    placeholder={providerDraft.authType === "account" ? "Paste official auth.json content" : "Secret is write-only"}
-                    aria-label="Provider credential"
-                    autoComplete="new-password"
-                  />
-                ) : null}
-                {providerDraft.authType === "api_key" && API_KEY_URLS[providerDraft.providerKey] ? (
-                  <a
-                    href={API_KEY_URLS[providerDraft.providerKey]}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-primary underline underline-offset-2"
-                  >
-                    Get {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.name || "provider"} API key
-                  </a>
-                ) : null}
-                {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.setupHint ? (
-                  <p className="text-xs text-muted-foreground">
-                    {providerDefinitions.find((provider) => provider.key === providerDraft.providerKey)?.setupHint}
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap gap-2">
-                {providerDraft.authType === "oauth" ? (
-                  <>
-                    {providerDraft.id ? (
-                      <Button type="button" onClick={() => void saveProviderConnection()} disabled={providerBusy || !providersLoaded || !providerDraft.label.trim()}>
-                        {providerBusy ? "Saving…" : "Save changes"}
-                      </Button>
-                    ) : null}
-                    <Button type="button" variant={providerDraft.id ? "outline" : "default"} onClick={() => void connectProviderOAuth()} disabled={providerBusy || !providersLoaded}>
-                      {providerBusy ? "Connecting…" : providerDraft.id ? "Reconnect OAuth" : "Connect via OAuth"}
-                    </Button>
-                  </>
-                ) : (
-                    <Button type="button" onClick={() => void saveProviderConnection()} disabled={providerBusy || !providersLoaded || !providerDraft.label.trim()}>
-                      {providerBusy ? "Saving…" : providerDraft.id ? "Update connection" : "Save connection"}
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setProviderDraft((current) => ({
-                      ...current,
-                      id: "",
-                      slug: `${current.providerKey}-main`,
-                      label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
-                      secret: "",
-                    }))}
-                  >
-                    Clear
-                  </Button>
-                </div>
-                </div>
-                {oauthFlow ? (
-                  <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-                    <div>
-                      <p className="text-sm font-medium">
-                        OAuth: {oauthFlow.status}
-                      </p>
-                      {oauthFlow.instructions ? (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {oauthFlow.instructions}
-                        </p>
-                      ) : null}
-                    </div>
-                    {oauthFlow.authUrl ? (
-                      <a
-                        href={oauthFlow.authUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block break-all text-xs text-primary underline underline-offset-2"
-                      >
-                        Open OAuth authorization link
-                      </a>
-                    ) : null}
-                    {oauthFlow.userCode ? (
-                      <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Device code
-                        </p>
-                        <p className="mt-1 select-all font-mono text-xl font-semibold tracking-[0.18em] text-foreground">
-                          {oauthFlow.userCode}
-                        </p>
-                      </div>
-                    ) : null}
-                    {oauthFlow.manualInputRequired ? (
-                      <div className="flex gap-2">
-                        <Input
-                          value={oauthCode}
-                          onChange={(event) => setOauthCode(event.target.value)}
-                          placeholder="Code or complete callback URL"
-                          aria-label="OAuth code or callback URL"
-                        />
-                        <Button type="button" onClick={() => void submitOAuthCode()} disabled={!oauthCode.trim()}>
-                          Submit
-                        </Button>
-                      </div>
-                    ) : null}
-                    {oauthFlow.providerKey === "claude-code" ? (
-                      <p className="text-xs text-amber-400">
-                        Claude OAuth is an experimental personal-use flow and may conflict with Anthropic's current third-party usage restrictions.
-                      </p>
-                    ) : null}
-                    {oauthFlow.providerKey === "antigravity" ? (
-                      <p className="text-xs text-amber-400">
-                        Antigravity OAuth uses the official agy CLI remote-login flow and stores its token profile per connection.
-                      </p>
-                    ) : null}
-                    {oauthFlow.error ? (
-                      <p className="text-xs text-red-400">{oauthFlow.error}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-                {!providersLoaded ? (
-                  <div className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-                    Loading provider connections…
-                  </div>
-                ) : providerConnections.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-                    No provider connections configured yet.
-                  </div>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {sortedProviderConnections.map((connection) => {
-                      const definition = providerDefinitions.find((provider) => provider.key === connection.providerKey);
-                      return (
-                        <li key={connection.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 bg-card/40 p-3">
-                          <ProviderLogo providerId={connection.providerKey} className="size-5" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium">
-                              {connection.label}
-                              <span className="ml-2 text-xs font-normal text-muted-foreground">{definition?.name || connection.providerKey}</span>
-                            </p>
-                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                              {connection.slug} · {connection.authType} · {connection.enabled ? "enabled" : "disabled"}
-                              {connection.hasSecret ? " · credential set" : ""}
-                            </p>
-                            {connection.lastError ? <p className="mt-1 text-xs text-red-400">{connection.lastError}</p> : null}
-                          </div>
-                          <Button type="button" size="sm" variant={connection.enabled ? "outline" : "default"} onClick={() => void toggleProviderConnection(connection)}>
-                            {connection.enabled ? "Disable" : "Enable"}
-                          </Button>
-                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Test ${connection.label}`} onClick={() => void testProviderConnection(connection)}><PlugZap className="size-3.5" /></Button>
-                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Refresh models for ${connection.label}`} onClick={() => void discoverProviderModels(connection)}><RefreshCw className="size-3.5" /></Button>
-                          <Button type="button" size="sm" variant="ghost" onClick={() => editProviderConnection(connection)}>Edit</Button>
-                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Delete ${connection.label}`} onClick={() => setDeleteTarget({ type: "provider", item: connection })}><Trash2 className="size-3.5" /></Button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </section>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SettingsTile
+                  id="settings-providers"
+                  title="AI providers and connections"
+                  meta={providersLoaded ? `${providerConnections.length} connection${providerConnections.length === 1 ? "" : "s"}` : "Loading…"}
+                  icon={KeyRound}
+                  onOpen={() => setSettingsPane("providers")}
+                />
+                <SettingsTile
+                  id="settings-versions"
+                  title="CLI versions"
+                  meta="Installed agent CLI and SDK versions"
+                  icon={Download}
+                  onOpen={() => setSettingsPane("versions")}
+                />
+              </div>
  </TabsContent>
-<TabsContent value="agent" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
-
-              <div className="mb-8">
- <div id="settings-skills"><SkillsSettings /></div>
- </div>
- <section className="flex flex-col gap-4">
-                <div>
-                  <h3 id="settings-modes" className="text-sm font-medium">Agent modes</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">Create reusable modes with custom instructions and server-enforced tool permissions.</p>
-                </div>
-                <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input value={modeDraft.name} onChange={(event) => setModeDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Mode name" aria-label="Mode name" />
-                    <Input value={modeDraft.icon} onChange={(event) => setModeDraft((current) => ({ ...current, icon: event.target.value }))} placeholder="Icon name" aria-label="Mode icon" />
-                  </div>
-                  <Input value={modeDraft.description} onChange={(event) => setModeDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Short description" aria-label="Mode description" />
-                  <Textarea value={modeDraft.instructions} onChange={(event) => setModeDraft((current) => ({ ...current, instructions: event.target.value }))} placeholder="Custom instructions for this mode" aria-label="Mode instructions" />
-                  <div className="flex flex-wrap gap-1.5">
-                    {TOOL_PERMISSION_CATEGORIES.map((category) => {
-                      const active = modeDraft.allowedCategories.includes(category);
-                      return <Button key={category} type="button" size="xs" variant={active ? "default" : "outline"} onClick={() => setModeDraft((current) => ({ ...current, allowedCategories: active ? current.allowedCategories.filter((item) => item !== category) : [...current.allowedCategories, category as ToolPermissionCategory] }))}>{category}</Button>;
-                    })}
-                  </div>
-                  <Textarea value={modeOverridesDraft} onChange={(event) => setModeOverridesDraft(event.target.value)} placeholder='{"write_file": false}' aria-label="Individual tool overrides" className="min-h-16 font-mono text-xs" />
-                  <p className="text-[11px] text-muted-foreground">Optional individual overrides as JSON, for example {"{"}"write_file": false{"}"}</p>
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={() => void saveCustomMode()} disabled={!modeDraft.name.trim()}>Save mode</Button>
-                  </div>
-                </div>
-                {customModes.length ? (
-                  <div className="divide-y rounded-xl border">
-                    {customModes.map((mode) => (
-                      <div key={mode.id} className="flex items-center gap-3 px-3 py-2.5">
-                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{mode.name}</p><p className="truncate text-xs text-muted-foreground">{mode.description || "Custom mode"}</p></div>
-                        <Button type="button" size="xs" variant="ghost" onClick={() => { setModeDraft(mode); setModeOverridesDraft(JSON.stringify(mode.toolOverrides || {}, null, 2)); }}>Edit</Button>
-                        <Button type="button" size="xs" variant="ghost" className="text-destructive" onClick={() => void deleteCustomMode(mode)}>Delete</Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="flex flex-col gap-4">
-                <div>
-                  <h3 id="settings-mcp" className="text-sm font-medium">Custom MCP servers</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Each account can add its own remote HTTP or local stdio MCP servers. They are not shared with other users. Secret values are write-only.
-                  </p>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input
-                    value={mcpDraft.id}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, id: e.target.value }))}
-                    placeholder="server-id"
-                    aria-label="MCP server ID"
-                  />
-                  <Input
-                    value={mcpDraft.name}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, name: e.target.value }))}
-                    placeholder="Display name"
-                    aria-label="MCP server name"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={mcpDraft.kind === "remote" ? "default" : "outline"}
-                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "remote" }))}
-                  >
-                    Remote HTTP
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={mcpDraft.kind === "stdio" ? "default" : "outline"}
-                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "stdio" }))}
-                  >
-                    Local stdio
-                  </Button>
-                </div>
-                {mcpDraft.kind === "remote" ? (
-                  <Input
-                    value={mcpDraft.url}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, url: e.target.value }))}
-                    placeholder="https://example.com/mcp"
-                    aria-label="MCP server URL"
-                  />
-                ) : (
-                  <>
-                    <Input
-                      value={mcpDraft.command}
-                      onChange={(e) => setMcpDraft((current) => ({ ...current, command: e.target.value }))}
-                      placeholder="npx"
-                      aria-label="MCP command"
-                    />
-                    <Textarea
-                      value={mcpDraft.args}
-                      onChange={(e) => setMcpDraft((current) => ({ ...current, args: e.target.value }))}
-                      placeholder={"One argument per line\n-y\n@modelcontextprotocol/server-filesystem\n/path/to/allowed-directory"}
-                      aria-label="MCP arguments"
-                      rows={4}
-                    />
-                  </>
-                )}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Textarea
-                    value={mcpDraft.env}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, env: e.target.value }))}
-                    placeholder={"Environment (NAME=value)\nAPI_KEY=..."}
-                    aria-label="MCP environment"
-                    rows={4}
-                  />
-                  <Textarea
-                    value={mcpDraft.headers}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, headers: e.target.value }))}
-                    placeholder={"Headers (NAME=value)\nAuthorization=Bearer ..."}
-                    aria-label="MCP headers"
-                    rows={4}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button type="button" onClick={() => void saveMcpServer()} disabled={mcpBusy}>
-                    {mcpBusy ? "Saving…" : "Save server"}
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => setMcpDraft(emptyMcpDraft)}>
-                    Clear
-                  </Button>
-                </div>
-                <ul className="flex flex-col gap-2">
-                  {!mcpLoaded ? (
-                    [0, 1, 2].map((item) => (
-                      <li key={item} className="space-y-2 rounded-lg border border-border/60 bg-card/40 p-3" aria-label="Loading MCP servers" role="status">
-                        <Skeleton className="h-4 w-2/5" />
-                        <Skeleton className="h-3 w-3/5" />
-                      </li>
-                    ))
-                  ) : mcpServers.map((server) => (
-                    <li key={server.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/40 p-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{server.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {server.id} · {server.kind} · {server.enabled ? "enabled" : "disabled"}
-                        </p>
-                        {(server.configured_env_keys?.length || server.configured_header_keys?.length) ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Secrets configured: {[...(server.configured_env_keys || []), ...(server.configured_header_keys || [])].join(", ")}
-                          </p>
-                        ) : null}
-                      </div>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void toggleMcpServer(server)}>
-                        {server.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => editMcpServer(server)}>
-                        Edit
-                      </Button>
-                      <Button type="button" size="icon-sm" variant="ghost" onClick={() => setDeleteTarget({ type: "mcp", item: server })} aria-label={`Delete ${server.name}`}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h3 id="settings-memories" className="text-sm font-medium">Memories</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Durable facts injected into every turn. The agent can
-                    write these itself.
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Add a memory…"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void addMemory();
-                      }
-                    }}
-                  />
-                  <Button
-                    size="icon"
-                    onClick={() => void addMemory()}
-                    disabled={busy || !draft.trim()}
-                    aria-label="Add memory"
-                  >
-                    <Plus className="size-4" />
-                  </Button>
-                </div>
-                <ul className="flex flex-col gap-2">
-                  {memories.length === 0 ? (
-                    <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-                      No memories yet.
-                    </li>
-                  ) : (
-                    memories.map((m) => (
-                      <li
-                        key={m.id}
-                        className="group flex items-start gap-2 rounded-lg border border-border/60 bg-card/40 p-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm whitespace-pre-wrap">
-                            {m.content}
-                          </p>
-                          {m.tags && m.tags.length > 0 ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {m.tags.join(" · ")}
-                            </p>
-                          ) : null}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          className="opacity-100 sm:opacity-60 sm:group-hover:opacity-100"
-                          onClick={() => void removeMemory(m.id)}
-                          disabled={deletingMemoryIds.has(m.id)}
-                          aria-label="Delete memory"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </section>
+<TabsContent value="agent" className="mt-0 px-6 py-6 sm:px-8 sm:py-8">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SettingsTile
+                  id="settings-skills"
+                  title="Skills"
+                  meta="Enable, pin, and add skills"
+                  icon={Puzzle}
+                  onOpen={() => setSettingsPane("skills")}
+                />
+                <SettingsTile
+                  id="settings-modes"
+                  title="Agent modes"
+                  meta={customModes.length ? `${customModes.length} custom mode${customModes.length === 1 ? "" : "s"}` : "Built-in plus custom modes"}
+                  icon={Settings2}
+                  onOpen={() => setSettingsPane("modes")}
+                />
+                <SettingsTile
+                  id="settings-mcp"
+                  title="Custom MCP servers"
+                  meta={mcpLoaded ? `${mcpServers.length} server${mcpServers.length === 1 ? "" : "s"}` : "Loading…"}
+                  icon={Server}
+                  onOpen={() => setSettingsPane("mcp")}
+                />
+                <SettingsTile
+                  id="settings-memories"
+                  title="Memories"
+                  meta={memories.length ? `${memories.length} memor${memories.length === 1 ? "y" : "ies"}` : "No memories yet"}
+                  icon={Brain}
+                  onOpen={() => setSettingsPane("memories")}
+                />
+              </div>
  </TabsContent>
 <TabsContent value="devices" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
 

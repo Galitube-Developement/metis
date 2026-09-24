@@ -85,7 +85,36 @@ test("browser storage uses a dedicated manager instead of an inline origin list 
   assert.match(settingsSource, /data-slot="browser-storage-manager"/);
   assert.match(settingsSource, /filteredBrowserStorage\.map/);
   assert.match(settingsSource, /placeholder="Search websites"/);
-  assert.match(settingsSource, /if \(item\.id === "settings-browser-storage"\) \{\s*setSettingsPane\("browser-storage"\);/);
+  assert.match(settingsSource, /"settings-browser-storage": "browser-storage"/);
+  assert.match(settingsSource, /const pane = SETTINGS_SECTION_TO_PANE\[item\.id\];/);
+});
+
+test("Models and Agent pack dense features behind settings tiles", () => {
+  const models = headingIdsInTab(settingsSource, "models");
+  const agent = headingIdsInTab(settingsSource, "agent");
+  assert.deepEqual(models, ["settings-usage", "settings-providers", "settings-versions"]);
+  assert.deepEqual(agent, ["settings-skills", "settings-modes", "settings-mcp", "settings-memories"]);
+  assert.match(settingsSource, /data-settings-tile=\{id\}/);
+  assert.match(settingsSource, /id=\"settings-providers\"/);
+  assert.match(settingsSource, /id=\"settings-versions\"/);
+  assert.match(settingsSource, /id=\"settings-skills\"/);
+  assert.match(settingsSource, /setSettingsPane\("providers"\)/);
+  assert.match(settingsSource, /setSettingsPane\("versions"\)/);
+  assert.match(settingsSource, /setSettingsPane\("skills"\)/);
+  assert.match(settingsSource, /slot="providers-manager"/);
+  assert.match(settingsSource, /slot="versions-manager"/);
+  assert.match(settingsSource, /slot="skills-manager"/);
+  assert.match(settingsSource, /slot="modes-manager"/);
+  assert.match(settingsSource, /slot="mcp-manager"/);
+  assert.match(settingsSource, /slot="memories-manager"/);
+  assert.match(settingsSource, /data-slot=\{slot\}/);
+  const modelsTab = settingsSource.slice(
+    settingsSource.indexOf('<TabsContent value="models"'),
+    settingsSource.indexOf("</TabsContent>", settingsSource.indexOf('<TabsContent value="models"')),
+  );
+  assert.match(modelsTab, /<PlanUsagePanel/);
+  assert.doesNotMatch(modelsTab, /provider-connection-form/);
+  assert.doesNotMatch(modelsTab, /<SkillsSettings/);
 });
 
 test("provider editing stays inside the Models settings tab and OAuth names can be saved without reconnecting", () => {

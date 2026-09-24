@@ -3,6 +3,7 @@ import path from "node:path";
 import type { CodexOptions } from "@openai/codex-sdk";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
+import { codexCliExecutable } from "@/lib/providers/codex-cli";
 import { getMcpServers } from "@/lib/mcp";
 import { updateProviderConnection } from "@/lib/provider-connections";
 import { getProviderSessionBinding, updateProviderSessionBinding } from "@/lib/providers/session-bindings";
@@ -244,9 +245,11 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
     ...(codexHome ? { cli_auth_credentials_store: "file" } : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
     ...codexMcpOnlyConfig(),
+    ...(serviceTier === "fast" ? { features: { ...codexMcpOnlyConfig().features, fast_mode: true } } : {}),
     mcp_servers: { metis_ai: codexMcp },
   };
   const codex = new Codex({
+    codexPathOverride: codexCliExecutable(),
     ...(context.connection.authType === "api_key" && context.connection.secret
       ? { apiKey: context.connection.secret }
       : {}),

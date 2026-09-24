@@ -818,7 +818,7 @@ export function codexServiceTierForSelection(
   const selected = params?.find((param) => param.id === "speed" || param.id === "fast");
   if (!selected) return undefined;
   if (selected.id === "fast") {
-    if (selected.value === "true") return "priority";
+    if (selected.value === "true") return "fast";
     if (selected.value === "false") return "default";
   }
   const value = selected.value.trim();

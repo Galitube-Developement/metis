@@ -6,6 +6,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
+import { codexCliExecutable, codexCliVersion } from "@/lib/providers/codex-cli";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
   listProviderModels,
@@ -280,8 +281,11 @@ export type CodexAppServerModel = {
   hidden?: boolean;
 };
 
-export function codexSpeedOptions(model: Pick<CodexAppServerModel, "serviceTiers" | "defaultServiceTier">) {
-  const tiers = (model.serviceTiers || [])
+export function codexSpeedOptions(model: Pick<CodexAppServerModel, "serviceTiers" | "additionalSpeedTiers" | "defaultServiceTier">) {
+  const tiers = [
+    ...(model.serviceTiers || []),
+    ...(model.additionalSpeedTiers || []).map((id) => ({ id, name: id === "fast" ? "Fast" : id })),
+  ]
     .flatMap((tier) => {
       const value = tier.id?.trim();
       if (!value) return [];
@@ -312,6 +316,8 @@ export function codexSpeedOptions(model: Pick<CodexAppServerModel, "serviceTiers
 }
 
 export function codexClientVersion() {
+  const activeVersion = codexCliVersion();
+  if (activeVersion) return activeVersion;
   try {
     const packageJson = JSON.parse(readFileSync(
       path.join(config.root, "node_modules", "@openai", "codex", "package.json"),
@@ -335,7 +341,7 @@ async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWit
   }
   const codexHome = await createCodexHome(connection.secret, connection.authType);
   if (!codexHome) throw new Error("Codex credentials are unavailable.");
-  const executable = path.join(config.root, "node_modules", ".bin", "codex");
+  const executable = codexCliExecutable();
   const child = spawn(executable, ["app-server", "--stdio"], {
     cwd: config.root,
     env: providerProcessEnv({ CODEX_HOME: codexHome.home }),

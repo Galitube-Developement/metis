@@ -220,7 +220,7 @@ test("Codex reasoning effort accepts only supported values", () => {
 
 test("Codex speed selection maps provider tiers and legacy fast toggles", () => {
   assert.equal(codexServiceTierForSelection([{ id: "speed", value: "ultrafast" }]), "ultrafast");
-  assert.equal(codexServiceTierForSelection([{ id: "fast", value: "true" }]), "priority");
+  assert.equal(codexServiceTierForSelection([{ id: "fast", value: "true" }]), "fast");
   assert.equal(codexServiceTierForSelection([{ id: "fast", value: "false" }]), "default");
   assert.equal(codexServiceTierForSelection([{ id: "speed", value: "not valid" }]), undefined);
 });

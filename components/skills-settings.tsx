@@ -22,7 +22,7 @@ type SkillItem = {
   alwaysOn: boolean;
 };
 
-export function SkillsSettings() {
+export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean } = {}) {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -103,10 +103,12 @@ export function SkillsSettings() {
 
   return (
     <section className="flex flex-col gap-4">
+      {hideHeading ? null : (
       <div>
         <h3 className="flex items-center gap-2 text-sm font-medium"><Puzzle className="size-4" /> Skills</h3>
         <p className="mt-1 text-xs text-muted-foreground">Installed skills from skills-lock.json, plus skills you add for this account. Open a skill to change Always on. Enabled skills stay available; Always on injects the skill into every chat.</p>
       </div>
+      )}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="grid gap-2 rounded-xl border border-border/60 p-3">
         <p className="text-sm font-medium">Add manual skill</p>

@@ -528,6 +528,10 @@ try {
   $previousNodeEnv = $env:NODE_ENV
   Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
   & $pnpmCommand install --frozen-lockfile
+  if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
+  $env:CHAT_DATA_DIR = $dataDir
+  & node scripts/sync-provider-clis.mjs
+  if ($LASTEXITCODE -ne 0) { throw "Provider CLI synchronization failed." }
   & $pnpmCommand exec playwright install chromium
   $env:METIS_AI_BOOTSTRAP_USERNAME = $username
   $env:METIS_AI_BOOTSTRAP_PASSWORD = $passwordPlain

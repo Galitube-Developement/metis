@@ -489,14 +489,27 @@ test("platform installers accept uninstall and pin a release with --version", ()
     assert.match(source, /--version\) \[\[ \$# -ge 2 \]\]/);
     assert.match(source, /git -C "\$install_dir" checkout --force "\$release_version"/);
   }
-  assert.match(linux, /sudo systemctl enable "\$\{service_name\}\.service"/);
-  assert.match(linux, /sudo systemctl restart "\$\{service_name\}\.service"/);
-  const enableAt = linux.indexOf("sudo systemctl enable \"${service_name}.service\"");
-  const restartAt = linux.indexOf("sudo systemctl restart \"${service_name}.service\"");
+  assert.match(linux, /run_privileged systemctl enable "\$\{service_name\}\.service"/);
+  assert.match(linux, /run_privileged systemctl restart "\$\{service_name\}\.service"/);
+  const enableAt = linux.indexOf("run_privileged systemctl enable \"${service_name}.service\"");
+  const restartAt = linux.indexOf("run_privileged systemctl restart \"${service_name}.service\"");
   assert.ok(enableAt >= 0 && restartAt > enableAt, "linux must restart units after enable so upgrades load the new build");
   assert.match(windows, /\$Command -eq "uninstall"/);
   assert.match(windows, /\[string\]\$Version/);
   assert.match(windows, /git -C \$InstallDir checkout --force \$Version/);
+});
+
+test("native installers synchronize provider CLIs after locked dependencies", () => {
+  for (const file of ["linux.sh", "macos.sh", "windows.ps1"]) {
+    const source = readFileSync(path.join(root, "install", file), "utf8");
+    const dependencyAt = source.indexOf("install --frozen-lockfile");
+    const syncAt = source.indexOf("scripts/sync-provider-clis.mjs");
+    assert.ok(dependencyAt >= 0 && syncAt > dependencyAt, `${file} must sync CLIs after dependencies`);
+  }
+  const script = readFileSync(path.join(root, "scripts", "sync-provider-clis.mjs"), "utf8");
+  assert.match(script, /const pinned = previous\?\.tracking === "pinned"/);
+  assert.match(script, /if \(id !== "codex" && !previous\) return/);
+  assert.match(script, /updateIfInstalled\("cursor-agent"\)/);
 });
 
 test("linux and macos installers start when HOME is unset", () => {

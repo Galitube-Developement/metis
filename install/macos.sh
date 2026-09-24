@@ -722,6 +722,7 @@ chmod 700 "$install_dir/run-service.sh"
   set +a
   cd "$install_dir"
   pnpm install --frozen-lockfile
+  node scripts/sync-provider-clis.mjs
   pnpm exec playwright install chromium
   current_build_slot="${NEXT_DIST_DIR:-}"
   if [[ "$current_build_slot" == ".next-a" ]]; then

@@ -607,17 +607,22 @@ test("layoutAssistantParts merges live and snapshot copies by call id", () => {
   }
 });
 
-test("layoutAssistantParts groups memory with following file tools and thinking", () => {
+test("layoutAssistantParts keeps memory visible outside following tool activity", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "thinking", content: "remember this", done: true, durationMs: 1200 },
     { type: "tool", id: "1", name: "add_memory", kind: "memory", status: "completed" },
     { type: "tool", id: "2", name: "read_file", kind: "read", status: "completed" },
+    { type: "tool", id: "3", name: "list_directory", kind: "read", status: "completed" },
   ]);
-  assert.equal(blocks.length, 1);
+  assert.equal(blocks.length, 2);
   assert.equal(blocks[0]?.type, "tools");
+  assert.equal(blocks[1]?.type, "tools");
   if (blocks[0]?.type === "tools") {
-    assert.deepEqual(blocks[0].tools.map((tool) => tool.name), ["add_memory", "read_file"]);
-    assert.equal(blocks[0].thinking?.content, "remember this");
+    assert.deepEqual(blocks[0].tools.map((tool) => tool.name), ["add_memory"]);
+  }
+  if (blocks[1]?.type === "tools") {
+    assert.deepEqual(blocks[1].tools.map((tool) => tool.name), ["read_file", "list_directory"]);
+    assert.equal(blocks[1].thinking?.content, "remember this");
   }
 });
 

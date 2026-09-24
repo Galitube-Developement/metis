@@ -636,7 +636,7 @@ version_at_least_22() {
 
 install_node() {
   local dir="$1/.runtime" arch url archive
-  if version_at_least_22 node; then
+  if version_at_least_22 node && command -v npm >/dev/null 2>&1; then
     printf '%s' "$(command -v node)"
     return 0
   fi
@@ -702,8 +702,11 @@ if (( use_docker == 0 )); then
   node_bin="$(install_node "$install_dir")"
   node_home="$(dirname "$(dirname "$node_bin")")"
   export PATH="$node_home/bin:$install_dir/node_modules/.bin:$PATH"
-  command -v corepack >/dev/null 2>&1 && corepack enable >/dev/null 2>&1 || true
-  command -v pnpm >/dev/null 2>&1 || "$node_home/bin/npm" install --global pnpm@9
+  npm_bin="$(command -v npm)" || die "npm is required to install pnpm."
+  pnpm_prefix="$install_dir/.runtime/pnpm"
+  "$npm_bin" install --global --prefix "$pnpm_prefix" pnpm@9
+  export PATH="$pnpm_prefix/bin:$PATH"
+  command -v pnpm >/dev/null 2>&1 || die "pnpm installation did not create an executable."
 fi
 
 rand_hex() {
@@ -793,6 +796,7 @@ ensure_native_build_tools
   set +a
   cd "$install_dir"
   pnpm install --frozen-lockfile
+  node scripts/sync-provider-clis.mjs
   pnpm exec playwright install chromium
   current_build_slot="${NEXT_DIST_DIR:-}"
   if [[ "$current_build_slot" == ".next-a" ]]; then
@@ -805,7 +809,6 @@ ensure_native_build_tools
 )
 
 if (( use_docker == 0 )) && command -v systemctl >/dev/null 2>&1; then
-  command -v sudo >/dev/null 2>&1 || die "sudo is required to install system services."
   service_dir="/etc/systemd/system"
   write_unit() {
     local unit="$1" description="$2" protect_system="$3" no_new_privileges="$4" exec_start arg read_write_paths=""
@@ -824,7 +827,7 @@ if (( use_docker == 0 )) && command -v systemctl >/dev/null 2>&1; then
           ;;
       esac
     fi
-    sudo tee "$service_dir/$unit" >/dev/null <<EOF
+    run_privileged tee "$service_dir/$unit" >/dev/null <<EOF
 [Unit]
 Description=$description
 After=network-online.target
@@ -866,9 +869,9 @@ EOF
   # system writes and privilege transitions available, while app/worker agents
   # run with a read-only system tree and no-new-privileges.
   write_unit "${service_name}-mcp.service" "Metis AI MCP gateway" false false "$install_dir/lib/mcp-core/gateway-core.mjs"
-  sudo systemctl daemon-reload
-  sudo systemctl enable "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
-  sudo systemctl restart "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
+  run_privileged systemctl daemon-reload
+  run_privileged systemctl enable "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
+  run_privileged systemctl restart "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
 fi
 fi
 if command -v curl >/dev/null 2>&1; then

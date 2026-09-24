@@ -58,6 +58,7 @@ const STANDALONE_TOOL_KINDS = new Set([
   "note",
   "canvas",
   "automation",
+  "memory",
 ]);
 
 export function isStandaloneToolKind(kind?: string): boolean {

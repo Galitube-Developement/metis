@@ -2,6 +2,7 @@ import type { ProviderContext } from "./provider-support";
 import type { ProviderResult } from "./contract";
 import { unsupported, type ProviderAdapterShape } from "./contract";
 import { runAcpStdioAgent } from "@/lib/providers/acp-stdio";
+import { managedCliExecutable } from "@/lib/providers/managed-cli";
 import { getUserAgentCwd, getMcpServers } from "@/lib/mcp";
 import {
   effectiveModelParams,
@@ -73,7 +74,7 @@ function acpCliAdapter(config: AcpCliAdapterConfig): ProviderAdapterShape {
         typeof context.connection.config.binaryPath === "string" &&
         context.connection.config.binaryPath.trim()
           ? context.connection.config.binaryPath.trim()
-          : config.binary;
+          : managedCliExecutable(config.key === "grok-cli" ? "grok" : "opencode", config.binary);
       const result = await runAcpStdioAgent({
         command: binary,
         args: [...config.args],
