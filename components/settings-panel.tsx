@@ -2695,8 +2695,8 @@ export function SettingsPanel({
                             <DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" className="max-md:min-h-11 max-md:min-w-11" aria-label={`Manage ${client.name}`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => void testRemoteConnection(client)}>Test connection</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void updateRemotePolicy(client, client.policy.mode === "full_access" ? "restricted" : "full_access")}>
-                                {client.policy.mode === "full_access" ? "Switch to restricted" : "Enable approval policy"}
+                              <DropdownMenuItem onClick={() => void updateRemotePolicy(client, client.policy.mode === "approval_required" ? "full_access" : "approval_required")}>
+                                {client.policy.mode === "approval_required" ? "Disable approval policy" : "Enable approval policy"}
                               </DropdownMenuItem>
                               <DropdownMenuItem className="text-destructive" onClick={() => setRemoteClientDeleteTarget(client)}>Remove client</DropdownMenuItem>
                             </DropdownMenuContent>

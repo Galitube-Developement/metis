@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, mkdtemp, rm, writeFile, cp, rename } from "node:fs/promises";
+import { access, readFile, mkdtemp, rm, writeFile, cp, rename } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -26,6 +26,17 @@ export {
 export type { UpdateCommitItem, UpdateReleaseItem, UpdateVersionList } from "@/lib/update-display";
 
 const execFileAsync = promisify(execFile);
+
+async function resolvePnpm(root: string) {
+  if (process.env.PNPM_BIN) return process.env.PNPM_BIN;
+  const installedPnpm = path.join(root, ".runtime", "pnpm", "bin", "pnpm");
+  try {
+    await access(installedPnpm);
+    return installedPnpm;
+  } catch {
+    return "pnpm";
+  }
+}
 const RELEASE_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest";
 const COMMIT_URL = "https://api.github.com/repos/f1shyondrugs/metis-ai/commits/master";
 const USER_AGENT = "metis-ai-update-checker";
@@ -354,7 +365,7 @@ export async function prepareNativeReleaseUpdate(
     await execFileAsync("tar", ["-xzf", archive, "-C", source, "--strip-components=1"], { timeout: 60_000 });
     operation = "installing locked release dependencies";
     log(operation);
-    await execFileAsync(process.env.PNPM_BIN || "pnpm", ["install", "--frozen-lockfile"], {
+    await execFileAsync(await resolvePnpm(root), ["install", "--frozen-lockfile"], {
       cwd: source,
       timeout: 15 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
@@ -366,6 +377,7 @@ export async function prepareNativeReleaseUpdate(
       env: {
         ...process.env,
         AI_CHAT_ROOT: source,
+        PNPM_BIN: await resolvePnpm(root),
         METIS_RELEASE_TAG: tag,
         METIS_RELEASE_VERSION: versionFromReleaseTag(tag),
         METIS_RELEASE_COMMIT: release.target_commitish || "",
@@ -428,12 +440,12 @@ export async function prepareNativeCommitUpdate(
     await execFileAsync("tar", ["-xzf", archive, "-C", source, "--strip-components=1"], { timeout: 60_000 });
     operation = "installing locked commit dependencies";
     log(operation);
-    await execFileAsync(process.env.PNPM_BIN || "pnpm", ["install", "--frozen-lockfile"], { cwd: source, timeout: 15 * 60_000, maxBuffer: 2 * 1024 * 1024 });
+    await execFileAsync(await resolvePnpm(root), ["install", "--frozen-lockfile"], { cwd: source, timeout: 15 * 60_000, maxBuffer: 2 * 1024 * 1024 });
     operation = `building the inactive production slot ${inactiveSlot}`;
     log(operation);
     await execFileAsync("bash", ["scripts/build-production-slot.sh", inactiveSlot], {
       cwd: source,
-      env: { ...process.env, AI_CHAT_ROOT: source, METIS_RELEASE_TAG: "", METIS_RELEASE_COMMIT: sha, NODE_ENV: "production" },
+      env: { ...process.env, AI_CHAT_ROOT: source, PNPM_BIN: await resolvePnpm(root), METIS_RELEASE_TAG: "", METIS_RELEASE_COMMIT: sha, NODE_ENV: "production" },
       timeout: 30 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
     });

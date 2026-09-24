@@ -11,8 +11,9 @@ case "$BUILD_DIR" in
   *) echo "Refusing unsupported production build directory: $BUILD_DIR" >&2; exit 2 ;;
 esac
 
-command -v pnpm >/dev/null 2>&1 || {
-  echo "pnpm is not available on PATH" >&2
+PNPM_BIN="${PNPM_BIN:-pnpm}"
+command -v "$PNPM_BIN" >/dev/null 2>&1 || {
+  echo "pnpm is not available (checked $PNPM_BIN and PATH)" >&2
   exit 127
 }
 
@@ -51,7 +52,7 @@ export NODE_ENV=production
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
 # Normal optimized production build. Tailwind source detection is explicitly
 # bounded in app/globals.css, which avoids scanning runtime/workspace trees.
-pnpm build
+"$PNPM_BIN" build
 
 [[ -s "$BUILD_DIR/BUILD_ID" ]] || {
   echo "Build completed without $BUILD_DIR/BUILD_ID" >&2
