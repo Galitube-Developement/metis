@@ -34,7 +34,9 @@ export async function PATCH(req: Request, { params }: Params) {
   };
   const policy: RemotePolicy | undefined = body.policy
     ? {
-        mode: body.policy.mode === "restricted" ? "restricted" : "full_access",
+        mode: body.policy.mode === "restricted" || body.policy.mode === "approval_required" || body.policy.mode === "full_access"
+          ? body.policy.mode
+          : "approval_required",
         allowlist: Array.isArray(body.policy.allowlist)
           ? body.policy.allowlist.filter((item): item is string => typeof item === "string")
           : [],
