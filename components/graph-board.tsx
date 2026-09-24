@@ -231,11 +231,7 @@ export function GraphBoard({
     </div>
   );
 
-  const body = error && !graph ? (
-    <div className="px-3 py-8 pr-28 text-sm text-muted-foreground" data-graph-source={source}>
-      {error}. Switch to Code to fix the JSON.
-    </div>
-  ) : mode === "code" ? (
+  const body = mode === "code" ? (
     <div className="space-y-2 p-3 pr-28">
       <textarea
         value={draft}
@@ -250,6 +246,10 @@ export function GraphBoard({
         </button>
         {error ? <p className="text-xs text-destructive">{error}</p> : <p className="text-[11px] text-muted-foreground">{language || "graph"}</p>}
       </div>
+    </div>
+  ) : error && !graph ? (
+    <div className="px-3 py-8 pr-28 text-sm text-muted-foreground" data-graph-source={source}>
+      {error}. Switch to Code to fix the JSON.
     </div>
   ) : (
     <div className={cn("flex min-h-0 flex-col", fullscreen && "flex-1")}>

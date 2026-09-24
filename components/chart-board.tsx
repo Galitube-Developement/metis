@@ -406,11 +406,7 @@ export function ChartBoard({
     </div>
   );
 
-  const body = error && !document ? (
-    <div className="px-3 py-8 pr-28 text-sm text-muted-foreground">
-      {error}. Switch to Code to fix the JSON.
-    </div>
-  ) : mode === "code" ? (
+  const body = mode === "code" ? (
     <div className="space-y-2 p-3 pr-28">
       <textarea
         value={draft}
@@ -423,6 +419,10 @@ export function ChartBoard({
         <button type="button" className="h-8 rounded-md bg-foreground px-2.5 text-[11px] font-medium text-background" onClick={applyDraft}>Apply</button>
         {error ? <p className="text-xs text-destructive">{error}</p> : <p className="text-[11px] text-muted-foreground">{language || "chart"}</p>}
       </div>
+    </div>
+  ) : error && !document ? (
+    <div className="px-3 py-8 pr-28 text-sm text-muted-foreground">
+      {error}. Switch to Code to fix the JSON.
     </div>
   ) : (
     <div className={cn("flex min-h-0 flex-col", fullscreen && "flex-1")}>

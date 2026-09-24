@@ -4,6 +4,14 @@ import test from "node:test";
 
 const board = readFileSync(new URL("../components/chart-board.tsx", import.meta.url), "utf8");
 
+test("Code remains available when the chart JSON has a parse error", () => {
+  const codeBranch = board.indexOf('const body = mode === "code" ? (');
+  const errorBranch = board.indexOf(') : error && !document ? (', codeBranch);
+  assert.ok(codeBranch > -1 && errorBranch > codeBranch);
+  assert.match(board.slice(codeBranch, errorBranch), /aria-label="Chart JSON"/);
+  assert.match(board.slice(codeBranch, errorBranch), /onClick={applyDraft}/);
+});
+
 test("chart board preserves the editor control contract", () => {
   assert.match(board, /data-chart-source=\{source\}/);
   assert.match(board, /data-editor-control="chart"/);

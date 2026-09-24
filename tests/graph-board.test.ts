@@ -4,6 +4,14 @@ import test from "node:test";
 
 const board = readFileSync(new URL("../components/graph-board.tsx", import.meta.url), "utf8");
 
+test("Code remains available when the graph JSON has a parse error", () => {
+  const codeBranch = board.indexOf('const body = mode === "code" ? (');
+  const errorBranch = board.indexOf(') : error && !graph ? (', codeBranch);
+  assert.ok(codeBranch > -1 && errorBranch > codeBranch);
+  assert.match(board.slice(codeBranch, errorBranch), /aria-label="Graph JSON"/);
+  assert.match(board.slice(codeBranch, errorBranch), /onClick={applyDraft}/);
+});
+
 test("graph void pans and zooms without remounting JSXGraph on slider edits", () => {
   assert.match(board, /structureKey\(spec\)/);
   assert.doesNotMatch(board, /\}, \[boardId, spec\]\);/);

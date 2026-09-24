@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { METIS_SHARED_AGENT_CONTROL } from "../lib/agent-control";
 import {
   compileGraphExpression,
   isGraphSource,
   parseGraphDocument,
   serializeGraphDocument,
 } from "../lib/graph-spec";
+
+test("agent prompt graph example parses and its function evaluates", () => {
+  const example = METIS_SHARED_AGENT_CONTROL.match(/Example: (\{.*?\})\. bounds/s)?.[1];
+  assert.ok(example);
+  const document = parseGraphDocument(example);
+  const fn = document.boards[0].elements[0];
+  assert.equal(fn.type, "function");
+  if (fn.type === "function") {
+    assert.ok(Math.abs(compileGraphExpression(fn.fn)({ x: Math.PI / 2 }) - 1) < 1e-9);
+  }
+});
 
 test("graph fences and JSON boards are detected", () => {
   assert.equal(isGraphSource("graph", "{ \"fn\": \"sin(x)\" }"), true);
