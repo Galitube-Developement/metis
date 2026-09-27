@@ -184,9 +184,8 @@ function finiteInt(value, label, min = -100000, max = 100000) {
   return number;
 }
 
-export async function computerUse(params = {}, { enabled = false, signal } = {}) {
+export async function computerUse(params = {}, { signal } = {}) {
   if (process.platform !== "win32") throw new Error("Computer Use requires a Windows GUI client");
-  if (!enabled) throw new Error("Computer Use is switched off on this device");
   const operation = String(params.operation || "");
   const allowed = ["status", "list_windows", "observe", "move", "click", "scroll", "drag", "type", "key"];
   if (!allowed.includes(operation)) throw new Error("Unsupported computer use operation");

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, safeStorage, Notification, dialog, screen, globalShortcut } = require("electron");
 const { createComputerUseOverlay } = require("./computer-use-overlay.cjs");
 const { autoUpdater } = require("electron-updater");
@@ -71,7 +72,6 @@ function loadConfig() {
     clientId: saved.clientId,
     credential: safeStorage.decryptString(Buffer.from(saved.encryptedCredential, "base64")),
     permissionMode: saved.permissionMode === "user" ? "user" : "admin",
-    computerUseEnabled: saved.computerUseEnabled === true,
   };
 }
 
@@ -83,7 +83,6 @@ function saveConfig(next) {
     server: next.server,
     clientId: next.clientId,
     permissionMode: next.permissionMode,
-    computerUseEnabled: next.computerUseEnabled === true,
     encryptedCredential: safeStorage.encryptString(next.credential).toString("base64"),
   };
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
@@ -96,8 +95,6 @@ function publicState() {
     server: config?.server || "",
     clientId: config?.clientId || "",
     permissionMode: config?.permissionMode || null,
-    computerUseAvailable: process.platform === "win32" && screen.getAllDisplays().length > 0,
-    computerUseEnabled: config?.computerUseEnabled === true,
     ...status,
   };
 }
@@ -110,11 +107,9 @@ function broadcast() {
 
 function cancelComputerUse() {
   runtime?.cancelComputerUse();
-  if (config?.computerUseEnabled) {
-    config = { ...config, computerUseEnabled: false };
-    try { saveConfig(config); } catch (error) { status.error = error.message; }
-    broadcast();
-  }
+  clearInterval(computerUseCursorTimer);
+  computerUseCursorTimer = undefined;
+  computerUseOverlay?.hide();
 }
 
 function updateTray() {
@@ -165,10 +160,6 @@ function createWindow() {
   window.on("closed", () => { window = null; });
 }
 
-function isPointerOperation(operation) {
-  return ["move", "click", "scroll", "drag"].includes(operation);
-}
-
 function startComputerUseCursor() {
   clearInterval(computerUseCursorTimer);
   const update = () => {
@@ -193,19 +184,18 @@ async function startRuntime() {
   runtime?.stop();
   runtime = null;
   if (!config) return;
-  const module = await import(pathToFileURL(path.join(__dirname, "client.mjs")).href);
-  runtime = module.startRemoteClient({
+  const clientModule = await import(pathToFileURL(path.join(__dirname, "client.mjs")).href);
+  runtime = clientModule.startRemoteClient({
     config,
     configPath: configPath(),
-    computerUseEnabled: () => config?.computerUseEnabled === true && screen.getAllDisplays().length > 0,
     desktopGuiAvailable: () => process.platform === "win32" && screen.getAllDisplays().length > 0,
     onEvent(event) {
       if (event.type === "computer_use") {
         if (event.phase === "start") {
           computerUseOverlay?.touch();
           if (event.operation === "key" && /^(esc|escape)$/i.test(String(event.key || "").trim())) computerUseOverlay?.suppressInjectedEscape();
-          if (isPointerOperation(event.operation)) startComputerUseCursor();
-        } else if (event.phase === "end" && isPointerOperation(event.operation)) stopComputerUseCursor();
+          startComputerUseCursor();
+        } else if (event.phase === "end") stopComputerUseCursor();
         else if (event.phase === "capture-start") computerUseOverlay?.suspendCapture();
         else if (event.phase === "capture-end") computerUseOverlay?.resumeCapture();
         return;
@@ -280,7 +270,7 @@ function registerIpc() {
       throw new Error(data.error || "Pairing failed");
     }
     if (data.client.permissionMode !== permissionMode) throw new Error("The server returned a different access mode. Pairing was stopped.");
-    const next = { server: parsed.origin, clientId: data.client.id, credential: data.credential, permissionMode: data.client.permissionMode, computerUseEnabled: Boolean(input?.computerUse) && screen.getAllDisplays().length > 0 };
+    const next = { server: parsed.origin, clientId: data.client.id, credential: data.credential, permissionMode: data.client.permissionMode };
     saveConfig(next);
     config = next;
     status.connection = "connecting";
@@ -297,18 +287,6 @@ function registerIpc() {
     fs.rmSync(configPath(), { force: true });
     status.connection = "offline";
     status.error = "";
-    broadcast();
-    return publicState();
-  });
-  ipcMain.handle("hub:set-computer-use", (_event, value) => {
-    if (!config) throw new Error("Pair this device first");
-    if (value && (process.platform !== "win32" || screen.getAllDisplays().length === 0)) throw new Error("No interactive display is available");
-    config = { ...config, computerUseEnabled: Boolean(value) };
-    if (!config.computerUseEnabled) {
-      runtime?.cancelComputerUse();
-      computerUseOverlay?.hide();
-    }
-    saveConfig(config);
     broadcast();
     return publicState();
   });

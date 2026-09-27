@@ -5,6 +5,7 @@ import {
   getRemoteClient,
   markRemoteClientOffline,
   markRemoteClientSeen,
+  updateRemoteClientDesktopCapability,
   consumeRemoteApproval,
   createRemoteApproval,
   RemoteApprovalRequiredError,
@@ -73,6 +74,7 @@ export function attachRemoteClient(socket: SocketLike, clientId: string, ownerId
     if (message.type === "heartbeat") {
       lastHeartbeatAt = Date.now();
       markRemoteClientSeen(clientId, address);
+      if (typeof message.desktopGui === "boolean") updateRemoteClientDesktopCapability(clientId, message.desktopGui);
       socket.send(JSON.stringify({ type: "heartbeat_ack", timestamp: Date.now() }));
       return;
     }
@@ -207,7 +209,11 @@ export function requestRemoteClient(input: {
   return resultPromise.then((result) => {
     updateRemoteAudit(audit.id, {
       status: "completed",
-      resultData: result && typeof result === "object" ? result as Record<string, unknown> : { value: result },
+      resultData: result && typeof result === "object"
+        ? (input.action === "computer_use"
+          ? Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([key]) => key !== "png"))
+          : result as Record<string, unknown>)
+        : { value: result },
       durationMs: Date.now() - startedAt,
     });
     return result;

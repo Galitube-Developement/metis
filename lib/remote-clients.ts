@@ -16,21 +16,57 @@ export type RemoteAction =
   | "pty_open"
   | "pty_input"
   | "pty_resize"
-  | "pty_close";
+  | "pty_close"
+  | "computer_use";
+
+export const REMOTE_PERMISSIONS = [
+  "get_info", "list_directory", "read_file", "write_file", "edit_file",
+  "delete_file", "execute_command", "terminal", "computer_use",
+] as const;
+export type RemotePermission = (typeof REMOTE_PERMISSIONS)[number];
 
 export type RemotePolicy = {
   mode: RemotePolicyMode;
   allowlist: string[];
+  permissions: RemotePermission[];
 };
 
-export const DEFAULT_REMOTE_POLICY: RemotePolicy = { mode: "approval_required", allowlist: [] };
+export const DEFAULT_REMOTE_POLICY: RemotePolicy = {
+  mode: "full_access",
+  allowlist: [],
+  permissions: [...REMOTE_PERMISSIONS],
+};
+
+export function normalizeRemoteAllowlist(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+}
 
 export function normalizeRemotePolicy(policy?: Partial<RemotePolicy> | null): RemotePolicy {
-  const allowlist = [...new Set((policy?.allowlist || []).map((item) => String(item).trim()).filter(Boolean))].slice(0, 100);
+  const mode = policy?.mode === "restricted" || policy?.mode === "approval_required" || policy?.mode === "full_access"
+    ? policy.mode : DEFAULT_REMOTE_POLICY.mode;
+  const legacyPermissions = mode === "full_access" ? [...REMOTE_PERMISSIONS] : DEFAULT_REMOTE_POLICY.permissions;
   return {
-    mode: policy?.mode === "restricted" || policy?.mode === "approval_required" || policy?.mode === "full_access" ? policy.mode : "approval_required",
-    allowlist,
+    mode,
+    allowlist: normalizeRemoteAllowlist(policy?.allowlist),
+    permissions: Array.isArray(policy?.permissions)
+      ? REMOTE_PERMISSIONS.filter((permission) => policy.permissions?.includes(permission))
+      : legacyPermissions,
   };
+}
+
+export function getGlobalRemoteAllowlist(ownerId: string): string[] {
+  const row = getDatabase().prepare("SELECT data FROM settings WHERE key = ? AND owner_id = ?")
+    .get(`remote-allowlist:${ownerId}`, ownerId) as { data?: string } | undefined;
+  return normalizeRemoteAllowlist(safeJson(row?.data, []));
+}
+
+export function setGlobalRemoteAllowlist(ownerId: string, value: unknown): string[] {
+  const allowlist = normalizeRemoteAllowlist(value);
+  getDatabase().prepare("INSERT OR REPLACE INTO settings (key, owner_id, data) VALUES (?, ?, ?)")
+    .run(`remote-allowlist:${ownerId}`, ownerId, JSON.stringify(allowlist));
+  return allowlist;
 }
 
 export type RemoteClient = {
@@ -269,6 +305,24 @@ export function markRemoteClientSeen(id: string, address?: string, force = false
   }
 }
 
+export function updateRemoteClientDesktopCapability(id: string, available: boolean) {
+  const client = getRemoteClient(id);
+  if (!client) return false;
+  const current = client.capabilities.includes("desktop_gui");
+  if (current === available) return true;
+  const next = available
+    ? [...client.capabilities, "desktop_gui"]
+    : client.capabilities.filter((item) => item !== "desktop_gui");
+  try {
+    getDatabase().prepare("UPDATE remote_clients SET capabilities = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .run(JSON.stringify(next), iso(), id);
+    return true;
+  } catch (error) {
+    ignoreBusyTelemetry(error, "desktop capability update");
+    return false;
+  }
+}
+
 export function markRemoteClientOffline(id: string) {
   remoteSeenWrittenAt.delete(id);
   try {
@@ -285,11 +339,11 @@ export function markRemoteClientOffline(id: string) {
 
 export function updateRemoteClient(id: string, ownerId: string, patch: {
   name?: string;
-  policy?: RemotePolicy;
+  policy?: Partial<RemotePolicy>;
 }) {
   const current = getRemoteClient(id, ownerId);
   if (!current) return null;
-  const nextPolicy = patch.policy ? normalizeRemotePolicy(patch.policy) : current.policy;
+  const nextPolicy = patch.policy ? normalizeRemotePolicy({ ...current.policy, ...patch.policy }) : current.policy;
   getDatabase().prepare(
     "UPDATE remote_clients SET name = ?, policy = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND revoked_at IS NULL",
   ).run(patch.name?.trim() || current.name, JSON.stringify(nextPolicy), iso(), id, ownerId);
@@ -314,26 +368,37 @@ export function deleteRemoteClient(id: string, ownerId: string) {
 
 export function authorizeRemoteAction(client: RemoteClient, action: RemoteAction, commandOrParams?: string | Record<string, unknown>) {
   const params = typeof commandOrParams === "string" ? { command: commandOrParams } : (commandOrParams || {});
-  const command = typeof params.command === "string" ? params.command : undefined;
   if (client.status === "revoked") return { allowed: false, requiresApproval: false, reason: "Client is revoked" };
-  const mode = client.policy.mode;
+
+  const permission = (action.startsWith("pty_") ? "terminal" : action) as RemotePermission;
+  if (action === "computer_use" && !client.policy.permissions.includes("computer_use")) {
+    return { allowed: false, requiresApproval: false, reason: "Computer Use is switched off for this device" };
+  }
+  if (action === "computer_use" && (!client.capabilities.includes("desktop_gui") || !String(client.os || "").toLowerCase().startsWith("windows"))) {
+    return { allowed: false, requiresApproval: false, reason: "This device has no interactive GUI" };
+  }
+  if (client.policy.mode !== "full_access" && !client.policy.permissions.includes(permission)) {
+    return { allowed: false, requiresApproval: false, reason: `Permission ${permission} is disabled for this device` };
+  }
   const safety = validateUserRemoteRequest(action, params);
-  if (client.permissionMode === "user" && !safety.allowed) return { allowed: false, requiresApproval: false, reason: safety.reason };
-  const mutatesFiles = action === "write_file" || action === "edit_file" || action === "delete_file";
-  if (client.permissionMode === "user" && action === "execute_command" && !client.policy.allowlist.some((entry) => (command || "").trim() === entry || (command || "").trim().startsWith(`${entry} `))) {
-    return { allowed: false, requiresApproval: false, reason: "Command is not on the user allowlist" };
+  if (client.permissionMode === "user" && !safety.allowed) {
+    return { allowed: false, requiresApproval: false, reason: safety.reason };
   }
-  if (mode === "full_access" && client.permissionMode === "admin") return { allowed: true, requiresApproval: true, reason: "Admin action requires confirmation" };
-  if (mutatesFiles) {
-    return { allowed: false, requiresApproval: false, reason: "File changes are disabled by the client restricted policy" };
+  if (client.permissionMode === "user" && permission === "terminal") {
+    return { allowed: false, requiresApproval: false, reason: "Interactive terminal requires administrator access" };
   }
-  if (action === "get_info" || action === "list_directory" || action === "read_file") {
-    return { allowed: true, requiresApproval: false };
+  if (action === "execute_command" && client.policy.mode !== "full_access") {
+    const command = typeof params.command === "string" ? params.command.trim() : "";
+    const allowed = [...client.policy.allowlist, ...getGlobalRemoteAllowlist(client.ownerId)].includes(command);
+    if (!allowed) return { allowed: false, requiresApproval: false, reason: "Command is not in the device or global allowlist" };
   }
-  if (action !== "execute_command") return { allowed: true, requiresApproval: false };
-  const normalized = command?.trim() || "";
-  const allowed = client.policy.allowlist.some((entry) => normalized === entry || normalized.startsWith(`${entry} `));
-  return { allowed, requiresApproval: false, reason: allowed ? undefined : "Command is not in the client allowlist" };
+  const sensitive = ["write_file", "edit_file", "delete_file", "execute_command", "terminal"].includes(permission);
+  if (action === "computer_use") return { allowed: true, requiresApproval: false };
+  return {
+    allowed: true,
+    requiresApproval: client.permissionMode === "admin" && sensitive,
+    ...(client.permissionMode === "admin" && sensitive ? { reason: "Admin action requires confirmation" } : {}),
+  };
 }
 
 export function createRemoteApproval(input: {

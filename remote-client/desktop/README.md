@@ -12,11 +12,11 @@ The code expires after 15 minutes and binds the selected access mode to the devi
 
 ## Computer Use
 
-On a Windows PC with an interactive display, enable **Computer Use** while pairing or in this app's Device Hub. Enable it for the same device in **Metis AI → Settings → Devices → Permissions**. Both switches must be on. The mode is off by default and unavailable to headless CLI clients. Metis can then list windows, capture a visible window screenshot, move the pointer, click, scroll, drag, type literal text, and press keys. The client checks that the Windows desktop is unlocked. Each input needs a recent, single-use observation ID.
+On a Windows PC with an interactive display, Computer Use is managed only in **Metis AI → Settings → Devices → Permissions**. New compatible devices start with Computer Use and Full Access enabled; no local app switch is required. Headless CLI clients cannot use it. Metis can list windows, capture a visible window screenshot, move the pointer, click, scroll, drag, type literal text, and press keys. The client checks that the Windows desktop is unlocked. Each input needs a recent, single-use observation ID.
 
-During Computer Use, a subtle border and compact status notice appear on every monitor. During pointer actions, a custom cursor follows the live Windows pointer across displays. Pressing Escape cancels active input and turns off the local Computer Use switch until it is enabled again. The overlay is hidden during observation and its Electron windows are excluded from screen capture. It disappears after 45 seconds without Computer Use activity.
+During Computer Use, a white edge glow and compact status notice appear on every monitor. The custom cursor matches the browser Computer Use cursor and follows the live Windows pointer for the entire operation. Pressing Escape cancels active input without changing the saved website permission. The overlay is hidden during observation and its Electron windows are excluded from screen capture. It disappears after 45 seconds without Computer Use activity.
 
-Computer Use uses built-in Windows APIs from the interactive client session. It does not require the private `@oai/sky` package. The current screenshot path captures visible pixels; it does not capture a covered window or expose UI Automation element trees. The app package version is 1.3.2.
+Computer Use uses built-in Windows APIs from the interactive client session. Its PowerShell work and screenshot processing run in a dedicated worker so the Electron interface stays responsive. It does not require the private `@oai/sky` package. The current screenshot path captures visible pixels; it does not capture a covered window or expose UI Automation element trees. The app package version is 1.3.4.
 
 ## Build
 

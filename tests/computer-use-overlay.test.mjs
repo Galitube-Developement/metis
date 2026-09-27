@@ -18,8 +18,10 @@ test("computer-use overlay covers every display and stays out of captures", () =
       this.options = options;
       this.visible = false;
       this.destroyed = false;
+      this.scripts = [];
       this.webContents = new EventEmitter();
       this.webContents.isLoading = () => false;
+      this.webContents.executeJavaScript = (script) => { this.scripts.push(script); return Promise.resolve(); };
       windows.push(this);
     }
     setAlwaysOnTop(value, level) { this.level = value && level; }
@@ -47,9 +49,21 @@ test("computer-use overlay covers every display and stays out of captures", () =
     assert.equal(item.protected, true);
     assert.equal(item.ignoreMouse, true);
     assert.equal(item.level, "screen-saver");
-    assert.match(decodeURIComponent(item.url), /Press Escape to cancel/);
+    const html = decodeURIComponent(item.url);
+    assert.match(html, /Metis is using your computer/);
+    assert.match(html, /Press Escape to cancel/);
+    assert.match(html, /body::before/);
+    assert.match(html, /border: 2px solid rgba\(255,255,255,.96\)/);
+    assert.match(html, /M7\.1 4\.15C4\.05 3\.4 1\.72 6\.15/);
   }
   assert.deepEqual(windows.map((item) => item.options.x), [-1920, 0]);
+
+  windows[0].webContents.isLoading = () => true;
+  overlay.updateCursor(-1800, 120);
+  assert.equal(windows[0].scripts.length, 0);
+  windows[0].webContents.isLoading = () => false;
+  windows[0].webContents.emit("did-finish-load");
+  assert.match(windows[0].scripts.at(-1), /window\.metisCursor\?\.\(120,120,true\)/);
   overlay.suspendCapture();
   assert.ok(windows.every((item) => !item.visible));
   overlay.resumeCapture();

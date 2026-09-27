@@ -6,14 +6,15 @@ const OVERLAY_HTML = `<!doctype html>
 <style>
   html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .notice { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; max-width: calc(100vw - 32px); padding: 9px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(24,25,27,.9); color: #f4f4f5; box-shadow: 0 3px 12px rgba(0,0,0,.2); font-size: 12px; font-weight: 500; line-height: 1.35; white-space: nowrap; pointer-events: none; }
-  .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #80d6ad; }
-  .cursor { position: fixed; z-index: 2; left: 0; top: 0; width: 25px; height: 31px; opacity: 0; transform: translate(-2px,-2px); transition: opacity 100ms ease; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); pointer-events: none; }
+  body::before { content: ""; position: fixed; z-index: 3; inset: 0; border: 2px solid rgba(255,255,255,.96); box-shadow: inset 0 0 14px rgba(255,255,255,.9), inset 0 0 38px rgba(255,255,255,.38); pointer-events: none; }
+  .notice { position: fixed; z-index: 4; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: baseline; gap: 7px; max-width: calc(100vw - 32px); padding: 9px 13px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(24,25,27,.92); color: #f4f4f5; box-shadow: 0 3px 12px rgba(0,0,0,.24); font-size: 12px; font-weight: 600; line-height: 1.35; white-space: nowrap; pointer-events: none; }
+  .notice span { color: rgba(244,244,245,.68); font-weight: 500; }
+  .cursor { position: fixed; z-index: 5; left: 0; top: 0; width: 18px; height: 24px; opacity: 0; transform: translate(-12%,-10%); transition: opacity 100ms ease; filter: drop-shadow(0 2px 2px rgba(0,0,0,.48)) drop-shadow(0 0 5px rgba(215,244,252,.3)); pointer-events: none; }
   .cursor.visible { opacity: 1; }
-  @media (max-width: 480px) { .notice { top: 12px; white-space: normal; } }
+  @media (max-width: 480px) { .notice { top: 12px; display: block; text-align: center; white-space: normal; } .notice span { display: block; margin-top: 2px; } }
 </style>
 </head>
-<body><div class="notice"><span>Metis is controlling this PC <span style="opacity:.62">· Esc to stop</span></span></div><svg class="cursor" aria-hidden="true" viewBox="0 0 25 31"><path d="M2 1.5v23l6.2-6 4.1 10 4.1-1.7-4.1-9.8h8.2L2 1.5Z" fill="#fff" stroke="#17191c" stroke-width="1.8" stroke-linejoin="round"/></svg><script>const cursor=document.querySelector(".cursor");window.metisCursor=(x,y,visible)=>{cursor.style.left=x+"px";cursor.style.top=y+"px";cursor.classList.toggle("visible",visible)};</script></body>
+<body><div class="notice">Metis is using your computer <span>Press Escape to cancel</span></div><svg class="cursor" aria-hidden="true" viewBox="0 0 52 48"><defs><linearGradient id="metis-browser-cursor-glass" x1="7" y1="4" x2="39" y2="42" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="rgba(42,55,63,0.72)"/><stop offset=".44" stop-color="rgba(18,28,34,0.54)"/><stop offset="1" stop-color="rgba(6,11,15,0.34)"/></linearGradient><linearGradient id="metis-browser-cursor-edge" x1="3" y1="4" x2="40" y2="43" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="rgba(255,255,255,0.96)"/><stop offset=".34" stop-color="rgba(191,232,241,.78)"/><stop offset=".7" stop-color="rgba(117,166,180,.58)"/><stop offset="1" stop-color="rgba(238,247,250,.84)"/></linearGradient><radialGradient id="metis-browser-cursor-glow" cx="0" cy="0" r="1" gradientTransform="translate(15 12) rotate(34) scale(31 24)" gradientUnits="userSpaceOnUse"><stop stop-color="rgba(224,248,255,.3)"/><stop offset="1" stop-color="rgba(224,248,255,0)"/></radialGradient></defs><path d="M7.1 4.15C4.05 3.4 1.72 6.15 2.8 9.08l13.35 33.55c1.04 2.78 4.82 3.08 6.28.48l7.35-17.38c1.1-2.57 3.2-4.55 5.83-5.51l12.78-4.7c3.46-1.27 3.46-6.17-.03-7.39L7.1 4.15Z" fill="url(#metis-browser-cursor-glass)" stroke="url(#metis-browser-cursor-edge)" stroke-width="1.3" stroke-linejoin="round"/><path d="M7.35 5.8 18.02 40.9c.43 1.46 2.43 1.61 3.08.24l6.98-15.08c1.28-2.76 3.59-4.91 6.43-5.99l12.18-4.6" fill="none" stroke="rgba(238,252,255,.42)" stroke-width=".9" stroke-linecap="round"/><path d="M6.1 5.05 48.1 12.95 35.25 17.7 9.3 9.2Z" fill="url(#metis-browser-cursor-glow)"/></svg><script>const cursor=document.querySelector(".cursor");window.metisCursor=(x,y,visible)=>{cursor.style.left=x+"px";cursor.style.top=y+"px";cursor.classList.toggle("visible",visible)};</script></body>
 </html>`;
 
 const IDLE_MS = 45_000;
@@ -25,8 +26,16 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
   let timer;
   let cursorHideTimer;
   let cursorDisplayId = null;
+  let cursorPosition = null;
   let escapeRegistered = false;
   let suppressEscapeUntil = 0;
+
+  function renderCursor(display, overlay) {
+    if (!cursorPosition || cursorDisplayId !== display.id || suspended || overlay.isDestroyed() || overlay.webContents.isLoading()) return;
+    const localX = cursorPosition.x - display.bounds.x;
+    const localY = cursorPosition.y - display.bounds.y;
+    overlay.webContents.executeJavaScript(`window.metisCursor?.(${localX},${localY},true)`).catch(() => {});
+  }
 
   function createWindow(display) {
     const overlay = new BrowserWindow({
@@ -49,7 +58,10 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
     overlay.setContentProtection(true);
     overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(OVERLAY_HTML)}`);
     overlay.webContents.on("did-finish-load", () => {
-      if (active && !suspended && !overlay.isDestroyed()) overlay.showInactive();
+      if (active && !suspended && !overlay.isDestroyed()) {
+        overlay.showInactive();
+        renderCursor(display, overlay);
+      }
     });
     overlay.on("closed", () => windows.delete(display.id));
     return overlay;
@@ -80,8 +92,9 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
   }
 
   function updateCursor(x, y) {
-    if (!active || suspended || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (!active || !Number.isFinite(x) || !Number.isFinite(y)) return;
     clearTimeout(cursorHideTimer);
+    cursorPosition = { x, y };
     const display = screen.getAllDisplays().find((item) => {
       const b = item.bounds;
       return x >= b.x && y >= b.y && x < b.x + b.width && y < b.y + b.height;
@@ -92,12 +105,10 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
       if (previous && !previous.isDestroyed()) previous.webContents.executeJavaScript("window.metisCursor?.(0,0,false)").catch(() => {});
     }
     cursorDisplayId = nextId;
-    if (!display) return;
+    if (!display || suspended) return;
     const overlay = windows.get(display.id);
-    if (!overlay || overlay.isDestroyed() || overlay.webContents.isLoading()) return;
-    const localX = x - display.bounds.x;
-    const localY = y - display.bounds.y;
-    overlay.webContents.executeJavaScript(`window.metisCursor?.(${localX},${localY},true)`).catch(() => {});
+    if (!overlay) return;
+    renderCursor(display, overlay);
   }
 
   function hideCursor(delay = 0) {
@@ -108,6 +119,7 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
         if (overlay && !overlay.isDestroyed()) overlay.webContents.executeJavaScript("window.metisCursor?.(0,0,false)").catch(() => {});
       }
       cursorDisplayId = null;
+      cursorPosition = null;
     }, delay);
   }
 
@@ -151,6 +163,7 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
     if (!active) return;
     suspended = false;
     sync();
+    if (cursorPosition) updateCursor(cursorPosition.x, cursorPosition.y);
   }
 
   function suppressInjectedEscape() {

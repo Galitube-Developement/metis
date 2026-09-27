@@ -1,6 +1,7 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import {
   createEnrollmentToken,
+  getGlobalRemoteAllowlist,
   listRemoteAudit,
   listRemoteClients,
 } from "@/lib/remote-clients";
@@ -39,6 +40,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   return Response.json({
     clients: listRemoteClients(ownerId),
+    globalAllowlist: getGlobalRemoteAllowlist(ownerId),
     audit: url.searchParams.get("audit") === "1" ? listRemoteAudit(ownerId) : undefined,
   });
 }

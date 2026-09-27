@@ -2,3 +2,4 @@ dist/
 node_modules/
 client.mjs
 computer-use.mjs
+computer-use-worker.mjs

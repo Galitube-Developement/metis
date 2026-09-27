@@ -21,6 +21,7 @@ export async function POST(req: Request) {
     approvalId?: unknown;
     runId?: unknown;
     toolCallId?: unknown;
+    timeoutMs?: unknown;
     source?: unknown;
   };
   if (typeof body.clientId !== "string" || typeof body.action !== "string") {
@@ -37,6 +38,7 @@ export async function POST(req: Request) {
       ...(typeof body.approvalId === "string" ? { approvalId: body.approvalId } : {}),
       ...(typeof body.runId === "string" ? { runId: body.runId } : {}),
       ...(typeof body.toolCallId === "string" ? { toolCallId: body.toolCallId } : {}),
+      ...(typeof body.timeoutMs === "number" && Number.isFinite(body.timeoutMs) ? { timeoutMs: body.timeoutMs } : {}),
       source: body.source === "agent" ? "agent" : "user",
     });
     const events = body.action === "pty_input" && body.params && typeof body.params === "object" &&

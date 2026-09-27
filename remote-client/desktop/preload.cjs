@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("metis", {
@@ -9,7 +10,6 @@ contextBridge.exposeInMainWorld("metis", {
   exportAudit: () => ipcRenderer.invoke("hub:export"),
   getAutostart: () => ipcRenderer.invoke("hub:get-autostart"),
   setAutostart: (value) => ipcRenderer.invoke("hub:set-autostart", value),
-  setComputerUse: (value) => ipcRenderer.invoke("hub:set-computer-use", value),
   checkUpdates: () => ipcRenderer.invoke("hub:check-updates"),
   onStatus: (callback) => {
     const listener = (_event, data) => callback(data);

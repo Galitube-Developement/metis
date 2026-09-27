@@ -24,8 +24,6 @@
           <label for="token">Pairing code</label>
           <input id="token" type="text" placeholder="Paste the code from Metis AI" required autocomplete="off" spellcheck="false">
           <p class="field-note">The code expires after 15 minutes. For admin access, start this app as administrator and confirm UAC.</p>
-          <label class="menu-item check"><input id="pair-computer-use" type="checkbox"> Enable Computer Use on this PC</label>
-          <p class="field-note">Available only with an interactive display. Also turn it on in Metis Settings → Devices. You can switch it off at any time.</p>
           <button id="pair-button" class="primary-button" type="submit">Connect device</button>
         </form>
         <p id="pair-error" class="error-text" role="alert" hidden></p>
@@ -48,7 +46,7 @@
       </div>
       <div id="hub-error" class="error-banner" role="alert" hidden></div>
       <div class="device-summary status-summary"><span id="device-status" class="device-state">Offline</span><span id="device-meta">Windows device</span><span id="device-seen"></span></div>
-      <div class="device-summary"><label class="menu-item check"><input id="computer-use-toggle" type="checkbox"> Computer Use</label><span id="computer-use-note" class="subtle">Screen, mouse, and keyboard control on this PC</span></div>
+      <div class="device-summary"><strong>Computer Use</strong><span class="subtle">Managed in Metis AI → Settings → Devices.</span></div>
       <section class="activity-pane" aria-label="This device's activity">
         <div class="section-heading"><div><h2>Command history</h2><p class="subtle">Activity on this PC only</p></div><button id="export" class="text-button" type="button">Export logs</button></div>
         <div class="filters"><input id="search" type="search" placeholder="Search commands" aria-label="Search commands"><select id="status-filter" aria-label="Filter by status"><option value="all">All statuses</option><option value="running">Running</option><option value="completed">Completed</option><option value="error">Failed</option><option value="unknown">Unclear outcome</option><option value="denied">Denied</option></select></div>

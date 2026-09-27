@@ -582,15 +582,6 @@ export function getDatabase(): DatabaseSync {
   database.exec(
     "CREATE INDEX IF NOT EXISTS pending_approvals_job_status ON pending_approvals(job_id, status)",
   );
-  try {
-    database.prepare(
-      `UPDATE remote_clients
-       SET policy = json_set(policy, '$.mode', 'approval_required')
-       WHERE json_extract(policy, '$.mode') = 'full_access'`,
-    ).run();
-  } catch {
-    // JSON1 is always present on supported Node SQLite builds; ignore if the table is mid-migration.
-  }
   migrateLegacy(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS chat_list (

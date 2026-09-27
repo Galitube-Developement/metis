@@ -6,12 +6,13 @@ import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { Worker } from "node:worker_threads";
 import WebSocket from "ws";
 
 const execFileAsync = promisify(execFile);
 const shell = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : (process.env.SHELL || "/bin/sh");
 
-export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {}, computerUseEnabled = () => false, desktopGuiAvailable = () => false } = {}) {
+export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {}, desktopGuiAvailable = () => false } = {}) {
   const resolvedPath = configPath || process.env.METIS_REMOTE_CLIENT_CONFIG ||
     path.join(os.homedir(), ".metis-ai", "remote-client.json");
   const config = suppliedConfig || JSON.parse(fs.readFileSync(resolvedPath, "utf8").replace(/^\uFEFF/, ""));
@@ -32,6 +33,9 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
   const wsUrl = server.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/ws/remote-client";
   const running = new Map();
   const computerUseControllers = new Set();
+  const computerUsePending = new Map();
+  let computerUseWorker;
+  let computerUseQueue = Promise.resolve();
   let socket;
   let reconnectTimer;
   let heartbeatTimer;
@@ -42,6 +46,65 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
   const send = (message) => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
   };
+
+  function failComputerUsePending(error) {
+    for (const { reject, cleanup } of computerUsePending.values()) {
+      cleanup();
+      reject(error);
+    }
+    computerUsePending.clear();
+  }
+
+  function ensureComputerUseWorker() {
+    if (computerUseWorker) return computerUseWorker;
+    const workerUrl = new URL("./computer-use-worker.mjs", import.meta.url);
+    workerUrl.pathname = workerUrl.pathname.replace("/app.asar/", "/app.asar.unpacked/");
+    const worker = new Worker(workerUrl);
+    computerUseWorker = worker;
+    worker.unref();
+    worker.on("message", (message) => {
+      const pending = computerUsePending.get(message?.id);
+      if (!pending) return;
+      computerUsePending.delete(message.id);
+      pending.cleanup();
+      if (message.type === "result") pending.resolve(message.result);
+      else {
+        const error = new Error(message?.error?.message || "Computer Use failed");
+        if (message?.error?.stack) error.stack = message.error.stack;
+        pending.reject(error);
+      }
+    });
+    worker.on("error", (error) => {
+      if (computerUseWorker === worker) computerUseWorker = undefined;
+      failComputerUsePending(error);
+    });
+    worker.on("exit", (code) => {
+      if (computerUseWorker !== worker) return;
+      computerUseWorker = undefined;
+      failComputerUsePending(new Error(`Computer Use worker stopped with code ${code}`));
+    });
+    return worker;
+  }
+
+  function runComputerUse(params, signal) {
+    if (signal.aborted) return Promise.reject(new Error("Computer Use was cancelled"));
+    const worker = ensureComputerUseWorker();
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const onAbort = () => worker.postMessage({ type: "cancel", id });
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      signal.addEventListener("abort", onAbort, { once: true });
+      computerUsePending.set(id, { resolve, reject, cleanup });
+      worker.postMessage({ type: "run", id, params });
+    });
+  }
+
+  function terminateComputerUseWorker() {
+    const worker = computerUseWorker;
+    computerUseWorker = undefined;
+    failComputerUsePending(new Error("Computer Use was stopped"));
+    if (worker) void worker.terminate();
+  }
 
   async function execute(action, params = {}) {
     if (action === "get_info") {
@@ -56,23 +119,31 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       };
     }
     if (action === "computer_use") {
-      if (!computerUseEnabled()) throw new Error("Computer Use is switched off on this device");
-      const { computerUse } = await import("./computer-use.mjs");
+      if (!desktopGuiAvailable()) throw new Error("Computer Use requires an interactive Windows display");
       const operation = String(params.operation || "");
       const controller = new AbortController();
       computerUseControllers.add(controller);
-      let captureSuspended = false;
-      try {
-        if (operation !== "status") emit({ type: "computer_use", phase: "start", operation, key: operation === "key" ? params.key : undefined });
-        if (operation === "observe") {
-          emit({ type: "computer_use", phase: "capture-start", operation });
-          captureSuspended = true;
+      const task = async () => {
+        let captureSuspended = false;
+        try {
+          if (controller.signal.aborted) throw new Error("Computer Use was cancelled");
+          if (operation !== "status") emit({ type: "computer_use", phase: "start", operation, key: operation === "key" ? params.key : undefined });
+          if (operation === "observe") {
+            emit({ type: "computer_use", phase: "capture-start", operation });
+            captureSuspended = true;
+          }
+          return await runComputerUse(params, controller.signal);
+        } finally {
+          if (captureSuspended) emit({ type: "computer_use", phase: "capture-end", operation });
+          if (operation !== "status") emit({ type: "computer_use", phase: "end", operation });
         }
-        return await computerUse(params, { enabled: true, signal: controller.signal });
+      };
+      const result = computerUseQueue.catch(() => {}).then(task);
+      computerUseQueue = result;
+      try {
+        return await result;
       } finally {
         computerUseControllers.delete(controller);
-        if (captureSuspended) emit({ type: "computer_use", phase: "capture-end", operation });
-        if (operation !== "status") emit({ type: "computer_use", phase: "end", operation });
       }
     }
     if (action === "execute_command") {
@@ -225,8 +296,10 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       for (const controller of computerUseControllers) controller.abort();
     },
     stop() {
-      for (const controller of computerUseControllers) controller.abort();
       stopped = true;
+      for (const controller of computerUseControllers) controller.abort();
+      computerUseWorker?.postMessage({ type: "cancel-all" });
+      terminateComputerUseWorker();
       clearTimeout(reconnectTimer);
       clearInterval(heartbeatTimer);
       clearTimeout(heartbeatTimeout);
