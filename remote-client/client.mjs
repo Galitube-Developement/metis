@@ -11,7 +11,7 @@ import WebSocket from "ws";
 const execFileAsync = promisify(execFile);
 const shell = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : (process.env.SHELL || "/bin/sh");
 
-export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {} } = {}) {
+export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {}, computerUseEnabled = () => false, desktopGuiAvailable = () => false } = {}) {
   const resolvedPath = configPath || process.env.METIS_REMOTE_CLIENT_CONFIG ||
     path.join(os.homedir(), ".metis-ai", "remote-client.json");
   const config = suppliedConfig || JSON.parse(fs.readFileSync(resolvedPath, "utf8").replace(/^\uFEFF/, ""));
@@ -20,7 +20,10 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
     try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${items.join(" ")}\n`); } catch {}
   };
   const emit = (event) => {
-    try { onEvent(event); } catch (error) { log("event callback", error?.message || error); }
+    try { onEvent(event); } catch (error) {
+      log("event callback", error?.message || error);
+      if (event.type === "computer_use") throw error;
+    }
   };
   const server = String(config.server || "").replace(/\/+$/, "");
   if (!/^https?:\/\//i.test(server) || !config.clientId || !config.credential) {
@@ -28,6 +31,7 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
   }
   const wsUrl = server.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/ws/remote-client";
   const running = new Map();
+  const computerUseControllers = new Set();
   let socket;
   let reconnectTimer;
   let heartbeatTimer;
@@ -50,6 +54,25 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
         memory: { total: os.totalmem(), free: os.freemem() },
         uptime: os.uptime(),
       };
+    }
+    if (action === "computer_use") {
+      if (!computerUseEnabled()) throw new Error("Computer Use is switched off on this device");
+      const { computerUse } = await import("./computer-use.mjs");
+      const operation = String(params.operation || "");
+      const controller = new AbortController();
+      computerUseControllers.add(controller);
+      let captureSuspended = false;
+      try {
+        if (operation !== "status") emit({ type: "computer_use", phase: "start", operation, key: operation === "key" ? params.key : undefined });
+        if (operation === "observe") {
+          emit({ type: "computer_use", phase: "capture-start", operation });
+          captureSuspended = true;
+        }
+        return await computerUse(params, { enabled: true, signal: controller.signal });
+      } finally {
+        computerUseControllers.delete(controller);
+        if (captureSuspended) emit({ type: "computer_use", phase: "capture-end", operation });
+      }
     }
     if (action === "execute_command") {
       const command = String(params.command || "");
@@ -151,9 +174,9 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
         retryMs = 1_000;
         log("authenticated", message.clientId || "");
         emit({ type: "connection", status: "online", at: new Date().toISOString() });
-        send({ type: "heartbeat" });
+        send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()) });
         clearInterval(heartbeatTimer);
-        heartbeatTimer = setInterval(() => send({ type: "heartbeat" }), 20_000);
+        heartbeatTimer = setInterval(() => send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()) }), 20_000);
         clearTimeout(heartbeatTimeout);
         heartbeatTimeout = setTimeout(() => current.terminate(), 75_000);
         return;
@@ -197,7 +220,11 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
 
   connect();
   return {
+    cancelComputerUse() {
+      for (const controller of computerUseControllers) controller.abort();
+    },
     stop() {
+      for (const controller of computerUseControllers) controller.abort();
       stopped = true;
       clearTimeout(reconnectTimer);
       clearInterval(heartbeatTimer);

@@ -32,6 +32,12 @@ function setConnection(data) {
   byId("device-status").textContent = state.connection.charAt(0).toUpperCase() + state.connection.slice(1);
   byId("device-status").className = `device-state ${state.connection}`;
   byId("update-label").textContent = data.update || "";
+  byId("pair-computer-use").disabled = !data.computerUseAvailable;
+  byId("computer-use-toggle").disabled = !data.computerUseAvailable;
+  byId("computer-use-toggle").checked = data.computerUseEnabled === true;
+  byId("computer-use-note").textContent = data.computerUseAvailable
+    ? "Screen, mouse, and keyboard control on this PC"
+    : "Unavailable: no interactive display detected";
   if (data.error && state.paired) showHubError(data.error);
   if (data.error && !state.paired) {
     byId("pair-error").textContent = data.error;
@@ -165,7 +171,7 @@ byId("pair-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   byId("pair-error").hidden = true;
   try {
-    const data = await window.metis.pair({ server: byId("server").value, token: byId("token").value });
+    const data = await window.metis.pair({ server: byId("server").value, token: byId("token").value, computerUse: byId("pair-computer-use").checked });
     byId("token").value = "";
     setConnection(data);
     await refresh();
@@ -184,6 +190,10 @@ byId("export").addEventListener("click", async () => {
 byId("search").addEventListener("input", renderCommands);
 byId("status-filter").addEventListener("change", renderCommands);
 byId("open-server").addEventListener("click", () => void window.metis.openServer());
+byId("computer-use-toggle").addEventListener("change", async (event) => {
+  try { setConnection(await window.metis.setComputerUse(event.target.checked)); }
+  catch (error) { showHubError(error.message || "Could not change Computer Use"); event.target.checked = !event.target.checked; }
+});
 byId("autostart").addEventListener("change", async (event) => {
   try { event.target.checked = await window.metis.setAutostart(event.target.checked); }
   catch (error) { showHubError(error.message || "Could not change login setting"); event.target.checked = !event.target.checked; }

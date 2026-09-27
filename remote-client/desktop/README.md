@@ -10,6 +10,14 @@ The Windows Remote Client is an Electron app packaged as an NSIS installer. Wind
 
 The code expires after 15 minutes and binds the selected access mode to the device registration. An existing pairing keeps its original mode; disconnect and pair again to change it. The app stores its credential with Windows credential encryption under `%APPDATA%\\MetisAI\\RemoteClient`. Uninstalling the app removes that local data. The remote connection runs inside the app and reconnects automatically. **Start at Windows login** uses a scheduled task with the paired access level. Admin mode may require the administrator account to sign in before the interactive app can start.
 
+## Computer Use
+
+On a Windows PC with an interactive display, enable **Computer Use** while pairing or in this app's Device Hub. Enable it for the same device in **Metis AI → Settings → Devices → Permissions**. Both switches must be on. The mode is off by default and unavailable to headless CLI clients. Metis can then list windows, capture a visible window screenshot, move the pointer, click, scroll, drag, type literal text, and press keys. The client checks that the Windows desktop is unlocked. Each input needs a recent, single-use observation ID.
+
+During Computer Use, a click-through white border and a top-center notice appear on every monitor. Pressing Escape cancels active input and turns off the local Computer Use switch until it is enabled again. The overlay is hidden during observation and its Electron windows are excluded from screen capture. It disappears after 45 seconds without Computer Use activity.
+
+Computer Use uses built-in Windows APIs from the interactive client session. It does not require the private `@oai/sky` package. The current screenshot path captures visible pixels; it does not capture a covered window or expose UI Automation element trees. The exact installer build is version 1.3.1.
+
 ## Build
 
 On Windows with Node.js 22 or later:

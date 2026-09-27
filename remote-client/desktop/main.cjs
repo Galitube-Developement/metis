@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, safeStorage, Notification, dialog } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, safeStorage, Notification, dialog, screen, globalShortcut } = require("electron");
+const { createComputerUseOverlay } = require("./computer-use-overlay.cjs");
 const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -48,6 +49,7 @@ app.setPath("userData", userDataDir);
 let window;
 let tray;
 let runtime;
+let computerUseOverlay;
 let config;
 let quitting = false;
 let previousConnection = "offline";
@@ -68,6 +70,7 @@ function loadConfig() {
     clientId: saved.clientId,
     credential: safeStorage.decryptString(Buffer.from(saved.encryptedCredential, "base64")),
     permissionMode: saved.permissionMode === "user" ? "user" : "admin",
+    computerUseEnabled: saved.computerUseEnabled === true,
   };
 }
 
@@ -79,6 +82,7 @@ function saveConfig(next) {
     server: next.server,
     clientId: next.clientId,
     permissionMode: next.permissionMode,
+    computerUseEnabled: next.computerUseEnabled === true,
     encryptedCredential: safeStorage.encryptString(next.credential).toString("base64"),
   };
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
@@ -91,6 +95,8 @@ function publicState() {
     server: config?.server || "",
     clientId: config?.clientId || "",
     permissionMode: config?.permissionMode || null,
+    computerUseAvailable: process.platform === "win32" && screen.getAllDisplays().length > 0,
+    computerUseEnabled: config?.computerUseEnabled === true,
     ...status,
   };
 }
@@ -99,6 +105,15 @@ function broadcast() {
   window?.webContents.send("hub:status", publicState());
   tray?.setToolTip(`${APP_NAME} — ${status.connection}`);
   updateTray();
+}
+
+function cancelComputerUse() {
+  runtime?.cancelComputerUse();
+  if (config?.computerUseEnabled) {
+    config = { ...config, computerUseEnabled: false };
+    try { saveConfig(config); } catch (error) { status.error = error.message; }
+    broadcast();
+  }
 }
 
 function updateTray() {
@@ -150,6 +165,7 @@ function createWindow() {
 }
 
 async function startRuntime() {
+  computerUseOverlay?.hide();
   runtime?.stop();
   runtime = null;
   if (!config) return;
@@ -157,8 +173,19 @@ async function startRuntime() {
   runtime = module.startRemoteClient({
     config,
     configPath: configPath(),
+    computerUseEnabled: () => config?.computerUseEnabled === true && screen.getAllDisplays().length > 0,
+    desktopGuiAvailable: () => process.platform === "win32" && screen.getAllDisplays().length > 0,
     onEvent(event) {
+      if (event.type === "computer_use") {
+        if (event.phase === "start") {
+          computerUseOverlay?.touch();
+          if (event.operation === "key" && /^(esc|escape)$/i.test(String(event.key || "").trim())) computerUseOverlay?.suppressInjectedEscape();
+        } else if (event.phase === "capture-start") computerUseOverlay?.suspendCapture();
+        else if (event.phase === "capture-end") computerUseOverlay?.resumeCapture();
+        return;
+      }
       if (event.type !== "connection") return;
+      if (event.status !== "online") computerUseOverlay?.hide();
       previousConnection = status.connection;
       status.connection = event.status;
       status.error = event.error || "";
@@ -213,9 +240,12 @@ function registerIpc() {
         architecture: os.arch(),
         version: app.getVersion(),
         permissionMode,
-        capabilities: permissionMode === "admin"
-          ? ["user_files", "user_processes", "user_directories", "system_files", "services", "disks", "admin_processes"]
-          : ["user_files", "user_processes", "user_directories"],
+        capabilities: [
+          ...(permissionMode === "admin"
+            ? ["user_files", "user_processes", "user_directories", "system_files", "services", "disks", "admin_processes"]
+            : ["user_files", "user_processes", "user_directories"]),
+          ...(screen.getAllDisplays().length > 0 ? ["desktop_gui"] : []),
+        ],
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -224,7 +254,7 @@ function registerIpc() {
       throw new Error(data.error || "Pairing failed");
     }
     if (data.client.permissionMode !== permissionMode) throw new Error("The server returned a different access mode. Pairing was stopped.");
-    const next = { server: parsed.origin, clientId: data.client.id, credential: data.credential, permissionMode: data.client.permissionMode };
+    const next = { server: parsed.origin, clientId: data.client.id, credential: data.credential, permissionMode: data.client.permissionMode, computerUseEnabled: Boolean(input?.computerUse) && screen.getAllDisplays().length > 0 };
     saveConfig(next);
     config = next;
     status.connection = "connecting";
@@ -234,12 +264,25 @@ function registerIpc() {
     return publicState();
   });
   ipcMain.handle("hub:unpair", async () => {
+    computerUseOverlay?.hide();
     runtime?.stop();
     runtime = null;
     config = null;
     fs.rmSync(configPath(), { force: true });
     status.connection = "offline";
     status.error = "";
+    broadcast();
+    return publicState();
+  });
+  ipcMain.handle("hub:set-computer-use", (_event, value) => {
+    if (!config) throw new Error("Pair this device first");
+    if (value && (process.platform !== "win32" || screen.getAllDisplays().length === 0)) throw new Error("No interactive display is available");
+    config = { ...config, computerUseEnabled: Boolean(value) };
+    if (!config.computerUseEnabled) {
+      runtime?.cancelComputerUse();
+      computerUseOverlay?.hide();
+    }
+    saveConfig(config);
     broadcast();
     return publicState();
   });
@@ -325,6 +368,7 @@ if (!app.requestSingleInstanceLock()) {
       app.setLoginItemSettings({ openAtLogin: false, path: process.execPath });
       try { setAutostart(true); } catch (error) { status.error = error.message; }
     }
+    computerUseOverlay = createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCancel: cancelComputerUse });
     registerIpc();
     createWindow();
     tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "assets", "icon.ico")));
@@ -341,6 +385,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("before-quit", () => {
     quitting = true;
+    computerUseOverlay?.hide();
     runtime?.stop();
   });
   app.on("window-all-closed", () => {});

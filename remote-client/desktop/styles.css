@@ -42,6 +42,10 @@ h1 { font-size: clamp(25px, 3vw, 31px); line-height: 1.15; letter-spacing: -.045
 .pair-panel input, .filters input, .filters select { height: 42px; background: var(--surface); border: 1px solid #d7d7d7; color: var(--text); border-radius: 6px; padding: 0 12px; }
 .pair-panel input { margin-bottom: 18px; }
 .field-note { font-size: 11px; color: var(--muted); margin: -6px 0 22px; line-height: 1.5; }
+.pair-panel .menu-item.check { display: flex; align-items: center; gap: 9px; min-height: 36px; margin: -8px 0 12px; font-weight: 500; }
+.pair-panel .menu-item.check input, .device-summary .menu-item.check input { width: 16px; height: 16px; margin: 0; padding: 0; flex: none; accent-color: var(--text); }
+.device-summary .menu-item.check { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; }
+.status-summary { border-bottom: 0; padding-bottom: 10px; }
 .primary-button { min-height: 40px; border-radius: 6px; padding: 0 16px; font-weight: 600; background: var(--text); color: var(--surface); border: 1px solid var(--text); }
 .primary-button:hover { opacity: .88; }
 .primary-button:disabled { opacity: .6; cursor: wait; }
