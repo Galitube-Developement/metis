@@ -50,6 +50,7 @@ let window;
 let tray;
 let runtime;
 let computerUseOverlay;
+let computerUseCursorTimer;
 let config;
 let quitting = false;
 let previousConnection = "offline";
@@ -164,6 +165,29 @@ function createWindow() {
   window.on("closed", () => { window = null; });
 }
 
+function isPointerOperation(operation) {
+  return ["move", "click", "scroll", "drag"].includes(operation);
+}
+
+function startComputerUseCursor() {
+  clearInterval(computerUseCursorTimer);
+  const update = () => {
+    const point = screen.getCursorScreenPoint();
+    computerUseOverlay?.updateCursor(point.x, point.y);
+  };
+  update();
+  computerUseCursorTimer = setInterval(update, 24);
+  computerUseCursorTimer.unref?.();
+}
+
+function stopComputerUseCursor() {
+  clearInterval(computerUseCursorTimer);
+  computerUseCursorTimer = undefined;
+  const point = screen.getCursorScreenPoint();
+  computerUseOverlay?.updateCursor(point.x, point.y);
+  computerUseOverlay?.hideCursor(650);
+}
+
 async function startRuntime() {
   computerUseOverlay?.hide();
   runtime?.stop();
@@ -180,7 +204,9 @@ async function startRuntime() {
         if (event.phase === "start") {
           computerUseOverlay?.touch();
           if (event.operation === "key" && /^(esc|escape)$/i.test(String(event.key || "").trim())) computerUseOverlay?.suppressInjectedEscape();
-        } else if (event.phase === "capture-start") computerUseOverlay?.suspendCapture();
+          if (isPointerOperation(event.operation)) startComputerUseCursor();
+        } else if (event.phase === "end" && isPointerOperation(event.operation)) stopComputerUseCursor();
+        else if (event.phase === "capture-start") computerUseOverlay?.suspendCapture();
         else if (event.phase === "capture-end") computerUseOverlay?.resumeCapture();
         return;
       }

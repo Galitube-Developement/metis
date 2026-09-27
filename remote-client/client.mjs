@@ -72,6 +72,7 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       } finally {
         computerUseControllers.delete(controller);
         if (captureSuspended) emit({ type: "computer_use", phase: "capture-end", operation });
+        if (operation !== "status") emit({ type: "computer_use", phase: "end", operation });
       }
     }
     if (action === "execute_command") {

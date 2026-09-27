@@ -14,9 +14,9 @@ The code expires after 15 minutes and binds the selected access mode to the devi
 
 On a Windows PC with an interactive display, enable **Computer Use** while pairing or in this app's Device Hub. Enable it for the same device in **Metis AI → Settings → Devices → Permissions**. Both switches must be on. The mode is off by default and unavailable to headless CLI clients. Metis can then list windows, capture a visible window screenshot, move the pointer, click, scroll, drag, type literal text, and press keys. The client checks that the Windows desktop is unlocked. Each input needs a recent, single-use observation ID.
 
-During Computer Use, a click-through white border and a top-center notice appear on every monitor. Pressing Escape cancels active input and turns off the local Computer Use switch until it is enabled again. The overlay is hidden during observation and its Electron windows are excluded from screen capture. It disappears after 45 seconds without Computer Use activity.
+During Computer Use, a subtle border and compact status notice appear on every monitor. During pointer actions, a custom cursor follows the live Windows pointer across displays. Pressing Escape cancels active input and turns off the local Computer Use switch until it is enabled again. The overlay is hidden during observation and its Electron windows are excluded from screen capture. It disappears after 45 seconds without Computer Use activity.
 
-Computer Use uses built-in Windows APIs from the interactive client session. It does not require the private `@oai/sky` package. The current screenshot path captures visible pixels; it does not capture a covered window or expose UI Automation element trees. The exact installer build is version 1.3.1.
+Computer Use uses built-in Windows APIs from the interactive client session. It does not require the private `@oai/sky` package. The current screenshot path captures visible pixels; it does not capture a covered window or expose UI Automation element trees. The app package version is 1.3.2.
 
 ## Build
 

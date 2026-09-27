@@ -6,13 +6,14 @@ const OVERLAY_HTML = `<!doctype html>
 <style>
   html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .edge { position: fixed; inset: 0; border: 2px solid rgba(255,255,255,.95); box-shadow: inset 0 0 12px 4px rgba(255,255,255,.9), inset 0 0 36px 10px rgba(255,255,255,.42); pointer-events: none; }
-  .notice { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 11px 17px; border: 1px solid rgba(255,255,255,.8); border-radius: 12px; background: rgba(22,25,30,.94); color: #fff; box-shadow: 0 8px 28px rgba(0,0,0,.3), 0 0 18px rgba(255,255,255,.32); font-size: 13px; font-weight: 600; line-height: 1.35; white-space: nowrap; pointer-events: none; }
-  .dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #fff; box-shadow: 0 0 10px #fff; }
+  .notice { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; max-width: calc(100vw - 32px); padding: 9px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(24,25,27,.9); color: #f4f4f5; box-shadow: 0 3px 12px rgba(0,0,0,.2); font-size: 12px; font-weight: 500; line-height: 1.35; white-space: nowrap; pointer-events: none; }
+  .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #80d6ad; }
+  .cursor { position: fixed; z-index: 2; left: 0; top: 0; width: 25px; height: 31px; opacity: 0; transform: translate(-2px,-2px); transition: opacity 100ms ease; filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); pointer-events: none; }
+  .cursor.visible { opacity: 1; }
   @media (max-width: 480px) { .notice { top: 12px; white-space: normal; } }
 </style>
 </head>
-<body><div class="edge"></div><div class="notice"><span class="dot"></span><span>Metis is using your computer · Press Escape to cancel</span></div></body>
+<body><div class="notice"><span>Metis is controlling this PC <span style="opacity:.62">· Esc to stop</span></span></div><svg class="cursor" aria-hidden="true" viewBox="0 0 25 31"><path d="M2 1.5v23l6.2-6 4.1 10 4.1-1.7-4.1-9.8h8.2L2 1.5Z" fill="#fff" stroke="#17191c" stroke-width="1.8" stroke-linejoin="round"/></svg><script>const cursor=document.querySelector(".cursor");window.metisCursor=(x,y,visible)=>{cursor.style.left=x+"px";cursor.style.top=y+"px";cursor.classList.toggle("visible",visible)};</script></body>
 </html>`;
 
 const IDLE_MS = 45_000;
@@ -22,6 +23,8 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
   let active = false;
   let suspended = false;
   let timer;
+  let cursorHideTimer;
+  let cursorDisplayId = null;
   let escapeRegistered = false;
   let suppressEscapeUntil = 0;
 
@@ -76,9 +79,42 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
     }
   }
 
+  function updateCursor(x, y) {
+    if (!active || suspended || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    clearTimeout(cursorHideTimer);
+    const display = screen.getAllDisplays().find((item) => {
+      const b = item.bounds;
+      return x >= b.x && y >= b.y && x < b.x + b.width && y < b.y + b.height;
+    });
+    const nextId = display?.id ?? null;
+    if (cursorDisplayId !== null && cursorDisplayId !== nextId) {
+      const previous = windows.get(cursorDisplayId);
+      if (previous && !previous.isDestroyed()) previous.webContents.executeJavaScript("window.metisCursor?.(0,0,false)").catch(() => {});
+    }
+    cursorDisplayId = nextId;
+    if (!display) return;
+    const overlay = windows.get(display.id);
+    if (!overlay || overlay.isDestroyed() || overlay.webContents.isLoading()) return;
+    const localX = x - display.bounds.x;
+    const localY = y - display.bounds.y;
+    overlay.webContents.executeJavaScript(`window.metisCursor?.(${localX},${localY},true)`).catch(() => {});
+  }
+
+  function hideCursor(delay = 0) {
+    clearTimeout(cursorHideTimer);
+    cursorHideTimer = setTimeout(() => {
+      if (cursorDisplayId !== null) {
+        const overlay = windows.get(cursorDisplayId);
+        if (overlay && !overlay.isDestroyed()) overlay.webContents.executeJavaScript("window.metisCursor?.(0,0,false)").catch(() => {});
+      }
+      cursorDisplayId = null;
+    }, delay);
+  }
+
   function hide() {
     active = false;
     suspended = false;
+    hideCursor();
     clearTimeout(timer);
     if (escapeRegistered) globalShortcut.unregister("Escape");
     escapeRegistered = false;
@@ -105,6 +141,7 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
   function suspendCapture() {
     if (!active) return;
     suspended = true;
+    hideCursor();
     for (const overlay of windows.values()) {
       if (!overlay.isDestroyed()) overlay.hide();
     }
@@ -124,7 +161,7 @@ function createComputerUseOverlay({ BrowserWindow, screen, globalShortcut, onCan
   screen.on("display-removed", sync);
   screen.on("display-metrics-changed", sync);
 
-  return { touch, hide, suspendCapture, resumeCapture, suppressInjectedEscape };
+  return { touch, hide, suspendCapture, resumeCapture, suppressInjectedEscape, updateCursor, hideCursor };
 }
 
 module.exports = { createComputerUseOverlay };
