@@ -306,3 +306,34 @@ test("Cursor send includes native vision images and persists queued follow-ups s
   assert.match(shell, /pagehide/);
   assert.doesNotMatch(shell, /shouldAutoDrainQueue\(\{/);
 });
+
+
+test("system messages remain byte-for-byte intact and outside the compaction recap", () => {
+  const system: ModelMessage = { role: "system", content: "SYSTEM_RULE_STAYS_FOREVER " + "policy ".repeat(700) };
+  const history: ModelMessage[] = [
+    system,
+    { role: "user", content: "Original request " + "context ".repeat(2_000) },
+    { role: "assistant", content: "Older work " + "result ".repeat(2_000) },
+    { role: "user", content: "Continue with the current task." },
+  ];
+  const compacted = compactProviderMessages(history, 4_000);
+  assert.deepEqual(compacted[0], system);
+  assert.match(JSON.stringify(compacted.slice(1)), /\[metis-context-recap:v1\]/);
+  assert.doesNotMatch(JSON.stringify(compacted.slice(1)), /SYSTEM_RULE_STAYS_FOREVER/);
+});
+
+test("external system instructions reserve context without entering the recap", () => {
+  const history: ModelMessage[] = [
+    { role: "user", content: "Old task " + "context ".repeat(1_700) },
+    { role: "assistant", content: "Earlier result " + "result ".repeat(1_700) },
+    { role: "user", content: "Continue." },
+  ];
+  const estimated = history.reduce((sum, message) => sum + estimateContextTokens(message), 0);
+  const window = Math.ceil(estimated / CONTEXT_COMPACT_RATIO) + 100;
+  const noReserve = compactProviderMessages(history, window);
+  const withReserve = compactProviderMessages(history, window, "normal", undefined, undefined, 1_000);
+  assert.deepEqual(noReserve, history);
+  assert.match(JSON.stringify(withReserve), /\[metis-context-recap:v1\]/);
+  const afterWithSystem = withReserve.reduce((sum, message) => sum + estimateContextTokens(message), 1_000);
+  assert.ok(afterWithSystem <= effectiveContextBudget(window), `system and history use ${afterWithSystem} tokens`);
+});

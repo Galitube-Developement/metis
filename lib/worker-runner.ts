@@ -33,6 +33,7 @@ import { routeModel, type RoutingModel } from "@/lib/model-routing";
 import { routeTask } from "@/lib/agent-efficiency";
 import type { Chat } from "@/lib/store";
 import { compactChatHistoryForPrompt, runAlternativeProviderJob, COMPACTION_MARKER } from "@/lib/providers/runner";
+import { recoveryTranscript } from "@/lib/providers/recovery-transcript";
 import { contextModeOf, contextWindowForSelection } from "@/lib/context-window";
 import { appendAgentTrace } from "@/lib/agent-trace";
 import { parseAgentTranscript, stripTranscriptDump } from "@/lib/agent-transcript";
@@ -848,30 +849,18 @@ export async function runQueuedJob(job: AgentJob) {
     let recoveryBootstrapRecap: string | null = null;
     const buildRecoveryBootstrapRecap = () => {
       if (recoveryBootstrapRecap || job.incognito || chat.incognito) return recoveryBootstrapRecap;
-      const compacted = compactChatHistoryForPrompt(chat, {
-        excludeMessageId: job.messageId,
-        contextWindow,
-        contextMode,
-        maxChars: 120_000,
-      });
-      if (!compacted.text.trim()) return null;
-      const recap = compress(compacted.text, "stacked").text;
-      const boundedRecap = recap.length > 120_000
-        ? `[Earlier persisted messages truncated to fit the model context]\n${recap.slice(-120_000)}`
-        : recap;
-      recoveryBootstrapRecap = `Recovery bootstrap context ${COMPACTION_MARKER} (one-time recap from durable history; preserve task state, TODOs, errors, decisions, and changed files — do not repeat):\n${boundedRecap}`;
+      const recap = recoveryTranscript(chat, job.messageId);
+      if (!recap) return null;
+      recoveryBootstrapRecap = `Recovery bootstrap context ${COMPACTION_MARKER} (one-time recap from durable history; preserve task state, TODOs, errors, decisions, and changed files — do not repeat):\n${recap}`;
       return recoveryBootstrapRecap;
     };
     const hasPriorNativeAgentId = Boolean(nativeAgentId);
-    const nativeContextPressure = typeof cursorBinding?.lastContextTokens === "number"
-      && typeof contextWindow === "number"
-      && cursorBinding.lastContextTokens / contextWindow >= 0.8;
     const nativeContextWindowChanged = typeof cursorBinding?.lastContextWindow === "number"
       && typeof contextWindow === "number"
       && cursorBinding.lastContextWindow !== contextWindow;
     const nativeModelChanged = Boolean(cursorBinding?.modelId && cursorBinding.modelId !== requestedModelId);
+    // Cursor owns native compaction; context pressure alone must not discard its session.
     const shouldResumeNative = hasPriorNativeAgentId
-      && !nativeContextPressure
       && !nativeContextWindowChanged
       && !nativeModelChanged;
 
@@ -955,15 +944,12 @@ export async function runQueuedJob(job: AgentJob) {
       }
     } else {
       // No prior native session: fresh agent with normal compaction
-      let historyCompacted = false;
-      const compactedHistory = (job.incognito || chat.incognito)
-        ? { text: "", compacted: false }
-        : compactChatHistoryForPrompt(chat, {
+      if (!job.incognito && !chat.incognito) {
+        compactChatHistoryForPrompt(chat, {
             excludeMessageId: job.messageId,
             contextWindow,
             contextMode,
             onCompaction: (event) => {
-              historyCompacted = historyCompacted || event.status === "completed";
               const part: MessagePart = { ...event };
               const index = parts.findIndex((item) => item.type === "compaction");
               if (index >= 0) parts[index] = part;
@@ -972,6 +958,7 @@ export async function runQueuedJob(job: AgentJob) {
               checkpoint(true);
             },
           });
+      }
       // NOTE: Do NOT clear agentId on compaction for native sessions.
       // Native Cursor owns its context; compaction is a Metis concern only.
       agent = await withTimeout(Agent.create({
@@ -983,19 +970,7 @@ export async function runQueuedJob(job: AgentJob) {
         ...(customSubagentDefinitions ? { agents: customSubagentDefinitions } : {}),
       }), AGENT_INIT_TIMEOUT_MS, "The agent session could not be created within 90 seconds.");
 
-      // Store compacted history for prompt building (fresh session only)
-      if (!job.incognito && !chat.incognito && compactedHistory.text) {
-        recoveryBootstrapRecap = compressContext(
-          compactedHistory.text,
-          Boolean(compressionSettings?.compressChatHistory ?? true),
-        )
-          ? `Recovery bootstrap context ${COMPACTION_MARKER} (one-time durable bootstrap for a fresh native Cursor session; preserve task state and do not repeat it):\n` +
-            compressContext(
-              compactedHistory.text,
-              Boolean(compressionSettings?.compressChatHistory ?? true),
-            )
-          : null;
-      }
+      buildRecoveryBootstrapRecap();
     }
 
     emit("status", { status: "running", message: "Waiting for the model…" });

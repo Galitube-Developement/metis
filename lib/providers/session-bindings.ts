@@ -25,6 +25,16 @@ export function providerSessionNeedsCompaction(
     && binding.lastContextTokens / contextWindow >= CONTEXT_COMPACT_RATIO;
 }
 
+export function nativeSessionNeedsManagedCompaction(
+  execution: ProviderExecution,
+  binding: Pick<ProviderSessionBinding, "lastContextTokens"> | null | undefined,
+  contextWindow: number | undefined,
+): boolean {
+  // Codex compacts its own persistent thread. Replaying Metis's persisted
+  // transcript would lose provider-native context and tool state.
+  return execution !== "codex-sdk" && providerSessionNeedsCompaction(binding, contextWindow);
+}
+
 export function updateProviderSessionBinding(input: {
   chatId: string;
   ownerId?: string;

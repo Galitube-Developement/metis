@@ -26,19 +26,27 @@ import {
 } from "./provider-support";
 import { routeTask } from "@/lib/agent-efficiency";
 import { unsupported, type ProviderAdapterShape, type ProviderResult } from "./contract";
-import { contextModeOf } from "@/lib/context-window";
+import { contextModeOf, estimateContextTokens } from "@/lib/context-window";
 
 async function runAiSdk(context: ProviderContext): Promise<ProviderResult> {
   const tools = {
     ...(await agentToolsFor(context)),
     ...providerNativeSearchTools(context),
   };
+  const instructions = providerPrompt(
+    context.job,
+    Object.keys(tools),
+    false,
+    effectiveModelParams(context.chat, context.job),
+  );
+  const reservedTokens = estimateContextTokens(instructions);
   const messages = modelMessages(
     context.chat,
     context.job,
     resolvedContextWindow(context),
     contextModeOf(effectiveModelParams(context.chat, context.job)),
     context.onCompaction,
+    reservedTokens,
   );
   const route = routeTask(context.job.message);
   const stream = (nextMessages: ModelMessage[], remainingSteps: number) =>
@@ -48,12 +56,7 @@ async function runAiSdk(context: ProviderContext): Promise<ProviderResult> {
         context.modelId,
         context.connection,
       ),
-      instructions: providerPrompt(
-        context.job,
-        Object.keys(tools),
-        false,
-        effectiveModelParams(context.chat, context.job),
-      ),
+      instructions,
       messages: nextMessages,
       tools,
       reasoning: aiReasoningForSelection(
@@ -75,6 +78,7 @@ async function runAiSdk(context: ProviderContext): Promise<ProviderResult> {
       messages,
       stream,
       route.initialSteps,
+      reservedTokens,
     ),
   };
 }
@@ -137,24 +141,27 @@ async function runOAuthAiSdk(
       ...(await agentToolsFor(context)),
       ...providerNativeSearchTools(context),
     };
+    const instructions = providerPrompt(
+      context.job,
+      Object.keys(oauthTools),
+      false,
+      effectiveModelParams(context.chat, context.job),
+      providerKey,
+    );
+    const reservedTokens = estimateContextTokens(instructions);
     const messages = modelMessages(
       context.chat,
       context.job,
       resolvedContextWindow(context),
       contextModeOf(effectiveModelParams(context.chat, context.job)),
       context.onCompaction,
+      reservedTokens,
     );
     const route = routeTask(context.job.message);
     const stream = (nextMessages: ModelMessage[], remainingSteps: number) =>
       streamText({
         model: provider.languageModel(oauthModelId),
-        instructions: providerPrompt(
-          context.job,
-          Object.keys(oauthTools),
-          false,
-          effectiveModelParams(context.chat, context.job),
-          providerKey,
-        ),
+        instructions,
         messages: nextMessages,
         tools: oauthTools,
         reasoning: aiReasoningForSelection(
@@ -175,6 +182,7 @@ async function runOAuthAiSdk(
       messages,
       stream,
       route.initialSteps,
+      reservedTokens,
     );
     const refreshedAuth = await readFile(authFile, "utf8").catch(
       () => context.connection.secret,

@@ -46,7 +46,7 @@ import { contextWindowForSelection } from "@/lib/context-window";
 import {
   clearProviderSessionBinding,
   getProviderSessionBinding,
-  providerSessionNeedsCompaction,
+  nativeSessionNeedsManagedCompaction,
 } from "@/lib/providers/session-bindings";
 import { withLocalFileEditSnapshot } from "@/lib/file-edit-snapshot";
 import { getAgentCwd } from "@/lib/mcp";
@@ -353,7 +353,7 @@ export async function runAlternativeProviderJob(
         selectedModel || { id: parsed.modelId, providerId: definition.key },
         job.modelParams?.length ? job.modelParams : chat.modelParams,
       );
-      if (binding?.lastKnownGoodCursor && providerSessionNeedsCompaction(binding, contextWindow)) {
+      if (binding?.lastKnownGoodCursor && nativeSessionNeedsManagedCompaction(execution, binding, contextWindow)) {
         emit("status", {
           status: "compacting",
           message: "Native provider context reached the compaction threshold; continuing in a fresh compacted session.",
