@@ -20,7 +20,6 @@ import {
   ArrowUp,
   ArrowDown,
   Activity,
-  Flag,
   Repeat2,
   CalendarClock,
   Cpu,
@@ -96,6 +95,7 @@ import { toast } from "sonner";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { RichComposerInput } from "@/components/rich-composer-input";
+import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { VoiceInput } from "@/components/voice-input";
@@ -8916,21 +8916,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ) : (
     <div className="w-full space-y-2">
       {queuedList}
-      {chatGoal ? (
-        <div className="group/goal rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="status" aria-label="Current chat goal" tabIndex={0}>
-          <div className="flex items-start gap-2">
-            <Flag className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate break-words text-muted-foreground group-hover/goal:overflow-visible group-hover/goal:whitespace-normal group-focus/goal:overflow-visible group-focus/goal:whitespace-normal">Goal: <span className="text-foreground/80">{chatGoal}</span></span>
-          </div>
-          {chatGoalReferences.length ? (
-            <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Goal context">
-              {chatGoalReferences.map((reference) => (
-                <span key={`${reference.kind}-${reference.id}`} className="rounded-md border border-border/60 bg-muted/25 px-1.5 py-0.5 text-muted-foreground">@{reference.label}</span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {chatGoal ? <ChatGoalBanner goal={chatGoal} references={chatGoalReferences} /> : null}
       {referenceText ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
