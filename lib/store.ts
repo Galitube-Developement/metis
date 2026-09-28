@@ -387,6 +387,9 @@ export type ChatSessionState = {
   unpinnedGlobalNoteIds?: string[];
   filters?: Record<string, string | boolean | number | null>;
   modeId?: string;
+  /** Goal set by the built-in /goal command for this chat. */
+  goal?: string | null;
+  goalReferences?: ChatMessage["references"];
   providerSessions?: Record<string, ProviderSessionBinding>;
 };
 

@@ -1383,12 +1383,10 @@ export async function consumeAiStream(
   return usage;
 }
 
-export function providerMcpContext(
-  context: ProviderContext,
-  options: { runtimeApprovalGate?: boolean } = {},
-) {
+export function providerMcpContext(context: ProviderContext) {
   const mode = modeById(
     context.job.modeId || context.chat.sessionState?.modeId,
+    getGlobalModelSettings(context.job.userId).customModes || [],
   );
   return buildMcpContext({
     chatId: context.job.chatId,
@@ -1397,10 +1395,7 @@ export function providerMcpContext(
     incognito: Boolean(context.job.incognito),
     automation: Boolean(context.job.automationId),
     modeId: mode.id,
-    runtimeMode:
-      options.runtimeApprovalGate === false
-        ? "full-access"
-        : runtimeModeForChat(context.chat),
+    runtimeMode: runtimeModeForChat(context.chat),
     modePolicy: {
       allowedCategories: mode.allowedCategories,
       toolOverrides: mode.toolOverrides || {},

@@ -223,7 +223,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
       : undefined;
   const agentCwd = getUserAgentCwd(context.job.userId);
   const mcp = getMcpServers(
-    providerMcpContext(context, { runtimeApprovalGate: false }),
+    providerMcpContext(context),
   ).gateway;
   const bearerToken = mcp.type === "http"
     ? mcp.headers?.Authorization?.replace(/^Bearer\s+/i, "").trim()

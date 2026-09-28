@@ -162,7 +162,7 @@ export async function POST(req: Request) {
   if (
     chat.automationId ||
     currentJob.automationId ||
-    normalizeRuntimeMode(chat.runtimeMode) !== "approval-required"
+    !["approval-required", "auto-accept-edits"].includes(normalizeRuntimeMode(chat.runtimeMode))
   ) {
     return Response.json(
       { error: "Runtime approval is not enabled for this run" },

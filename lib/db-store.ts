@@ -805,6 +805,30 @@ export function updateChat(
         merged.browserUrl = previous.browserUrl;
         merged.browserUrlUpdatedAt = previous.browserUrlUpdatedAt;
       }
+      if ("goal" in patch.sessionState) {
+        const goal = typeof patch.sessionState.goal === "string" ? patch.sessionState.goal.trim().slice(0, 4_000) : "";
+        if (goal) merged.goal = goal;
+        else {
+          delete merged.goal;
+          delete merged.goalReferences;
+        }
+      }
+      if ("goalReferences" in patch.sessionState && merged.goal) {
+        const references = Array.isArray(patch.sessionState.goalReferences)
+          ? patch.sessionState.goalReferences.slice(0, 20).filter((reference) =>
+              reference && typeof reference.kind === "string" && typeof reference.id === "string" && typeof reference.label === "string",
+            ).map((reference) => ({
+              kind: reference.kind.slice(0, 40),
+              id: reference.id.slice(0, 500),
+              label: reference.label.slice(0, 200),
+              ...(reference.detail ? { detail: reference.detail.slice(0, 500) } : {}),
+              ...(reference.path ? { path: reference.path.slice(0, 2_000) } : {}),
+              ...(reference.content ? { content: reference.content.slice(0, 12_000) } : {}),
+            }))
+          : [];
+        if (references.length) merged.goalReferences = references;
+        else delete merged.goalReferences;
+      }
       next.sessionState = merged;
     }
     if (patch.runStatus) {

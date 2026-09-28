@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -54,23 +54,23 @@ test("normalizeRuntimeMode accepts only the complete runtime mode set", () => {
 test("every runtime mode has complete provider mappings", () => {
   assert.deepEqual(
     RUNTIME_MODES.map((mode) => RUNTIME_MODE_TO_CODEX[mode]?.sandboxMode),
-    ["read-only", "workspace-write", "workspace-write", "danger-full-access"],
+    ["workspace-write", "workspace-write", "workspace-write", "danger-full-access"],
   );
   assert.deepEqual(
     RUNTIME_MODES.map((mode) => RUNTIME_MODE_TO_CODEX[mode]?.approvalPolicy),
-    ["untrusted", "on-request", "on-request", "never"],
+    ["never", "never", "never", "never"],
   );
   assert.deepEqual(
     RUNTIME_MODES.map(
       (mode) => RUNTIME_MODE_TO_CLAUDE_PERMISSION[mode]?.permissionMode,
     ),
-    ["default", "acceptEdits", "acceptEdits", "bypassPermissions"],
+    ["default", "acceptEdits", "auto", "bypassPermissions"],
   );
   assert.deepEqual(
     RUNTIME_MODES.map(
       (mode) => RUNTIME_MODE_TO_CLAUDE_PERMISSION[mode]?.canUseToolRequired,
     ),
-    [true, false, false, false],
+    [true, true, true, false],
   );
   for (const mode of RUNTIME_MODES) {
     assert.ok(RUNTIME_MODE_TO_CODEX[mode]);
@@ -134,6 +134,10 @@ test("chat persistence normalizes runtime mode and session approvals keep their 
   assert.equal(getChat(chat.id)?.runtimeMode, undefined);
   updateChat(chat.id, { runtimeMode: "approval-required" });
   assert.equal(getChat(chat.id)?.runtimeMode, "approval-required");
+  updateChat(chat.id, { sessionState: { goal: "  Ship the feature  " } });
+  assert.equal(getChat(chat.id)?.sessionState?.goal, "Ship the feature");
+  updateChat(chat.id, { sessionState: { goal: null } });
+  assert.equal(getChat(chat.id)?.sessionState?.goal, undefined);
 
   const scope = approvalPatternFor("write_file", { path: "/tmp/a/b" });
   const { approvalId } = createApproval({
@@ -181,6 +185,9 @@ test("runtime approval gate covers terminal and write tools only in approval mod
   );
   assert.equal(runtimeModeRequiresApproval("approval-required", "write"), true);
   assert.equal(runtimeModeRequiresApproval("approval-required", "read"), false);
+  assert.equal(runtimeModeRequiresApproval("auto-accept-edits", "terminal"), true);
+  assert.equal(runtimeModeRequiresApproval("auto-accept-edits", "write"), false);
+  assert.equal(runtimeModeRequiresApproval("auto", "terminal"), false);
   assert.equal(runtimeModeRequiresApproval("full-access", "terminal"), false);
   // The package re-exports the same pure gate used by gateway dispatch.
   // @ts-expect-error — untyped .mjs re-export; shapes verified by assertions below.
@@ -198,6 +205,15 @@ test("runtime approval gate covers terminal and write tools only in approval mod
     ),
     true,
   );
+  assert.equal(
+    gateway.runtimeModeRequiresApproval(
+      "auto-accept-edits",
+      gateway.modeToolCategory("execute_command") as ToolPermissionCategory,
+    ),
+    true,
+  );
+  assert.equal(gateway.runtimeModeRequiresApproval("auto-accept-edits", "write"), false);
+  assert.equal(gateway.runtimeModeRequiresApproval("auto", "terminal"), false);
   assert.equal(
     gateway.runtimeModeRequiresApproval(
       "full-access",
@@ -222,4 +238,47 @@ test("runtime approval gate covers terminal and write tools only in approval mod
     ),
     true,
   );
+});
+
+test("gateway deny prevents a file edit before execution", async () => {
+  // @ts-expect-error — the gateway's JavaScript module has no declaration file.
+  const gateway = (await import("../packages/mcp-gateway/index.mjs")) as {
+    dispatchGatewayTool: (name: string, args: Record<string, unknown>, options: Record<string, unknown>) => Promise<{ isError?: boolean; content: Array<{ text?: string }> }>;
+  };
+  const target = path.join(dataDir, "denied-edit.txt");
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests += 1;
+    const url = String(input);
+    const body = init?.method === "POST"
+      ? { approvalId: "test-approval" }
+      : url.includes("?id=")
+        ? { status: "resolved", decision: "deny" }
+        : { approvedPatterns: [], approvedOnce: false };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const result = await gateway.dispatchGatewayTool("write_file", { path: target, content: "must not be written" }, {
+      auditCall: false,
+      context: { runtimeMode: "approval-required", chatId: "chat-test", jobId: "job-test" },
+    });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]?.text || "", /denied/i);
+    assert.equal(existsSync(target), false);
+    assert.equal(requests, 3);
+    const terminalTarget = path.join(dataDir, "denied-command.txt");
+    const terminal = await gateway.dispatchGatewayTool("execute_command", {
+      command: `printf denied > ${terminalTarget}`,
+      cwd: dataDir,
+    }, {
+      auditCall: false,
+      context: { runtimeMode: "auto-accept-edits", chatId: "chat-test", jobId: "job-test" },
+    });
+    assert.equal(terminal.isError, true);
+    assert.equal(existsSync(terminalTarget), false);
+    assert.equal(requests, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

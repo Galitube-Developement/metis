@@ -20,6 +20,7 @@ import { canonicalizeToolPart } from "@/lib/providers/tool-events";
 import { logError } from "@/lib/error-logs";
 import { isModelAllowed } from "@/lib/model-access";
 import { buildAttachmentPrompt } from "@/lib/uploads";
+import { formatChatGoal } from "@/lib/chat-goal";
 import type { AgentJob } from "@/lib/jobs";
 import {
   findActiveConnection,
@@ -38,6 +39,7 @@ import { parseAgentTranscript, stripTranscriptDump } from "@/lib/agent-transcrip
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { createSnapshot } from "@/lib/shared-context";
 import { allModes, modeById } from "@/lib/modes";
+import { runtimeModeForChat } from "@/lib/runtime-mode";
 import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, MessagePart } from "@/lib/store";
 import { compress, type CompressionMode } from "@/lib/compression";
@@ -683,9 +685,7 @@ export async function runQueuedJob(job: AgentJob) {
     incognito: Boolean(job.incognito || chat.incognito),
     automation: Boolean(job.automationId),
     modeId: activeMode.id,
-    // Runtime approvals are phase-one AI-SDK/GLM gateway behavior. Cursor has
-    // its own execution path and must not open a second interactive gate.
-    runtimeMode: "full-access",
+    runtimeMode: runtimeModeForChat(chat),
     modePolicy: JSON.stringify({
       allowedCategories: modeCategories,
       toolOverrides: activeMode.toolOverrides || {},
@@ -1023,13 +1023,14 @@ export async function runQueuedJob(job: AgentJob) {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
       `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
+      formatChatGoal(chat.sessionState, job.userId, chat.id, Boolean(job.incognito || chat.incognito)),
       "Working style: precise, technically fluent, proactive. Act with your tools instead of describing steps. Reply in the user's language — German in, German out. No filler phrases. On clear orders decide and act yourself; ask back only when genuinely ambiguous or destructive.",
       "Execution efficiency: batch related read-only inspection instead of issuing many tiny calls; reuse the known project/repository cwd instead of rediscovering it; run targeted checks while iterating and the expensive full test/build pass only once after the working tree has stopped changing. Parallelize independent lightweight reads when safe, but do not run competing heavyweight builds. Keep progress narration to short milestone updates rather than one message per tool call.",
       runToolContract,
       "Web/browser routing: use web_search for discovery and web_fetch for fast read-only extraction of ordinary public pages (local Scrapling static scraper first, public remote fallback second). For login/authenticated state, forms, uploads/downloads, purchases/checkouts, important state-changing tasks, long interactive page workflows, or any web_fetch result with requiresBrowser=true, ALWAYS use the persistent Metis in-app browser (browser_navigate, browser_form_state, browser_batch, browser_wait_for, browser_fill_form, browser_snapshot). Inspect current browser state first; navigate only when the URL needs to change and never reload/re-login merely to inspect progress. Do not use shell, curl, detached Playwright, or stealth/challenge-bypass tooling as a substitute. If a site blocks static extraction, use the normal persistent browser if appropriate or report the limitation. Request browser_screenshot only when visual reasoning is genuinely required.",
       `Available mode IDs for request_mode_change: ${availableModes || "agent (Agent), plan (Plan), ask (Ask)"}. Use the exact ID before the parentheses; never invent values such as "Code". For implementation or file changes, request modeId "agent".`,
       "Response recommendation rule: when the result is incomplete, uses demo/stub endpoints, or still lacks real integrations, clearly say what is and is not implemented, then always provide 1–3 concise, concrete next-step recommendations in exactly one ```suggestions fenced block so the UI can render clickable actions. End by asking whether to implement the recommended next step. Do not present demo functionality as production-ready.",
-      ...(activeMode.id !== "agent" && !job.automationId
+      ...(!["agent", "gauntlet"].includes(activeMode.id) && !job.automationId
         ? [
             "Mode transition rule: if the user's request requires a tool category this mode does not allow, you MUST call the request_mode_change MCP tool and ask for confirmation. Do not merely tell the user to switch modes manually. After confirmation, continue the original request in this same run using the newly allowed MCP tools (for example write_file); do not wait for a second user message.",
           ]

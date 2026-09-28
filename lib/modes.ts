@@ -22,6 +22,15 @@ export const BUILT_IN_MODES: AgentMode[] = [
     builtIn: true,
   },
   {
+    id: "gauntlet",
+    name: "Gauntlet",
+    description: "Pursue a chat goal through implementation, checks, and iteration.",
+    icon: "activity",
+    instructions: "You are in Gauntlet mode. Use the same tools and permissions as Agent. Work toward the current chat goal when one is set. Break the goal into verifiable steps, execute them, check the result with real evidence, and continue correcting failures until the goal is met or a genuine blocker requires the user. Keep the current task checklist updated. Do not claim success from an untested change.",
+    allowedCategories: [...TOOL_PERMISSION_CATEGORIES],
+    builtIn: true,
+  },
+  {
     id: "plan",
     name: "Plan",
     description: "Read, investigate, and create plans without changing files.",

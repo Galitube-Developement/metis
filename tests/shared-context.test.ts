@@ -380,6 +380,26 @@ test("agent chat titles respect the per-chat rename lock", async () => {
   assert.equal(modules[0].listChatsForUser().find((chat) => chat.id === titled.id)?.agentTitleLocked, true);
 });
 
+test("chat goal keeps selected @ context across turns and clears it with the goal", async () => {
+  const { createChat, getChat, updateChat } = modules[0];
+  const { formatChatGoal } = await import("../lib/chat-goal");
+  const chat = createChat("Goal context test");
+  updateChat(chat.id, {
+    sessionState: {
+      goal: "Use @Motion spec for the animation",
+      goalReferences: [{ kind: "canvas", id: "motion-spec", label: "Motion spec", content: "Duration: 180ms" }],
+    },
+  });
+  const saved = getChat(chat.id);
+  assert.equal(saved?.sessionState?.goalReferences?.[0]?.label, "Motion spec");
+  assert.match(formatChatGoal(saved?.sessionState, saved?.ownerId, chat.id), /Duration: 180ms/);
+
+  updateChat(chat.id, { sessionState: { goal: null, goalReferences: [] } });
+  const cleared = getChat(chat.id);
+  assert.equal(cleared?.sessionState?.goalReferences, undefined);
+  assert.equal(formatChatGoal(cleared?.sessionState, cleared?.ownerId, chat.id), "");
+});
+
 test("agent prompt tells the model to set a short chat title", () => {
   const source = readFileSync(new URL("../lib/worker-runner.ts", import.meta.url), "utf8");
   assert.match(source, /update_chat_title with a 2-6 word label/);

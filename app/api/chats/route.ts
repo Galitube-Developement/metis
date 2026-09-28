@@ -42,7 +42,8 @@ export async function POST(req: Request) {
       modelParams?: Array<{ id: string; value: string }>;
       incognito?: boolean;
       modeId?: string;
-  projectId?: string;
+      runtimeMode?: string;
+      projectId?: string;
     } = {};
     try {
       body = (await req.json()) as {
@@ -52,7 +53,8 @@ export async function POST(req: Request) {
         modelParams?: Array<{ id: string; value: string }>;
         incognito?: boolean;
         modeId?: string;
-  projectId?: string;
+        runtimeMode?: string;
+        projectId?: string;
       };
     } catch {
       body = {};
@@ -69,13 +71,11 @@ export async function POST(req: Request) {
       },
       { incognito: body.incognito === true, projectId: body.projectId?.trim() || undefined },
     );
-    if (body.modeId?.trim()) {
-      chat =
-        updateChat(
-          chat.id,
-          { sessionState: { modeId: body.modeId.trim().slice(0, 80) } },
-          ownerId,
-        ) || chat;
+    if (body.modeId?.trim() || body.runtimeMode?.trim()) {
+      chat = updateChat(chat.id, {
+        ...(body.modeId?.trim() ? { sessionState: { modeId: body.modeId.trim().slice(0, 80) } } : {}),
+        ...(body.runtimeMode?.trim() ? { runtimeMode: body.runtimeMode.trim() } : {}),
+      }, ownerId) || chat;
     }
     return Response.json({ chat }, { status: 201 });
   } catch (error) {

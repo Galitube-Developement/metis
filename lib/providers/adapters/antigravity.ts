@@ -58,7 +58,7 @@ async function runAntigravity(
     .filter(Boolean)
     .join("\n\nUser request:\n");
   const mcp = getMcpServers(
-    providerMcpContext(context, { runtimeApprovalGate: false }),
+    providerMcpContext(context),
   );
   const cwd = getUserAgentCwd(context.job.userId);
   const extraEnv =

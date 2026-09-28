@@ -72,6 +72,8 @@ import {
   Pin,
   PinOff,
   Plus,
+  Paperclip,
+  AtSign,
   RotateCcw,
   Reply,
   Search,
@@ -135,6 +137,7 @@ import { canvasFromToolPayload, classifyToolKind, isToolRunning, layoutAssistant
 import { reconcileMessageParts } from "@/lib/message-parts";
 import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
+import { BUILT_IN_SLASH_COMMANDS, matchSlashCommand, slashCommandQuery } from "@/lib/slash-commands";
 import {
   composerLiveText,
   composerTranscriptInsert,
@@ -729,6 +732,8 @@ type ChatSessionState = {
   workspaceOpen?: boolean;
   workspaceWidth?: number;
   modeId?: string;
+  goal?: string | null;
+  goalReferences?: ReferenceItem[];
 };
 
 type TerminalTab = {
@@ -742,6 +747,7 @@ function ModeIcon({ mode, className }: { mode: AgentMode; className?: string }) 
   if (mode.id === "plan") return <ClipboardList className={className} />;
   if (mode.id === "ask") return <MessageSquare className={className} />;
   if (mode.id === "agent") return <Bot className={className} />;
+  if (mode.id === "gauntlet") return <Activity className={className} />;
   if (mode.icon === "eye") return <Eye className={className} />;
   if (mode.icon === "brain") return <Brain className={className} />;
   if (mode.icon === "terminal") return <Terminal className={className} />;
@@ -1990,6 +1996,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [modelId, setModelId] = useState("");
   const [modes, setModes] = useState<AgentMode[]>([]);
   const [modeId, setModeId] = useState("agent");
+  const [chatGoal, setChatGoal] = useState("");
+  const [chatGoalReferences, setChatGoalReferences] = useState<ReferenceItem[]>([]);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
   const [defaultModelId, setDefaultModelId] = useState("");
   const [defaultModelParams, setDefaultModelParams] = useState<ModelParamSelection[]>([]);
@@ -2196,6 +2204,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   } | null>(null);
   const [referenceResults, setReferenceResults] = useState<ReferenceItem[]>([]);
   const [referenceIndex, setReferenceIndex] = useState(0);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashResults = slashQuery === null ? [] : BUILT_IN_SLASH_COMMANDS.filter((command) => command.id.startsWith(slashQuery));
   const referenceAutocompleteDismissedRef = useRef(false);
   const previousComposerInputRef = useRef("");
   const [referenceText, setReferenceText] = useState("");
@@ -4256,6 +4267,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     loadedChatIdsRef.current.add(id);
     const browser = normalizeBrowserContext(snap.browserContext, id);
     const session = snap.sessionState || {};
+    setChatGoal(session.goal || "");
+    setChatGoalReferences(session.goalReferences || []);
     clearUnread(id);
     if (snap.updatedAt) seenChatUpdatedAtRef.current.set(id, snap.updatedAt);
     if (!snap.pendingQuestion) {
@@ -4412,6 +4425,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setBusySynced(false);
       setChatTitle("New chat");
       setModeId("agent");
+      setChatGoal("");
+      setChatGoalReferences([]);
       setAgentId(undefined);
       const lastEquippedModelId =
         typeof window !== "undefined" ? localStorage.getItem(MODEL_STORAGE_KEY) : null;
@@ -4696,6 +4711,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setBrowserUrl(activeTab?.url || "");
             setBrowserInput(activeTab?.url || "");
             const session = next.sessionState || {};
+            setChatGoal(session.goal || "");
+            setChatGoalReferences(session.goalReferences || []);
             setModeId(session.modeId || "agent");
             const serverRuntimeMode = normalizeRuntimeMode(next.runtimeMode);
             setRuntimeMode(serverRuntimeMode);
@@ -5074,6 +5091,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!authed) return;
+    const currentUrl = new URLSearchParams(window.location.search);
+    if (routeChatId !== currentUrl.get("c") || routeView !== currentUrl.get("view")) return;
     const current = activeChatIdRef.current;
     const routeProjectId = parseProjectRouteId(routeChatId);
     if (routeChatId === "automations" || routeView === "automations") {
@@ -5140,6 +5159,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
         applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
+        setChatGoal(data.chat.sessionState?.goal || "");
+        setChatGoalReferences(data.chat.sessionState?.goalReferences || []);
         setModeId(serverModeId);
         if (typeof window !== "undefined") localStorage.setItem(MODE_STORAGE_KEY, serverModeId);
         const serverRuntimeMode = normalizeRuntimeMode(data.chat.runtimeMode);
@@ -6088,6 +6109,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           modelParams: stateRef.current.modelParams,
           incognito,
           modeId,
+          runtimeMode,
           ...(!incognito && draftProjectIdRef.current ? { projectId: draftProjectIdRef.current } : {}),
         }),
       });
@@ -6100,6 +6122,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         agentId: undefined,
         modelId: stateRef.current.modelId,
         modelParams: stateRef.current.modelParams,
+        runtimeMode: normalizeRuntimeMode(data.chat.runtimeMode),
         queuedMessages: stateRef.current.queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
           id,
           text,
@@ -6998,6 +7021,54 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     e?.preventDefault();
     const isOverride = textOverride !== undefined;
     const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
+    const slashCommand = !isOverride ? matchSlashCommand(text) : null;
+    if (!isOverride && /^\/[a-z-]+(?:\s|$)/i.test(text) && !slashCommand) {
+      toast.error("Unknown slash command");
+      return;
+    }
+    if (slashCommand?.id === "model") {
+      setInput("");
+      setComposerSyncNonce((current) => current + 1);
+      setSlashQuery(null);
+      openSlashModelPicker();
+      return;
+    }
+    if (slashCommand?.id === "goal") {
+      const goal = slashCommand.argument === "clear" ? "" : slashCommand.argument.slice(0, 4_000);
+      if (!slashCommand.argument) {
+        toast.info(chatGoal ? `Current goal: ${chatGoal}` : "Use /goal followed by a goal for this chat.");
+        return;
+      }
+      const goalChatId = await ensureChatId();
+      if (!goalChatId) {
+        toast.error("Could not create a chat for this goal.");
+        return;
+      }
+      const cached = chatCacheRef.current.get(goalChatId);
+      const goalReferences = goal
+        ? references.filter((reference) => goal.includes(`@${reference.label}`))
+        : [];
+      const sessionState = { ...(cached?.sessionState || {}), goal: goal || null, goalReferences };
+      const goalResponse = await fetch(`/api/chats/${goalChatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionState }),
+      });
+      if (!goalResponse.ok) {
+        toast.error("Could not save the chat goal.");
+        return;
+      }
+      if (cached) chatCacheRef.current.set(goalChatId, { ...cached, sessionState });
+      setChatGoal(goal);
+      setChatGoalReferences(goalReferences);
+      setReferences([]);
+      setReferenceMenu(null);
+      setInput("");
+      setComposerSyncNonce((current) => current + 1);
+      setSlashQuery(null);
+      toast.success(goal ? "Chat goal saved" : "Chat goal cleared");
+      return;
+    }
     const filesToSend = attachmentsOverride ?? pendingFiles;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
@@ -8284,6 +8355,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     composerDirtyUntilRef.current = edit.dirtyUntil;
     if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
     setInput(value);
+    const nextSlashQuery = slashCommandQuery(value, cursorPosition);
+    setSlashQuery(nextSlashQuery);
+    setSlashIndex(0);
+    if (nextSlashQuery !== null) {
+      setReferenceMenu(null);
+      return;
+    }
     if (referenceAutocompleteDismissedRef.current) {
       const addedAtMention =
         (value.match(/@/g) || []).length > (previousValue.match(/@/g) || []).length ||
@@ -8307,6 +8385,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       start,
       end: cursorPosition,
     });
+  }
+
+  function openSlashModelPicker() {
+    if (window.matchMedia("(max-width: 767px)").matches) setMobileModelMenuOpen(true);
+    else setModelMenuOpen(true);
+  }
+
+  function selectSlashCommand(id: "model" | "goal") {
+    setSlashQuery(null);
+    if (id === "model") {
+      setInput("");
+      setComposerSyncNonce((current) => current + 1);
+      openSlashModelPicker();
+      return;
+    }
+    setInput("/goal ");
+    setComposerSyncNonce((current) => current + 1);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
   async function selectReference(reference: ReferenceItem) {
@@ -8804,6 +8900,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ) : (
     <div className="w-full space-y-2">
       {queuedList}
+      {chatGoal ? (
+        <div className="rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs" role="status" aria-label="Current chat goal">
+          <div className="flex items-center gap-2">
+            <Activity className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate text-muted-foreground">Goal: <span className="text-foreground/80">{chatGoal}</span></span>
+          </div>
+          {chatGoalReferences.length ? (
+            <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Goal context">
+              {chatGoalReferences.map((reference) => (
+                <span key={`${reference.kind}-${reference.id}`} className="rounded-md border border-border/60 bg-muted/25 px-1.5 py-0.5 text-muted-foreground">@{reference.label}</span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {referenceText ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
@@ -8863,6 +8974,25 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           dragOver && "bg-muted/40 ring-foreground/30",
         )}
       >
+        {slashQuery !== null ? (
+          <div className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl" role="listbox" aria-label="Slash commands">
+            {slashResults.length ? slashResults.map((command, index) => (
+              <button
+                key={command.id}
+                type="button"
+                role="option"
+                aria-selected={index === slashIndex}
+                className={cn("flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left", index === slashIndex ? "bg-muted" : "hover:bg-muted/60")}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setSlashIndex(index)}
+                onClick={() => selectSlashCommand(command.id)}
+              >
+                <span className="min-w-16 font-medium">{command.label}</span>
+                <span className="text-xs text-muted-foreground">{command.description}</span>
+              </button>
+            )) : <p className="px-2.5 py-4 text-center text-xs text-muted-foreground">No commands found.</p>}
+          </div>
+        ) : null}
         {referenceMenu ? (
           <div className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
             {!referenceMenu.kind && !referenceMenu.query ? (
@@ -9011,26 +9141,38 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </div>
         ) : null}
         <div className="flex w-full items-end gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={voiceRecording || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "Cancel voice input" : "Attach files"}
-            className="size-11 shrink-0 self-end rounded-full sm:size-9"
-            onClick={() => {
-              if (voiceRecording || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing") {
-                resetVoiceComposer();
-                return;
-              }
-              fileInputRef.current?.click();
-            }}
-          >
-            {voiceRecording || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? (
+          {voiceRecording || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? (
+            <Button type="button" variant="ghost" size="icon" aria-label="Cancel voice input" className="size-11 shrink-0 self-end rounded-full sm:size-9" onClick={resetVoiceComposer}>
               <X className="size-4" />
-            ) : (
-              <Plus className="size-4" />
-            )}
-          </Button>
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" aria-label="Add" className="size-11 shrink-0 self-end rounded-full sm:size-9">
+                  <Plus className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" collisionPadding={8} className="w-[min(15rem,calc(100vw-1rem))] rounded-xl">
+                <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                  <Paperclip className="size-4" />
+                  <span>Files</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => {
+                  const current = composerLiveText(textareaRef.current?.innerText, input);
+                  const prefix = current && !/\s$/.test(current) ? `${current} ` : current;
+                  const next = `${prefix}@`;
+                  setInput(next);
+                  setComposerSyncNonce((value) => value + 1);
+                  setReferenceMenu({ query: "", kind: null, start: prefix.length, end: next.length });
+                  referenceAutocompleteDismissedRef.current = false;
+                  window.requestAnimationFrame(() => textareaRef.current?.focus());
+                }}>
+                  <AtSign className="size-4" />
+                  <span>Context</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <div className="composer-input-area relative min-w-0 flex-1">
           <RichComposerInput
             ref={textareaRef}
@@ -9054,6 +9196,23 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               mobileKeyboardBaselineRef.current = 0;
             }}
             onKeyDown={(e) => {
+            if (slashQuery !== null && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              if (slashResults.length) setSlashIndex((current) => e.key === "ArrowDown"
+                ? (current + 1) % slashResults.length
+                : (current - 1 + slashResults.length) % slashResults.length);
+              return;
+            }
+            if (slashQuery !== null && e.key === "Enter" && slashResults[slashIndex]) {
+              e.preventDefault();
+              selectSlashCommand(slashResults[slashIndex].id);
+              return;
+            }
+            if (slashQuery !== null && e.key === "Escape") {
+              e.preventDefault();
+              setSlashQuery(null);
+              return;
+            }
             if (referenceMenu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();
               const count = referenceResults.length;
@@ -9225,7 +9384,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 {RUNTIME_MODE_OPTIONS.map((option) => (
                   <DropdownMenuItem
                     key={option.value}
-                    title={option.value === "auto" ? "Automatic provider behavior" : undefined}
+                    title={option.value === "auto-accept-edits" ? "Accept file edits; ask before commands" : option.value === "auto" ? "Run file edits and commands automatically" : undefined}
                     onClick={() => void selectRuntimeMode(option.value)}
                   >
                     <RuntimeModeIcon mode={option.value} className="size-4" />

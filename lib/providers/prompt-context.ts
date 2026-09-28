@@ -9,6 +9,8 @@ import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from 
 import { autoSkillActivationPrompt } from "@/lib/skill-routing";
 import { METIS_SHARED_AGENT_CONTROL, toolContractPrompt } from "@/lib/agent-control";
 import { metisAgentIdentity } from "@/lib/agent-identity";
+import { formatChatGoal } from "@/lib/chat-goal";
+import { modeById } from "@/lib/modes";
 import { retrieveRelevantFacts } from "@/lib/context-layers";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import type { AgentJob } from "@/lib/jobs";
@@ -86,7 +88,9 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     includeGlobal: !incognito,
   });
   const project = !incognito ? scope?.project : undefined;
-  const skillSettings = projectSkillSettings(getGlobalModelSettings(ownerId), project);
+  const globalSettings = getGlobalModelSettings(ownerId);
+  const skillSettings = projectSkillSettings(globalSettings, project);
+  const activeMode = modeById(job.modeId || chat.sessionState?.modeId, globalSettings.customModes || []);
   const globalFacts = incognito
     ? []
     : globalFactsForScope({
@@ -135,6 +139,8 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   return [
     // Layer 1 — Core Context: stable identity, policy, mode and tool contract.
     metisAgentIdentity(),
+    `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
+    formatChatGoal(chat.sessionState, ownerId, chat.id, incognito),
     skillsCatalogPrompt(skillSettings),
     alwaysOnSkillsPrompt(skillSettings),
     autoSkillActivationPrompt(job.message, skillSettings, {

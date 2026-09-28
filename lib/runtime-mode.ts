@@ -17,20 +17,22 @@ export const RUNTIME_MODE_TO_CODEX: Record<RuntimeMode, {
   sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
 }> = {
-  "approval-required": { sandboxMode: "read-only", approvalPolicy: "untrusted" },
-  "auto-accept-edits": { sandboxMode: "workspace-write", approvalPolicy: "on-request" },
-  "auto": { sandboxMode: "workspace-write", approvalPolicy: "on-request" },
+  // Metis MCP is the sole tool surface. The gateway owns interactive approvals;
+  // native Codex prompts would otherwise block or duplicate the Metis panel.
+  "approval-required": { sandboxMode: "workspace-write", approvalPolicy: "never" },
+  "auto-accept-edits": { sandboxMode: "workspace-write", approvalPolicy: "never" },
+  "auto": { sandboxMode: "workspace-write", approvalPolicy: "never" },
   "full-access": { sandboxMode: "danger-full-access", approvalPolicy: "never" },
 };
 
 /** Claude Agent SDK permission mapping. */
 export const RUNTIME_MODE_TO_CLAUDE_PERMISSION: Record<RuntimeMode, {
-  permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  permissionMode: "default" | "acceptEdits" | "auto" | "bypassPermissions";
   canUseToolRequired: boolean;
 }> = {
   "approval-required": { permissionMode: "default", canUseToolRequired: true },
-  "auto-accept-edits": { permissionMode: "acceptEdits", canUseToolRequired: false },
-  "auto": { permissionMode: "acceptEdits", canUseToolRequired: false },
+  "auto-accept-edits": { permissionMode: "acceptEdits", canUseToolRequired: true },
+  "auto": { permissionMode: "auto", canUseToolRequired: true },
   "full-access": { permissionMode: "bypassPermissions", canUseToolRequired: false },
 };
 
@@ -58,6 +60,8 @@ export function runtimeModeRequiresApproval(
   runtimeMode: unknown,
   toolCategory: "read" | "write" | "terminal" | "browser" | "memory" | "remote" | "plan" | "subagent" | "unknown",
 ): boolean {
-  return normalizeRuntimeMode(runtimeMode) === "approval-required" &&
-    (toolCategory === "terminal" || toolCategory === "write");
+  const mode = normalizeRuntimeMode(runtimeMode);
+  return mode === "approval-required"
+    ? toolCategory === "terminal" || toolCategory === "write"
+    : mode === "auto-accept-edits" && toolCategory === "terminal";
 }

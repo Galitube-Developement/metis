@@ -24,7 +24,7 @@ export function toolContractPrompt(input: ToolContractInput): string {
   const planRule = input.modeId === "plan"
     ? "In Plan mode create exactly one plan workspace in the current chat, then update that same plan; do not create plans from subagents."
     : "In Agent mode do not create a plan workspace unless the user explicitly requests a plan document.";
-  const todoRule = input.modeId === "agent"
+  const todoRule = input.modeId === "agent" || input.modeId === "gauntlet"
     ? "For three or more distinct steps, create one short Todo state BEFORE the first mutating action, then keep that same Todo state current as work completes. This is the execution plan; do not start a multi-step edit/deploy first and plan afterward."
     : input.modeId === "plan"
       ? "Use one short Todo checklist for progress only; the persisted plan workspace is the canonical plan."

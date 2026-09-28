@@ -263,6 +263,11 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
               title?: string;
             },
           ) => {
+            // Metis MCP tools are authorized by the gateway's runtime gate.
+            // Approving them here avoids a second, mismatched SDK approval.
+            if (toolName.startsWith("mcp__metis_ai__")) {
+              return claudePermissionResult("allow");
+            }
             if (
               shouldAutoApprove(context.chat.approvedPatterns, toolName, input)
             ) {
@@ -311,7 +316,7 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
     abortController,
     mcpServers: claudeMcpServers(
       getMcpServers(
-        providerMcpContext(context, { runtimeApprovalGate: false }),
+        providerMcpContext(context),
       ),
     ),
     systemPrompt: providerPrompt(
