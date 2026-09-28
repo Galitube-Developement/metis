@@ -30,7 +30,7 @@ npm run build:win
 
 The output is `dist/Metis-AI-Remote-Client-Setup.exe`. The GitHub Actions workflow builds the same installer on a Windows runner and keeps it as a short-lived Actions artifact for deployment to a Metis server. Configure code signing in the build environment before distributing the app broadly; unsigned Windows builds may show a SmartScreen warning.
 
-A Metis server serves the installer and client updates from `<CHAT_DATA_DIR>/remote-client-artifacts/`. Copy both `Metis-AI-Remote-Client-Setup.exe` and `latest.yml` from the `Windows Remote Client` workflow artifact into that directory. The client is never published to, or downloaded from, GitHub Releases. If the installer is absent, the server returns an unavailable response instead of redirecting elsewhere.
+A Metis server serves the installer and client updates from `<CHAT_DATA_DIR>/remote-client-artifacts/`. On a fresh self-hosted server without these files, it streams them through its own authenticated download and update endpoints from `https://ai.f1shy312.com/api/remote-clients/windows-distribution/`. The source URL can be overridden with `METIS_REMOTE_CLIENT_DISTRIBUTION_URL`; a local artifact always takes precedence. The official distribution endpoint serves only `Metis-AI-Remote-Client-Setup.exe` and `latest.yml` from its local data directory and does not expose pairing credentials. Copy both files from the `Windows Remote Client` workflow artifact to the official server after each Windows build. The client is never published to GitHub Releases. If both local files and the distributor are unavailable, the download endpoint returns 503.
 
 ## Runtime
 
