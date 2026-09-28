@@ -1,6 +1,5 @@
-import { config } from "@/lib/config";
 import { authenticateRemoteClient } from "@/lib/remote-clients";
-import { WINDOWS_ARTIFACTS, windowsArtifact } from "@/lib/remote-client-artifacts";
+import { legacyWindowsUpdate, WINDOWS_ARTIFACTS } from "@/lib/remote-client-release";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +17,6 @@ export async function GET(req: Request, { params }: Params) {
   const { filename } = await params;
   if (!WINDOWS_ARTIFACTS.has(filename)) return Response.json({ error: "Update artifact not found" }, { status: 404 });
 
-  const response = await windowsArtifact(filename, { dataDir: config.dataDir });
+  const response = await legacyWindowsUpdate(filename);
   return response || Response.json({ error: "Update artifact not found" }, { status: 404 });
 }

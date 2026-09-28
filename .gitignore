@@ -1,6 +1,7 @@
 node_modules
 .next
 .next-*
+remote-client/desktop/
 tmp
 data
 public/prompts.json

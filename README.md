@@ -51,6 +51,8 @@ Metis AI includes the following capabilities:
 | **Sharing and recovery** | Share chats and attachments through links, optionally protect them with a password, clone shared chats and revoke access |
 | **Administration** | Provider discovery and testing, model listing, preferences, status checks, recovery flows and configurable security boundaries |
 
+The Windows desktop Remote Client is maintained in the public [metis-remote-client repository](https://github.com/f1shyondrugs/metis-remote-client). Its installer and automatic updates come from that repository's GitHub Releases. Existing clients that still check their paired Metis server receive those public release files through an authenticated proxy.
+
 ### Tutorial & introduction
 
 The video walks through installation, provider setup, workspaces, notes,
