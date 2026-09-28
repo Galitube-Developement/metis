@@ -8,7 +8,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const filename = "Metis-AI-Remote-Client-Setup.exe";
-const releaseUrl = "https://github.com/f1shyondrugs/metis-ai/releases/latest/download/" + filename;
 
 export async function GET(req: Request) {
   if (!(await isAuthenticated(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,7 +16,7 @@ export async function GET(req: Request) {
   try {
     size = statSync(file).size;
   } catch {
-    return Response.redirect(releaseUrl, 302);
+    return Response.json({ error: "The Windows Remote Client is not available on this Metis server" }, { status: 503 });
   }
   const stream = Readable.toWeb(createReadStream(file)) as ReadableStream<Uint8Array>;
   return new Response(stream, {

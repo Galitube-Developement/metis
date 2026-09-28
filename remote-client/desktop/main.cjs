@@ -310,6 +310,7 @@ function registerIpc() {
   });
   ipcMain.handle("hub:check-updates", async () => {
     if (!app.isPackaged) return "Updates are available in installed builds";
+    if (!configureUpdater()) return "Pair this client before checking for updates";
     try {
       await autoUpdater.checkForUpdates();
       return status.update || "Checking for updates";
@@ -319,6 +320,20 @@ function registerIpc() {
       return status.update;
     }
   });
+}
+
+function configureUpdater() {
+  if (!app.isPackaged || !config) return false;
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: `${config.server}/api/remote-clients/windows-updates`,
+  });
+  autoUpdater.requestHeaders = {
+    "x-metis-client-id": config.clientId,
+    Authorization: `Bearer ${config.credential}`,
+  };
+  autoUpdater.disableDifferentialDownload = true;
+  return true;
 }
 
 function setupUpdates() {
@@ -341,7 +356,7 @@ function setupUpdates() {
     status.update = error.message || "Update check failed";
     broadcast();
   });
-  const check = () => autoUpdater.checkForUpdates().catch(() => undefined);
+  const check = () => configureUpdater() && autoUpdater.checkForUpdates().catch(() => undefined);
   setTimeout(check, 20_000);
   setInterval(check, 6 * 60 * 60 * 1000);
 }

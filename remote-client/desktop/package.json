@@ -71,9 +71,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "f1shyondrugs",
-        "repo": "metis-ai"
+        "provider": "generic",
+        "url": "https://metis.invalid/api/remote-clients/windows-updates"
       }
     ]
   }
