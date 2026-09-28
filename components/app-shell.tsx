@@ -20,6 +20,8 @@ import {
   ArrowUp,
   ArrowDown,
   Activity,
+  Flag,
+  Repeat2,
   CalendarClock,
   Cpu,
   Gauge,
@@ -747,7 +749,7 @@ function ModeIcon({ mode, className }: { mode: AgentMode; className?: string }) 
   if (mode.id === "plan") return <ClipboardList className={className} />;
   if (mode.id === "ask") return <MessageSquare className={className} />;
   if (mode.id === "agent") return <Bot className={className} />;
-  if (mode.id === "gauntlet") return <Activity className={className} />;
+  if (mode.id === "gauntlet") return <Repeat2 className={className} />;
   if (mode.icon === "eye") return <Eye className={className} />;
   if (mode.icon === "brain") return <Brain className={className} />;
   if (mode.icon === "terminal") return <Terminal className={className} />;
@@ -8915,10 +8917,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     <div className="w-full space-y-2">
       {queuedList}
       {chatGoal ? (
-        <div className="rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs" role="status" aria-label="Current chat goal">
-          <div className="flex items-center gap-2">
-            <Activity className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 truncate text-muted-foreground">Goal: <span className="text-foreground/80">{chatGoal}</span></span>
+        <div className="group/goal rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="status" aria-label="Current chat goal" tabIndex={0}>
+          <div className="flex items-start gap-2">
+            <Flag className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate break-words text-muted-foreground group-hover/goal:overflow-visible group-hover/goal:whitespace-normal group-focus/goal:overflow-visible group-focus/goal:whitespace-normal">Goal: <span className="text-foreground/80">{chatGoal}</span></span>
           </div>
           {chatGoalReferences.length ? (
             <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Goal context">
