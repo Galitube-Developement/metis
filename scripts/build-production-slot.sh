@@ -11,6 +11,7 @@ case "$BUILD_DIR" in
   *) echo "Refusing unsupported production build directory: $BUILD_DIR" >&2; exit 2 ;;
 esac
 
+export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$PROJECT_ROOT/.runtime/pnpm/bin:$PROJECT_ROOT/.runtime/node/bin:$PATH"
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 command -v "$PNPM_BIN" >/dev/null 2>&1 || {
   echo "pnpm is not available (checked $PNPM_BIN and PATH)" >&2

@@ -106,6 +106,20 @@ not run the installer from a pipe.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)"
 ```
 
+If an older native Linux install reports update status `127`, rerun the current
+installer once with that machine's existing installation directory (and its
+service name if customized). The old, already-running updater cannot acquire
+this PATH repair before its first successful update:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- \
+  --non-interactive --native --install-dir "/absolute/path/to/metis-ai"
+```
+
+This keeps `.env` and the data directory but replaces tracked local checkout
+changes with the selected upstream version. Native installs now save the Node
+and pnpm directories in `.env` for service starts and future updates.
+
 Uninstall with the same bootstrap:
 
 ```bash

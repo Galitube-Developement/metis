@@ -467,7 +467,7 @@ merge_preserved_env() {
       return k
     }
     function is_structural(k) {
-      return (k == "AI_CHAT_ROOT" || k == "AI_CHAT_INSTALL_DIR" || k == "METIS_NODE_BIN" || k == "METIS_NODE_HOME" || k == "CHAT_DATA_DIR" || k == "METIS_DATA_DIR" || k == "AGENT_CWD" || k == "METIS_WORKSPACE" || k == "AI_CHAT_MCP_STATE_DIR" || k == "METIS_DOCKER" || k == "AI_CHAT_SERVICE_NAME")
+      return (k == "AI_CHAT_ROOT" || k == "AI_CHAT_INSTALL_DIR" || k == "METIS_NODE_BIN" || k == "METIS_NODE_HOME" || k == "METIS_PNPM_HOME" || k == "CHAT_DATA_DIR" || k == "METIS_DATA_DIR" || k == "AGENT_CWD" || k == "METIS_WORKSPACE" || k == "AI_CHAT_MCP_STATE_DIR" || k == "METIS_DOCKER" || k == "AI_CHAT_SERVICE_NAME")
     }
     BEGIN {
       while ((getline line < preserved) > 0) {
@@ -635,11 +635,24 @@ version_at_least_22() {
 }
 
 install_node() {
-  local dir="$1/.runtime" arch url archive
+  local dir="$1/.runtime" arch url archive saved_node bundled_node candidate
   if version_at_least_22 node && command -v npm >/dev/null 2>&1; then
     printf '%s' "$(command -v node)"
     return 0
   fi
+  # An update can run outside the user's login shell. Reuse the executable
+  # recorded by the previous install before downloading another Node runtime.
+  saved_node=""
+  if [[ -f "$1/.env" ]]; then
+    saved_node="$(read_env_key "$1/.env" METIS_NODE_BIN)"
+  fi
+  bundled_node="$dir/node/bin/node"
+  for candidate in "$saved_node" "$bundled_node"; do
+    if [[ -n "$candidate" && -x "$candidate" && -x "$(dirname "$candidate")/npm" ]] && version_at_least_22 "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
   confirm_install "Node.js 22 or newer" || die "Node.js 22 or newer is required."
   mkdir -p "$dir"
   case "$(uname -m)" in
@@ -704,6 +717,7 @@ fi
 
 node_bin=""
 node_home=""
+pnpm_home=""
 if (( use_docker == 0 )); then
   node_bin="$(install_node "$install_dir")"
   node_home="$(dirname "$(dirname "$node_bin")")"
@@ -711,8 +725,9 @@ if (( use_docker == 0 )); then
   npm_bin="$(command -v npm)" || die "npm is required to install pnpm."
   pnpm_prefix="$install_dir/.runtime/pnpm"
   "$npm_bin" install --global --prefix "$pnpm_prefix" pnpm@9
-  export PATH="$pnpm_prefix/bin:$PATH"
-  command -v pnpm >/dev/null 2>&1 || die "pnpm installation did not create an executable."
+  pnpm_home="$pnpm_prefix/bin"
+  export PATH="$pnpm_home:$PATH"
+  [[ -x "$pnpm_home/pnpm" ]] || die "pnpm installation did not create an executable at $pnpm_home/pnpm."
 fi
 
 rand_hex() {
@@ -765,6 +780,7 @@ adopt_env_stash "$install_dir"
   else
     write_env_line METIS_NODE_BIN "$node_bin"
     write_env_line METIS_NODE_HOME "$node_home"
+    write_env_line METIS_PNPM_HOME "$pnpm_home"
   fi
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
@@ -787,7 +803,7 @@ set -a
 # shellcheck disable=SC1091
 . "$ROOT/.env"
 set +a
-export PATH="${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 cd "$ROOT"
 exec "${METIS_NODE_BIN:?METIS_NODE_BIN is missing from .env}" "$@"
 EOF
@@ -800,8 +816,9 @@ ensure_native_build_tools
   # shellcheck disable=SC1091
   . "$install_dir/.env"
   set +a
+  export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$PATH"
   cd "$install_dir"
-  pnpm install --frozen-lockfile
+  "$METIS_PNPM_HOME/pnpm" install --frozen-lockfile
   node scripts/sync-provider-clis.mjs
   pnpm exec playwright install chromium
   current_build_slot="${NEXT_DIST_DIR:-}"
