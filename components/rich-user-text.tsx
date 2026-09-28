@@ -3,7 +3,7 @@
 import { LinkPreview } from "@/components/link-preview";
 import { parseRichUserText } from "@/lib/user-text-links";
 import { ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 type Reference = {
   kind?: string;
@@ -97,7 +97,7 @@ function RichLink({ href, children }: { href: string; children: string }) {
   );
 }
 
-export function RichUserText({
+export const RichUserText = memo(function RichUserText({
   content,
   references = [],
 }: {
@@ -151,4 +151,4 @@ export function RichUserText({
       })}
     </>
   );
-}
+});

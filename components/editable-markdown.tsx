@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEventHandler } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState, type PointerEventHandler } from "react";
 import { Markdown } from "@/components/markdown";
 import { replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ export function EditableMarkdown({
   const draftRef = useRef(value);
   const lastExternalValueRef = useRef(value);
   const [draft, setDraft] = useState(value);
+  const previewDraft = useDeferredValue(draft);
 
   useEffect(() => {
     if (value === lastExternalValueRef.current) return;
@@ -108,7 +109,7 @@ export function EditableMarkdown({
             aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
             className="min-h-0 flex-1 overflow-auto px-2 pb-2"
           >
-            {draft ? <Markdown content={draft} interactiveTasks={interactiveTasks} /> : (
+            {previewDraft ? <Markdown content={previewDraft} interactiveTasks={interactiveTasks} /> : (
               <span className="text-muted-foreground/70">{placeholder || "Preview appears here."}</span>
             )}
           </div>

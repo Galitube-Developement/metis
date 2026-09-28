@@ -2172,7 +2172,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const [input, setInput] = useState("");
+  const [input, setInputState] = useState("");
+  const inputEpochRef = useRef(0);
+  const setInput: typeof setInputState = useCallback((next) => {
+    inputEpochRef.current += 1;
+    setInputState(next);
+  }, []);
   const setInputGuarded = useCallback((value: string, reason?: "submitted" | "queued") => {
     const apply = () => {
       setInput((prev) => {
@@ -2193,7 +2198,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       apply();
     }
     else startTransition(apply);
-  }, []);
+  }, [setInput]);
   const busyRef = useRef(false);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
   const [referenceMenu, setReferenceMenu] = useState<{
@@ -4087,7 +4092,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return () => {
       cancelled = true;
     };
-  }, [authed, models]);
+  }, [authed, models, setInput]);
 
   useEffect(() => {
     if (!activeChatId || !modelId) return;
@@ -4374,7 +4379,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setQuestionCustom(snap.pendingQuestion?.questions.map(() => "") ?? []);
     setQuestionCustomActive(snap.pendingQuestion?.questions.map(() => false) ?? []);
     setPaneKey((k) => k + 1);
-  }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, workspaceDefaultCwd]);
+  }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, setInput, workspaceDefaultCwd]);
 
   const openDraft = useCallback(
     (opts?: { skipNav?: boolean; projectId?: string | null }) => {
@@ -4479,7 +4484,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setLiveStatus("");
       setPaneKey((k) => k + 1);
     },
-    [activeChatIncognito, modelParamsByModel, models, navigateChat, persistActiveSnapshot, setBusySynced],
+    [activeChatIncognito, modelParamsByModel, models, navigateChat, persistActiveSnapshot, setBusySynced, setInput],
   );
 
   const prefetchChat = useCallback(async (id: string) => {
@@ -4830,7 +4835,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
       }
     },
-    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, workspaceDefaultCwd],
+    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, setInput, workspaceDefaultCwd],
   );
 
   useEffect(() => {
@@ -8360,7 +8365,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     inputUpdatedAtRef.current = edit.updatedAt;
     composerDirtyUntilRef.current = edit.dirtyUntil;
     if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
-    setInput(value);
+    const editEpoch = ++inputEpochRef.current;
+    startTransition(() => {
+      setInputState((current) => editEpoch === inputEpochRef.current ? value : current);
+    });
     const nextSlashQuery = slashCommandQuery(value, cursorPosition);
     setSlashQuery(nextSlashQuery);
     setSlashIndex(0);

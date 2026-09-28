@@ -30,7 +30,8 @@ test("markdown renders graph fences with GraphBoard", () => {
 
 test("editable markdown keeps source and rendered preview in separate panes", () => {
   assert.match(editor, /<textarea/);
-  assert.match(editor, /<Markdown content=\{draft\}/);
+  assert.match(editor, /const previewDraft = useDeferredValue\(draft\)/);
+  assert.match(editor, /<Markdown content=\{previewDraft\}/);
   assert.doesNotMatch(editor, /<div[^>]*contentEditable/);
 });
 
