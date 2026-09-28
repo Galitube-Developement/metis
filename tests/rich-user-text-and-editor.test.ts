@@ -28,27 +28,10 @@ test("markdown renders graph fences with GraphBoard", () => {
   assert.match(markdown, /pre: \(\{ children \}/);
 });
 
-test("editable markdown shows muted caret source marks", () => {
-  assert.match(editor, /data-md-caret-mark/);
-  assert.match(editor, /text-muted-foreground select-none/);
-  assert.match(editor, /function applyCaretMarks/);
-  assert.match(editor, /if \(element\.hasAttribute\("data-md-caret-mark"\)\) return "";/);
-});
-
-test("editable markdown serializes chart boards like mermaid and graph", () => {
-  assert.match(editor, /data-chart-source/);
-  assert.match(editor, /data-editor-control"\) === "chart"/);
-  assert.match(editor, /element.querySelector\("\[data-chart-source\]"\)/);
-  assert.match(editor, /`\\`\\`chart\\n\$\{chart\.replace/);
-  assert.match(editor, /tag === "pre"/);
-});
-
-test("editable markdown serializes graph boards like mermaid", () => {
-  assert.match(editor, /data-graph-source/);
-  assert.match(editor, /data-editor-control"\) === "graph"/);
-  assert.match(editor, /element.querySelector\("\[data-graph-source\]"\)/);
-  assert.match(editor, /if \(!code\.trim\(\)\) return "";/);
-  assert.match(editor, /origin\?\.closest\("\[data-editor-control\]"\)/);
+test("editable markdown keeps source and rendered preview in separate panes", () => {
+  assert.match(editor, /<textarea/);
+  assert.match(editor, /<Markdown content=\{draft\}/);
+  assert.doesNotMatch(editor, /<div[^>]*contentEditable/);
 });
 
 test("new chat from shared notes does not reopen the notes route", () => {

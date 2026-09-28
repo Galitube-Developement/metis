@@ -183,9 +183,10 @@ export function GraphBoard({
     setDraft(serialized);
     setError("");
     queueMicrotask(() => {
-      rootRef.current?.closest(".editable-markdown")?.dispatchEvent(
-        new InputEvent("input", { bubbles: true, inputType: "insertReplacementText" }),
-      );
+      rootRef.current?.dispatchEvent(new CustomEvent("metis:markdown-embed-change", {
+        bubbles: true,
+        detail: { kind: "graph", source: serialized },
+      }));
     });
   }, []);
 

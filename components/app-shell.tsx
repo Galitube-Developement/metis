@@ -137,7 +137,7 @@ import { canvasFromToolPayload, classifyToolKind, isToolRunning, layoutAssistant
 import { reconcileMessageParts } from "@/lib/message-parts";
 import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
-import { BUILT_IN_SLASH_COMMANDS, matchSlashCommand, slashCommandQuery } from "@/lib/slash-commands";
+import { BUILT_IN_SLASH_COMMANDS, goalCommandAction, matchSlashCommand, slashCommandQuery } from "@/lib/slash-commands";
 import {
   composerLiveText,
   composerTranscriptInsert,
@@ -7020,7 +7020,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     e?.preventDefault();
     const isOverride = textOverride !== undefined;
-    const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
+    let text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
+    let goalMessage: string | null = null;
     const slashCommand = !isOverride ? matchSlashCommand(text) : null;
     if (!isOverride && /^\/[a-z-]+(?:\s|$)/i.test(text) && !slashCommand) {
       toast.error("Unknown slash command");
@@ -7034,40 +7035,43 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     if (slashCommand?.id === "goal") {
-      const goal = slashCommand.argument === "clear" ? "" : slashCommand.argument.slice(0, 4_000);
-      if (!slashCommand.argument) {
-        toast.info(chatGoal ? `Current goal: ${chatGoal}` : "Use /goal followed by a goal for this chat.");
-        return;
-      }
-      const goalChatId = await ensureChatId();
-      if (!goalChatId) {
+      const action = goalCommandAction(slashCommand.argument);
+      const goal = action.kind === "set" ? action.goal : "";
+      const goalChatId = goal ? await ensureChatId() : activeChatIdRef.current;
+      if (!goalChatId && goal) {
         toast.error("Could not create a chat for this goal.");
         return;
       }
-      const cached = chatCacheRef.current.get(goalChatId);
-      const goalReferences = goal
-        ? references.filter((reference) => goal.includes(`@${reference.label}`))
-        : [];
-      const sessionState = { ...(cached?.sessionState || {}), goal: goal || null, goalReferences };
-      const goalResponse = await fetch(`/api/chats/${goalChatId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionState }),
-      });
-      if (!goalResponse.ok) {
-        toast.error("Could not save the chat goal.");
+      if (goalChatId) {
+        const cached = chatCacheRef.current.get(goalChatId);
+        const goalReferences = goal
+          ? references.filter((reference) => goal.includes(`@${reference.label}`))
+          : [];
+        const sessionState = { ...(cached?.sessionState || {}), goal: goal || null, goalReferences };
+        const goalResponse = await fetch(`/api/chats/${goalChatId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionState }),
+        }).catch(() => null);
+        if (!goalResponse?.ok) {
+          toast.error("Could not save the chat goal.");
+          return;
+        }
+        if (cached) chatCacheRef.current.set(goalChatId, { ...cached, sessionState });
+        setChatGoal(goal);
+        setChatGoalReferences(goalReferences);
+      }
+      setReferenceMenu(null);
+      setSlashQuery(null);
+      if (!goal) {
+        setInputGuarded("", "submitted");
+        setReferences([]);
+        setComposerSyncNonce((current) => current + 1);
+        toast.success("Chat goal cleared");
         return;
       }
-      if (cached) chatCacheRef.current.set(goalChatId, { ...cached, sessionState });
-      setChatGoal(goal);
-      setChatGoalReferences(goalReferences);
-      setReferences([]);
-      setReferenceMenu(null);
-      setInput("");
-      setComposerSyncNonce((current) => current + 1);
-      setSlashQuery(null);
-      toast.success(goal ? "Chat goal saved" : "Chat goal cleared");
-      return;
+      goalMessage = goal;
+      text = goal;
     }
     const filesToSend = attachmentsOverride ?? pendingFiles;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
@@ -7122,7 +7126,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     try {
       await sendInner(
         e,
-        textOverride,
+        goalMessage ?? textOverride,
         attachmentsOverride,
         force,
         referenceTextOverride,
@@ -7136,6 +7140,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           onAccepted?.();
         },
         storedAttachmentsOverride,
+        Boolean(goalMessage),
       );
       sendSucceeded = true;
     } finally {
@@ -7173,12 +7178,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     messageIdOverride?: string,
     onAccepted?: () => void,
     storedAttachmentsOverride?: MsgAttachment[],
+    asComposerSubmission = false,
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
-    const isOverride = textOverride !== undefined;
+    const isOverride = textOverride !== undefined && !asComposerSubmission;
     const hasComposerContent =
       Boolean(text) ||
       filesToSend.length > 0 ||

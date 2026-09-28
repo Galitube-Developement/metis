@@ -17,8 +17,8 @@ test("chart board preserves the editor control contract", () => {
   assert.match(board, /data-editor-control="chart"/);
   assert.match(board, /contentEditable=\{false\}/);
   assert.match(board, /stopPropagation\(\)/);
-  assert.match(board, /insertReplacementText/);
-  assert.match(board, /closest\("\.editable-markdown"\)/);
+  assert.match(board, /metis:markdown-embed-change/);
+  assert.match(board, /detail: \{ kind: "chart", source: serialized \}/);
 });
 
 test("chart board supports board, edit, and code modes", () => {

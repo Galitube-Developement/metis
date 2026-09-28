@@ -111,11 +111,20 @@ export async function POST(req: Request) {
     : 10 * 60_000;
   const timeoutMs = Math.min(MAX_WAIT_MS, Math.max(1_000, requestedTimeout));
   const child = createChat(title, undefined, userId, modelId ? { id: modelId } : undefined);
+  const parentGoal = parentChat.sessionState?.goal?.trim();
   updateChat(child.id, {
     archived: true,
     runStatus: "running",
     runUpdatedAt: new Date().toISOString(),
-    sessionState: { ...(child.sessionState || {}), modeId },
+    sessionState: {
+      ...(child.sessionState || {}),
+      modeId,
+      ...(parentGoal ? {
+        goal: parentGoal,
+        goalReferences: parentChat.sessionState?.goalReferences || [],
+        goalOriginChatId: parentChat.sessionState?.goalOriginChatId || parentChat.id,
+      } : {}),
+    },
   }, userId);
   const messageId = crypto.randomUUID();
   appendMessage(child.id, { id: messageId, role: "user", content: prompt });

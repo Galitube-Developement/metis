@@ -1,4 +1,5 @@
 import { resolveScopeReferences } from "@/lib/context-scope";
+import { getChat } from "@/lib/db-store";
 import type { ChatSessionState } from "@/lib/store";
 
 /** Keep goal references attached across turns, using the same scope checks as @ mentions. */
@@ -10,9 +11,12 @@ export function formatChatGoal(
 ): string {
   const goal = state?.goal?.trim();
   if (!goal) return "";
+  const referenceChatId = state?.goalOriginChatId && getChat(state.goalOriginChatId, ownerId)
+    ? state.goalOriginChatId
+    : chatId;
   const references = resolveScopeReferences(
     ownerId,
-    chatId,
+    referenceChatId,
     (state?.goalReferences || []).map((reference) => ({
       ...reference,
       source: "explicit" as const,

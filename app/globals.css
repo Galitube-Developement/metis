@@ -437,14 +437,31 @@
   @apply my-3 overflow-x-auto;
 }
 
-.editable-markdown:empty::before {
-  content: attr(data-placeholder);
-  @apply text-muted-foreground;
+.editable-markdown {
+  container-type: inline-size;
 }
 
-.editable-markdown:has(> .markdown-body:empty)::before {
-  content: attr(data-placeholder);
-  @apply text-muted-foreground;
+.editable-markdown-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+}
+
+.editable-markdown-source {
+  border-bottom: 1px solid rgb(128 128 128 / 18%);
+}
+
+@container (min-width: 520px) {
+  .editable-markdown-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .editable-markdown-source {
+    border-right: 1px solid rgb(128 128 128 / 18%);
+    border-bottom: 0;
+  }
 }
 
 .sticky-note,
@@ -453,7 +470,7 @@
   color: #000;
 }
 
-.sticky-note .editable-markdown::before {
+.sticky-note .editable-markdown textarea::placeholder {
   color: rgb(0 0 0 / 45%);
 }
 
@@ -479,26 +496,26 @@
   color: rgb(0 0 0 / 60%) !important;
 }
 
-.sticky-note .editable-markdown {
+.sticky-note .editable-markdown :is(textarea, [data-markdown-preview]) {
   scrollbar-color: color-mix(in srgb, #000 28%, var(--note-color)) transparent;
 }
 
-.sticky-note .editable-markdown::-webkit-scrollbar {
+.sticky-note .editable-markdown :is(textarea, [data-markdown-preview])::-webkit-scrollbar {
   width: 8px;
 }
 
-.sticky-note .editable-markdown::-webkit-scrollbar-track {
+.sticky-note .editable-markdown :is(textarea, [data-markdown-preview])::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.sticky-note .editable-markdown::-webkit-scrollbar-thumb {
+.sticky-note .editable-markdown :is(textarea, [data-markdown-preview])::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
   background: color-mix(in srgb, #000 28%, var(--note-color));
   background-clip: padding-box;
 }
 
-.sticky-note .editable-markdown::-webkit-scrollbar-thumb:hover {
+.sticky-note .editable-markdown :is(textarea, [data-markdown-preview])::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, #000 42%, var(--note-color));
   background-clip: padding-box;
 }

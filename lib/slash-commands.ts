@@ -6,7 +6,7 @@ export const BUILT_IN_SLASH_COMMANDS: ReadonlyArray<{
   description: string;
 }> = [
   { id: "model", label: "/model", description: "Choose a model" },
-  { id: "goal", label: "/goal", description: "Set a goal for this chat" },
+  { id: "goal", label: "/goal", description: "Send and keep a chat goal; /goal reset clears it" },
 ];
 
 /** Slash commands are recognized only at the start of the composer. */
@@ -15,6 +15,11 @@ export function slashCommandQuery(input: string, cursorPosition: number): string
   const beforeCursor = input.slice(0, cursorPosition);
   const match = beforeCursor.match(/^\/([a-z-]*)$/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+export function goalCommandAction(argument: string): { kind: "reset" } | { kind: "set"; goal: string } {
+  const goal = argument.trim().slice(0, 4_000);
+  return !goal || /^(?:reset|clear)$/i.test(goal) ? { kind: "reset" } : { kind: "set", goal };
 }
 
 export function matchSlashCommand(input: string): { id: SlashCommandId; argument: string } | null {

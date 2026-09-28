@@ -287,11 +287,7 @@ function TaskCheckbox({
       }}
       onChange={(event) => {
         setValue(event.currentTarget.checked);
-        if (interactive) {
-          event.currentTarget.closest(".editable-markdown")?.dispatchEvent(
-            new InputEvent("input", { bubbles: true, inputType: "insertReplacementText" }),
-          );
-        }
+
       }}
     />
   );

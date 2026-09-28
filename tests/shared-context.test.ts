@@ -400,6 +400,37 @@ test("chat goal keeps selected @ context across turns and clears it with the goa
   assert.equal(formatChatGoal(cleared?.sessionState, cleared?.ownerId, chat.id), "");
 });
 
+test("subagents inherit the chat goal and parent-scoped goal references", async () => {
+  const { createChat, getChat, updateChat } = modules[0];
+  const { createNote } = modules[1];
+  const { formatChatGoal } = await import("../lib/chat-goal");
+  const { POST } = await import("../app/api/internal/mcp-subagent/route");
+  const parent = createChat("Goal parent");
+  const note = createNote({ chatId: parent.id, scope: "chat", title: "Goal source", content: "Use the compact layout" });
+  updateChat(parent.id, { sessionState: {
+    goal: "Follow @Goal source",
+    goalReferences: [{ kind: "note", id: note.id, label: note.title }],
+  } });
+  const parentJobId = randomUUID();
+  const response = await POST(new Request("http://localhost/api/internal/mcp-subagent", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer shared-context-test-token",
+      "Content-Type": "application/json",
+      "X-AI-Chat-Id": parent.id,
+      "X-AI-Chat-Job-Id": parentJobId,
+      ...leaseHeaders(parentJobId, parent.id),
+    },
+    body: JSON.stringify({ prompt: "Inspect the layout", title: "Goal child", wait: false }),
+  }));
+  assert.equal(response.status, 200);
+  const result = await response.json() as { chatId: string };
+  const child = getChat(result.chatId);
+  assert.equal(child?.sessionState?.goal, "Follow @Goal source");
+  assert.equal(child?.sessionState?.goalOriginChatId, parent.id);
+  assert.match(formatChatGoal(child?.sessionState, child?.ownerId, child!.id), /Use the compact layout/);
+});
+
 test("agent prompt tells the model to set a short chat title", () => {
   const source = readFileSync(new URL("../lib/worker-runner.ts", import.meta.url), "utf8");
   assert.match(source, /update_chat_title with a 2-6 word label/);

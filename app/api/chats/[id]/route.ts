@@ -101,12 +101,16 @@ export async function PATCH(req: Request, { params }: Params) {
     );
   }
 
+  const sessionState = body.sessionState ? { ...body.sessionState } : body.sessionState;
+  // Only the internal subagent route may widen a child's goal reference scope.
+  if (sessionState) delete sessionState.goalOriginChatId;
   let chat;
   try {
     chat = updateChat(
       id,
       {
         ...body,
+        sessionState,
         pendingApproval: undefined,
         approvedPatterns: undefined,
         // PATCH is used for UI/session metadata. Only message writes should

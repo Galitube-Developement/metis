@@ -390,6 +390,8 @@ export type ChatSessionState = {
   /** Goal set by the built-in /goal command for this chat. */
   goal?: string | null;
   goalReferences?: ChatMessage["references"];
+  /** Original chat scope for goal references inherited by a subagent. */
+  goalOriginChatId?: string;
   providerSessions?: Record<string, ProviderSessionBinding>;
 };
 

@@ -811,6 +811,7 @@ export function updateChat(
         else {
           delete merged.goal;
           delete merged.goalReferences;
+          delete merged.goalOriginChatId;
         }
       }
       if ("goalReferences" in patch.sessionState && merged.goal) {
