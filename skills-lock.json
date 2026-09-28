@@ -66,6 +66,12 @@
       "sourceType": "github",
       "skillPath": "skills/i-have-adhd/SKILL.md",
       "computedHash": "938d0e350a0c2b0e2e6c3a9032542e062846d108e0f89dd27c798ba5b436397e"
+    },
+    "computer-use": {
+      "source": "./manual",
+      "sourceType": "local",
+      "skillPath": "skills/manual/computer-use/SKILL.md",
+      "computedHash": "5252ecc1583083378d101630e9428cccf4b0cf8263a0540c61a1f27c2b07884e"
     }
   }
 }

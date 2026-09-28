@@ -1,6 +1,7 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import {
   createEnrollmentToken,
+  getGlobalRemoteAllowlist,
   listRemoteAudit,
   listRemoteClients,
 } from "@/lib/remote-clients";
@@ -39,6 +40,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   return Response.json({
     clients: listRemoteClients(ownerId),
+    globalAllowlist: getGlobalRemoteAllowlist(ownerId),
     audit: url.searchParams.get("audit") === "1" ? listRemoteAudit(ownerId) : undefined,
   });
 }
@@ -50,7 +52,7 @@ export async function POST(req: Request) {
   const requestBody = (await req.json().catch(() => ({}))) as { os?: unknown; permissionMode?: unknown };
   const selectedOs = requestBody.os === "windows" || requestBody.os === "macos" ? requestBody.os : "linux";
   const permissionMode = requestBody.permissionMode === "admin" ? "admin" : "user";
-  const token = createEnrollmentToken(ownerId);
+  const token = createEnrollmentToken(ownerId, undefined, permissionMode);
   let publicUrl: string;
   try {
     publicUrl = publicOrigin(req);
@@ -66,6 +68,8 @@ export async function POST(req: Request) {
     command: selectedCommand,
     commands: { linux: command, windows: windowsCommand, macos: macosCommand },
     permissionMode,
+    serverUrl: publicUrl,
+    installerUrl: "/api/remote-clients/windows-installer",
   }, { status: 201 });
 }
 

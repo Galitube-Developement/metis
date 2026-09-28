@@ -27,6 +27,7 @@ import {
   RotateCcw,
   Server,
   Settings2,
+  ShieldCheck,
   Trash2,
   Users,
   type LucideIcon,
@@ -49,6 +50,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import type { RemotePermission } from "@/lib/remote-clients";
 import { ModelPicker } from "@/components/model-picker";
 import { ModelOptionsMenu } from "@/components/model-options-menu";
 import { ProviderLogo } from "@/components/provider-logo";
@@ -196,7 +199,7 @@ type RemoteClient = {
   architecture?: string;
   hostname?: string;
   lastSeenAt?: string;
-  policy: { mode: "restricted" | "approval_required" | "full_access"; allowlist: string[] };
+  policy: { mode: "restricted" | "approval_required" | "full_access"; allowlist: string[]; permissions: RemotePermission[] };
   permissionMode: "user" | "admin";
   capabilities?: string[];
 };
@@ -498,6 +501,135 @@ function SettingsFeaturePane({
   );
 }
 
+const REMOTE_PERMISSION_OPTIONS: Array<{ value: RemotePermission; label: string }> = [
+  { value: "get_info", label: "Device information" },
+  { value: "list_directory", label: "List folders" },
+  { value: "read_file", label: "Read files" },
+  { value: "write_file", label: "Create files" },
+  { value: "edit_file", label: "Edit files" },
+  { value: "delete_file", label: "Delete files" },
+  { value: "execute_command", label: "Run allowlisted commands" },
+  { value: "terminal", label: "Interactive terminal" },
+];
+
+function RemotePermissionsEditor({
+  client,
+  onSave,
+}: {
+  client: RemoteClient;
+  onSave: (client: RemoteClient, policy: RemoteClient["policy"]) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [permissions, setPermissions] = useState<RemotePermission[]>(client.policy.permissions);
+  const [fullAccess, setFullAccess] = useState(client.policy.mode === "full_access");
+  const [allowlistDraft, setAllowlistDraft] = useState(client.policy.allowlist.join("\n"));
+  const [saving, setSaving] = useState(false);
+  const supportsComputerUse = client.capabilities?.includes("desktop_gui")
+    && String(client.os || "").toLowerCase().startsWith("windows");
+  const fullAccessPermissions: RemotePermission[] = [
+    ...REMOTE_PERMISSION_OPTIONS.map(({ value }) => value),
+    ...(supportsComputerUse ? ["computer_use" as const] : []),
+  ];
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave(client, {
+        ...client.policy,
+        mode: fullAccess ? "full_access" : client.policy.mode === "restricted" ? "restricted" : "approval_required",
+        permissions: fullAccess ? fullAccessPermissions : permissions,
+        allowlist: allowlistDraft.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+      });
+      setOpen(false);
+      toast.success(`Permissions saved for ${client.name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save permissions");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={(next) => {
+      if (next) {
+        setPermissions(client.policy.permissions);
+        setFullAccess(client.policy.mode === "full_access");
+        setAllowlistDraft(client.policy.allowlist.join("\n"));
+      }
+      setOpen(next);
+    }}>
+      <PopoverTrigger asChild>
+        <Button type="button" size="sm" variant="outline" aria-label={`Permissions for ${client.name}`}>
+          Permissions <ChevronDown className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(22rem,calc(100vw-2rem))] space-y-3 p-3">
+        <div>
+          <p className="text-sm font-medium">Device permissions</p>
+          <p className="text-xs text-muted-foreground">Choose what Metis can do on this device.</p>
+        </div>
+        <div className="grid gap-1">
+          <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-xs font-medium hover:bg-accent">
+            <input
+              type="checkbox"
+              checked={fullAccess}
+              onChange={(event) => setFullAccess(event.target.checked)}
+              className="size-4 accent-primary"
+            />
+            <ShieldCheck className="size-4 text-muted-foreground" aria-hidden="true" />
+            <span>Full Access</span>
+          </label>
+          {REMOTE_PERMISSION_OPTIONS.map(({ value, label }) => (
+            <label key={value} className={cn("flex min-h-8 items-center gap-2 rounded-md px-1 text-xs", fullAccess ? "cursor-not-allowed text-muted-foreground opacity-50" : "hover:bg-accent")}>
+              <input
+                type="checkbox"
+                checked={value === "terminal" && client.permissionMode === "user" ? false : fullAccess || permissions.includes(value)}
+                disabled={fullAccess || (value === "terminal" && client.permissionMode === "user")}
+                onChange={(event) => setPermissions((current) => event.target.checked
+                  ? [...current, value]
+                  : current.filter((item) => item !== value))}
+                className="size-4 accent-primary"
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+        <label className="flex min-h-10 items-center gap-2 border-t pt-2 text-xs">
+          <input
+            type="checkbox"
+            role="switch"
+            aria-checked={supportsComputerUse && (fullAccess || permissions.includes("computer_use"))}
+            checked={supportsComputerUse && (fullAccess || permissions.includes("computer_use"))}
+            disabled={!supportsComputerUse || fullAccess}
+            onChange={(event) => setPermissions((current) => event.target.checked
+              ? [...current, "computer_use"]
+              : current.filter((item) => item !== "computer_use"))}
+            className="size-4 accent-primary"
+          />
+          <span><span className="font-medium">Computer Use</span><span className="block text-muted-foreground">Screen, mouse, and keyboard. Managed here for Windows devices with an interactive display.</span></span>
+        </label>
+        {client.permissionMode === "user" ? <p className="text-xs text-muted-foreground">Interactive terminal requires admin pairing.</p> : null}
+        <div className={cn("space-y-1", fullAccess && "opacity-50")}>
+          <label htmlFor={`allowlist-${client.id}`} className="text-xs font-medium">Device command allowlist</label>
+          <Textarea
+            id={`allowlist-${client.id}`}
+            value={allowlistDraft}
+            onChange={(event) => setAllowlistDraft(event.target.value)}
+            disabled={fullAccess}
+            placeholder={"One exact command per line\ne.g. whoami"}
+            rows={3}
+            className="font-mono text-xs"
+          />
+          <p className="text-xs text-muted-foreground">Global commands also apply. Commands require the permission above.</p>
+        </div>
+        <Button type="button" size="sm" className="w-full" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save permissions"}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function SettingsPanel({
   open,
   onOpenChange,
@@ -589,7 +721,14 @@ export function SettingsPanel({
   const [mcpDraft, setMcpDraft] = useState<McpDraft>(emptyMcpDraft);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [remoteClients, setRemoteClients] = useState<RemoteClient[]>([]);
+  const [remoteGlobalAllowlistDraft, setRemoteGlobalAllowlistDraft] = useState("");
+  const [remoteGlobalAllowlistBusy, setRemoteGlobalAllowlistBusy] = useState(false);
+  const [remoteGlobalAllowlistLoaded, setRemoteGlobalAllowlistLoaded] = useState(false);
+  const [remoteGlobalAllowlistError, setRemoteGlobalAllowlistError] = useState("");
   const [remoteCommand, setRemoteCommand] = useState("");
+  const [remotePairToken, setRemotePairToken] = useState("");
+  const [remoteServerUrl, setRemoteServerUrl] = useState("");
+  const [remoteInstallerUrl, setRemoteInstallerUrl] = useState("");
   const [remoteCommands, setRemoteCommands] = useState<{ linux: string; windows: string; macos: string } | null>(null);
   const [remotePlatform, setRemotePlatform] = useState<"linux" | "windows" | "macos">("linux");
   const [remotePermissionMode, setRemotePermissionMode] = useState<"user" | "admin">("user");
@@ -647,6 +786,40 @@ export function SettingsPanel({
       toast.error(error instanceof Error ? error.message : "Failed to load remote clients");
     }
   }, []);
+
+  const loadGlobalRemoteAllowlist = useCallback(async () => {
+    setRemoteGlobalAllowlistLoaded(false);
+    setRemoteGlobalAllowlistError("");
+    try {
+      const response = await fetch("/api/remote-clients/allowlist", { cache: "no-store" });
+      const data = (await response.json()) as { allowlist?: string[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not load global allowlist");
+      setRemoteGlobalAllowlistDraft((data.allowlist || []).join("\n"));
+      setRemoteGlobalAllowlistLoaded(true);
+    } catch (error) {
+      setRemoteGlobalAllowlistError(error instanceof Error ? error.message : "Could not load global allowlist");
+    }
+  }, []);
+
+  const saveGlobalRemoteAllowlist = useCallback(async () => {
+    setRemoteGlobalAllowlistBusy(true);
+    setRemoteGlobalAllowlistError("");
+    try {
+      const response = await fetch("/api/remote-clients/allowlist", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowlist: remoteGlobalAllowlistDraft.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) }),
+      });
+      const data = (await response.json()) as { allowlist?: string[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not save global allowlist");
+      setRemoteGlobalAllowlistDraft((data.allowlist || []).join("\n"));
+      toast.success("Global command allowlist saved");
+    } catch (error) {
+      setRemoteGlobalAllowlistError(error instanceof Error ? error.message : "Could not save global allowlist");
+    } finally {
+      setRemoteGlobalAllowlistBusy(false);
+    }
+  }, [remoteGlobalAllowlistDraft]);
 
   const loadBrowserStorage = useCallback(async () => {
     setBrowserStorageLoading(true);
@@ -717,17 +890,22 @@ export function SettingsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ os: platform, permissionMode: remotePermissionMode }),
       });
-      const data = (await response.json()) as { command?: string; commands?: { linux?: string; windows?: string; macos?: string }; error?: string };
+      const data = (await response.json()) as { command?: string; commands?: { linux?: string; windows?: string; macos?: string }; token?: string; serverUrl?: string; installerUrl?: string; error?: string };
       if (!response.ok || !data.command) throw new Error(data.error || "Failed to create enrollment command");
       setRemoteCommand(data.command);
+      setRemotePairToken(data.token || "");
+      setRemoteServerUrl(data.serverUrl || "");
+      setRemoteInstallerUrl(data.installerUrl || "");
       setRemoteCommands({
         linux: data.commands?.linux || data.command,
         windows: data.commands?.windows || "",
         macos: data.commands?.macos || "",
       });
       setRemotePairStep("install");
-      await navigator.clipboard?.writeText(data.command);
-      toast.success("Enrollment command copied");
+      if (platform !== "windows") {
+        await navigator.clipboard?.writeText(data.command);
+        toast.success("Enrollment command copied");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create enrollment command");
     } finally {
@@ -756,11 +934,11 @@ export function SettingsPanel({
     await loadRemoteClients();
   }, [loadRemoteClients]);
 
-  const updateRemotePolicy = useCallback(async (client: RemoteClient, mode: RemoteClient["policy"]["mode"]) => {
+  const updateRemotePolicy = useCallback(async (client: RemoteClient, policy: RemoteClient["policy"]) => {
     const response = await fetch(`/api/remote-clients/${encodeURIComponent(client.id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ policy: { ...client.policy, mode } }),
+      body: JSON.stringify({ policy }),
     });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as { error?: string };
@@ -795,9 +973,10 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open || settingsTab !== "devices") return;
     void loadRemoteClients();
+    void loadGlobalRemoteAllowlist();
     const timer = window.setInterval(() => void loadRemoteClients(), 2_000);
     return () => window.clearInterval(timer);
-  }, [loadRemoteClients, open, settingsTab]);
+  }, [loadRemoteClients, loadGlobalRemoteAllowlist, open, settingsTab]);
   useEffect(() => {
     if (remotePairStep !== "install") return;
     let active = true;
@@ -2658,6 +2837,33 @@ export function SettingsPanel({
                     Add client
                   </Button>
                 </div>
+                <div className="rounded-lg border bg-card/40 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-medium">Global command allowlist</h4>
+                      <p className="mt-1 text-xs text-muted-foreground">These exact commands are available to every device that has Run commands enabled.</p>
+                    </div>
+                    <Button type="button" size="sm" disabled={remoteGlobalAllowlistBusy || !remoteGlobalAllowlistLoaded} onClick={() => void saveGlobalRemoteAllowlist()}>
+                      {remoteGlobalAllowlistBusy ? "Saving…" : "Save global list"}
+                    </Button>
+                  </div>
+                  <Textarea
+                    value={remoteGlobalAllowlistDraft}
+                    disabled={!remoteGlobalAllowlistLoaded}
+                    onChange={(event) => setRemoteGlobalAllowlistDraft(event.target.value)}
+                    placeholder={"One exact command per line\ne.g. whoami"}
+                    rows={3}
+                    aria-label="Global command allowlist"
+                    className="mt-3 font-mono text-xs"
+                  />
+                  {!remoteGlobalAllowlistLoaded && !remoteGlobalAllowlistError ? <p className="mt-2 text-xs text-muted-foreground">Loading global allowlist…</p> : null}
+                  {remoteGlobalAllowlistError ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <p role="alert" className="text-xs text-destructive">{remoteGlobalAllowlistError}</p>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void loadGlobalRemoteAllowlist()}>Retry</Button>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="flex flex-col gap-2">
                   {remoteClients.length ? remoteClients.map((client) => (
                     <div key={client.id} className="rounded-lg border bg-card/40 p-3">
@@ -2675,29 +2881,22 @@ export function SettingsPanel({
                           <p className="text-xs text-muted-foreground">
                             {client.hostname || "Unknown host"} · {client.os || "Unknown OS"} · {client.architecture || "unknown arch"}
                           </p>
-                          <div className="mt-1.5">
-                            <Badge
-                              variant={client.permissionMode === "admin" ? "default" : "outline"}
-                              className={client.policy.mode === "full_access"
-                                ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                                : ""}
-                            >
-                              {client.permissionMode === "admin"
-                                ? "Admin / system access · confirmation required"
-                                : "User access · no administrator rights"}
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <Badge variant={client.permissionMode === "admin" ? "default" : "outline"}>
+                              {client.permissionMode === "admin" ? "Admin / system access" : "User access · no administrator rights"}
                             </Badge>
+                            <Badge variant="outline">{client.policy.mode === "full_access" ? "Full Access" : `${client.policy.permissions.length} permissions enabled`}</Badge>
+                            {client.capabilities?.includes("desktop_gui") ? <Badge variant="outline">Computer Use {client.policy.permissions.includes("computer_use") ? "on" : "off"}</Badge> : null}
                           </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
                           <span className={`size-2 rounded-full ${client.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} title={client.status} />
+                          <RemotePermissionsEditor client={client} onSave={updateRemotePolicy} />
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" className="max-md:min-h-11 max-md:min-w-11" aria-label={`Manage ${client.name}`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => void testRemoteConnection(client)}>Test connection</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void updateRemotePolicy(client, client.policy.mode === "approval_required" ? "full_access" : "approval_required")}>
-                                {client.policy.mode === "approval_required" ? "Disable approval policy" : "Enable approval policy"}
-                              </DropdownMenuItem>
                               <DropdownMenuItem className="text-destructive" onClick={() => setRemoteClientDeleteTarget(client)}>Remove client</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -2893,19 +3092,39 @@ export function SettingsPanel({
             </div>
           ) : remotePairStep === "install" ? (
             <div className="min-w-0 space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-              <div>
-                <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the client</p>
-                <p className="mt-1 text-xs text-muted-foreground">Run this command on the device you want to connect.</p>
-              </div>
-              <div className="w-full min-w-0 max-w-full overflow-hidden">
-                <Textarea readOnly value={remoteCommands?.[remotePlatform] || remoteCommand} className="block min-h-32 w-full min-w-0 max-w-full resize-y overflow-auto [field-sizing:fixed] bg-background font-mono text-xs" />
-              </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => void copyRemoteCommand()}>Copy install command</Button>
-              </div>
+              {remotePlatform === "windows" ? (
+                <>
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the Windows app</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Install the app, open it, then enter this server URL and pairing code. The code expires after 15 minutes. {remotePermissionMode === "admin" ? "For admin access, start the app as administrator and confirm UAC." : "User access runs without administrator rights."}</p>
+                  </div>
+                  <a href={remoteInstallerUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90">Download Windows installer</a>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium">Server URL</p>
+                    <div className="flex gap-2"><Input readOnly value={remoteServerUrl} aria-label="Server URL" /><Button type="button" variant="outline" onClick={() => void navigator.clipboard.writeText(remoteServerUrl)}>Copy</Button></div>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium">Pairing code</p>
+                    <div className="flex gap-2"><Input readOnly value={remotePairToken} aria-label="Pairing code" className="font-mono" /><Button type="button" variant="outline" onClick={() => void navigator.clipboard.writeText(remotePairToken)}>Copy</Button></div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the client</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Run this command on the device you want to connect.</p>
+                  </div>
+                  <div className="w-full min-w-0 max-w-full overflow-hidden">
+                    <Textarea readOnly value={remoteCommands?.[remotePlatform] || remoteCommand} className="block min-h-32 w-full min-w-0 max-w-full resize-y overflow-auto [field-sizing:fixed] bg-background font-mono text-xs" />
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => void copyRemoteCommand()}>Copy install command</Button>
+                  </div>
+                </>
+              )}
               <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status" aria-live="polite">
                 <RefreshCw className="size-3.5 animate-spin" />
-                Waiting for installation…
+                Waiting for the device to connect…
               </div>
             </div>
           ) : (

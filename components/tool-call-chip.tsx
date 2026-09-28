@@ -27,6 +27,7 @@ import { AutomationCard } from "@/components/automation-card";
 import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
 import { planLooksParallelizable } from "@/lib/modes";
 import { CanvasWorkspaceCard } from "@/components/canvas-workspace-card";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 
 import {
   canvasFromToolPayload,
@@ -352,10 +353,11 @@ export const ToolCallChip = memo(function ToolCallChip({
   // "running". The result is terminal evidence, so never keep the spinner in
   // that case (including an intentionally empty response).
   const running = isToolRunning(status) && result === undefined;
-  const expanded = locked ? autoExpand : userOpen ?? autoExpand;
   const display = enrichToolDisplay({ name, input, result, kind });
   const todoItems = todos?.length ? todos : display.todos;
   const resolvedKind = display.kind;
+  const isCommand = resolvedKind === "shell";
+  const expanded = isCommand ? userOpen === true : locked ? autoExpand : userOpen ?? autoExpand;
   const resolvedName = display.name || name;
   const deleteTool = /(^|[._:/-])(delete|remove|unlink)(?=[._:/-]|$)/i.test(resolvedName);
   const headline = toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames });
@@ -512,11 +514,15 @@ export const ToolCallChip = memo(function ToolCallChip({
     );
   }
   return (
-    <div className={cn(nested ? "my-0" : "my-0.5", "w-full min-w-0")} style={{ overflowAnchor: "none" }}>
+    <Popover open={isCommand && expanded} onOpenChange={(open) => { if (isCommand) setUserOpen(open); }}>
+      <div className={cn(nested ? "my-0" : "my-0.5", "w-full min-w-0")} style={{ overflowAnchor: "none" }}>
       <div className="group flex w-full min-w-0 items-center gap-1">
+        <PopoverAnchor asChild>
         <button
           type="button"
-          className={cn(activityRowClass, "min-w-0 flex-1")}
+          className={cn(activityRowClass, "min-w-0 flex-1", isCommand && "rounded-sm focus-visible:ring-2 focus-visible:ring-ring")}
+          aria-expanded={isCommand ? expanded : undefined}
+          aria-haspopup={isCommand ? "dialog" : undefined}
           onClick={() => {
             if (subagentClickable && onOpenSubagent) {
               onOpenSubagent();
@@ -528,7 +534,7 @@ export const ToolCallChip = memo(function ToolCallChip({
         >
           {running ? (
             <LoaderCircle className="size-3 shrink-0 animate-spin" />
-          ) : nested ? null : (
+          ) : nested && !isCommand ? null : (
             <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
           )}
           <Icon className="size-3 shrink-0 opacity-70" />
@@ -545,6 +551,7 @@ export const ToolCallChip = memo(function ToolCallChip({
             </span>
           ) : null}
         </button>
+        </PopoverAnchor>
         {clickable ? (
           <button
             type="button"
@@ -601,7 +608,7 @@ export const ToolCallChip = memo(function ToolCallChip({
           </button>
         ) : null}
       </div>
-      {expanded ? (
+      {expanded && !isCommand ? (
         <div className="my-1 min-w-0 max-h-72 max-w-full space-y-2 overflow-x-hidden overflow-y-auto pl-4 text-[11px] font-light leading-4 text-muted-foreground/80">
           {input ? (
             <section>
@@ -624,7 +631,32 @@ export const ToolCallChip = memo(function ToolCallChip({
           {!input && !(kind === "edit" && diff) && !result && !detail ? "No output available yet." : null}
         </div>
       ) : null}
-    </div>
+      {isCommand ? (
+        <PopoverContent
+          align="start"
+          side="bottom"
+          sideOffset={6}
+          collisionPadding={12}
+          aria-label="Command details"
+          className="max-h-[min(70vh,36rem)] w-[min(42rem,calc(100vw-1.5rem))] overflow-y-auto p-3 text-xs leading-5"
+        >
+          {input ? (
+            <section className="min-w-0">
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Command</p>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground">{formatToolOutput(input)}</pre>
+            </section>
+          ) : null}
+          {result || detail ? (
+            <section className="min-w-0">
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Output</p>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>
+            </section>
+          ) : null}
+          {!input && !result && !detail ? <p className="text-muted-foreground">No output available yet.</p> : null}
+        </PopoverContent>
+      ) : null}
+      </div>
+    </Popover>
   );
 });
 

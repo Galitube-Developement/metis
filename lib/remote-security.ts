@@ -19,7 +19,7 @@ export function capabilitiesForPermissionMode(mode: RemotePermissionMode) {
   return mode === "admin" ? [...ADMIN_CAPABILITIES] : [...USER_CAPABILITIES];
 }
 
-const SYSTEM_COMMANDS = /(^|[\\s;&|])(sc|sc\.exe|net\s+(start|stop)|powershell(?:\.exe)?|pwsh|reg(?:\.exe)?|diskpart|mountvol|format(?:\.com)?|bcdedit|wevtutil|takeown|icacls|taskkill)(?:[\\s;&|]|$)/i;
+const SYSTEM_COMMANDS = /(^|[\s;&|])(sc|sc\.exe|net\s+(start|stop)|powershell(?:\.exe)?|pwsh|reg(?:\.exe)?|diskpart|mountvol|format(?:\.com)?|bcdedit|wevtutil|takeown|icacls|taskkill)(?:[\s;&|]|$)/i;
 const SYSTEM_PATH = /(^|[\\/])(?:windows|program files(?: \(x86\))?|programdata|system volume information)(?:[\\/]|$)/i;
 
 export function isRiskyRemoteAction(action: string, params: Record<string, unknown> = {}) {
