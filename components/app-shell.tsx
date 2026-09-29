@@ -153,6 +153,7 @@ import {
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
+import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
   clearClientChatSnapshots,
@@ -2446,6 +2447,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const seenChatUpdatedAtRef = useRef<Map<string, string>>(new Map());
   const chatListInitializedRef = useRef(false);
   const workspaceSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const workspaceDraftChangesRef = useRef<Map<string, WorkspaceDraftPatch>>(new Map());
   const workspaceListSaveTimerRef = useRef<number | null>(null);
   const stateRef = useRef({
     messages,
@@ -5174,7 +5176,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setRuntimeMode(serverRuntimeMode);
         localStorage.setItem(RUNTIME_MODE_STORAGE_KEY, serverRuntimeMode);
         const serverWorkspaces = workspacesFromChat(data.chat);
-        setWorkspaces(serverWorkspaces);
+        setWorkspaces((current) => {
+          const localById = new Map(current.map((item) => [item.id, item]));
+          return serverWorkspaces.map((item) =>
+            mergeIncomingWorkspace(item, localById.get(item.id), workspaceDraftChangesRef.current.get(item.id)),
+          );
+        });
         setActiveWorkspaceId((current) =>
           current && serverWorkspaces.some((item) => item.id === current)
             ? current
@@ -8518,8 +8525,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         error?: string;
       };
       if (response.status === 409 && body.workspace) {
-        setWorkspaces((current) => current.map((item) => item.id === workspaceId ? body.workspace! : item));
-        toast.info("Workspace changed by the agent", {
+        const pending = workspaceDraftChangesRef.current.get(workspaceId);
+        setWorkspaces((current) => current.map((item) =>
+          item.id === workspaceId ? mergeIncomingWorkspace(body.workspace!, item, pending) : item,
+        ));
+        if (pending) scheduleWorkspaceDraftSave(workspaceId);
+        else toast.info("Workspace changed by the agent", {
           description: "The newer agent version is now shown.",
         });
         return;
@@ -8527,7 +8538,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (!response.ok || !body.workspace) {
         throw new Error(body.error || "Could not save workspace.");
       }
-      setWorkspaces((current) => current.map((item) => item.id === workspaceId ? body.workspace! : item));
+      const remaining = remainingWorkspaceDraft(workspaceDraftChangesRef.current.get(workspaceId), workspace);
+      if (remaining) workspaceDraftChangesRef.current.set(workspaceId, remaining);
+      else workspaceDraftChangesRef.current.delete(workspaceId);
+      setWorkspaces((current) => current.map((item) =>
+        item.id === workspaceId
+          ? mergeIncomingWorkspace(body.workspace!, item, workspaceDraftChangesRef.current.get(workspaceId))
+          : item,
+      ));
+      if (workspaceDraftChangesRef.current.has(workspaceId) && !workspaceSaveTimersRef.current.has(workspaceId)) {
+        scheduleWorkspaceDraftSave(workspaceId);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save workspace.");
     }
@@ -8547,8 +8568,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   function updateWorkspaceDraft(
     workspaceId: string,
-    patch: Partial<Pick<WorkspaceItem, "name" | "content">>,
+    patch: WorkspaceDraftPatch,
   ) {
+    workspaceDraftChangesRef.current.set(workspaceId, {
+      ...workspaceDraftChangesRef.current.get(workspaceId),
+      ...patch,
+    });
     setWorkspaces((current) => current.map((item) =>
       item.id === workspaceId
         ? { ...item, ...patch, updatedAt: new Date().toISOString() }
@@ -9297,6 +9322,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               const live = composerLiveText(textareaRef.current?.innerText, input);
               const next = composerTranscriptInsert(live, transcript);
               handleComposerInputChange(next, next.length);
+              setInput(next);
               setComposerSyncNonce((current) => current + 1);
               window.requestAnimationFrame(() => textareaRef.current?.focus());
             }}

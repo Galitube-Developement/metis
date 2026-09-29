@@ -1,8 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { replaceEmbeddedSource, toggleMarkdownTask } from "../lib/markdown-editor";
+import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "../lib/markdown-editor";
 
 const fence = String.fromCharCode(96).repeat(3);
+
+test("external Markdown updates touch only the changed span", () => {
+  assert.deepEqual(minimalMarkdownChange("## Heading\nabc", "## Heading\nabXc"), {
+    from: 13,
+    to: 13,
+    insert: "X",
+  });
+  assert.deepEqual(minimalMarkdownChange("hello world", "hello there"), {
+    from: 6,
+    to: 11,
+    insert: "there",
+  });
+  assert.equal(minimalMarkdownChange("same", "same"), null);
+});
 
 test("task checkbox edits the matching source line and leaves fenced examples alone", () => {
   const source = ["- [ ] first", fence + "md", "- [ ] example", fence, "1. [x] second"].join("\n");

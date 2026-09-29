@@ -733,7 +733,7 @@ export function NotesVoid({
           if (drag?.mode === "move" && drag.armed) {
             const editor = (event.target instanceof Element ? event.target.closest("[data-note-card]") : null)
               ?.querySelector<HTMLElement>(".editable-markdown");
-            editor?.focus();
+            editor?.querySelector<HTMLElement>(".cm-content")?.focus();
           }
           setDrag(null);
           document.body.style.removeProperty("user-select");
@@ -771,7 +771,7 @@ export function NotesVoid({
               event.stopPropagation();
               setFrontNoteId(note.id);
               const target = event.target as HTMLElement;
-              const fromContent = Boolean(target.closest(".markdown-body, input, textarea, button, a, [data-editor-control]"));
+              const fromContent = Boolean(target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]"));
               const fromEditorEmpty = Boolean(target.closest(".editable-markdown")) && !fromContent;
               const point = localPoint(event);
               if (fromEditorEmpty) {
@@ -1031,7 +1031,7 @@ export function NotesVoid({
               onPointerDown={(event) => {
                 setFrontNoteId(note.id);
                 const target = event.target as HTMLElement;
-                if (target.closest(".markdown-body, input, textarea, button, a, [data-editor-control]")) {
+                if (target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]")) {
                   event.stopPropagation();
                 }
               }}

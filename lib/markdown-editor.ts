@@ -1,4 +1,18 @@
 /** Small source edits used by the live Markdown preview. */
+
+export function minimalMarkdownChange(current: string, next: string) {
+  if (current === next) return null;
+  let from = 0;
+  const commonLength = Math.min(current.length, next.length);
+  while (from < commonLength && current[from] === next[from]) from += 1;
+  let currentEnd = current.length;
+  let nextEnd = next.length;
+  while (currentEnd > from && nextEnd > from && current[currentEnd - 1] === next[nextEnd - 1]) {
+    currentEnd -= 1;
+    nextEnd -= 1;
+  }
+  return { from, to: currentEnd, insert: next.slice(from, nextEnd) };
+}
 export function toggleMarkdownTask(value: string, index: number, checked: boolean): string {
   let taskIndex = 0;
   let fenceChar = "";
