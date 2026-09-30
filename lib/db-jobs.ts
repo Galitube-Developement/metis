@@ -140,6 +140,12 @@ export function serializeRunEventData(data: unknown) {
   return compacted;
 }
 
+export function getJobForMessageId(chatId: string, messageId: string) {
+  return parseData<AgentJob>(getDatabase().prepare(
+    "SELECT data FROM jobs WHERE chat_id = ? AND json_extract(data, '$.messageId') = ? ORDER BY updated_at DESC LIMIT 1",
+  ).get(chatId, messageId));
+}
+
 function enqueueJobInTransaction(
   input: Omit<
     AgentJob,
@@ -148,12 +154,7 @@ function enqueueJobInTransaction(
   options?: { beforeInsert?: () => void },
 ) {
     if (input.messageId) {
-      const existingRow = getDatabase()
-        .prepare(
-          "SELECT data FROM jobs WHERE chat_id = ? AND json_extract(data, '$.messageId') = ? ORDER BY updated_at DESC LIMIT 1",
-        )
-        .get(input.chatId, input.messageId);
-      const existing = parseData<AgentJob>(existingRow);
+      const existing = getJobForMessageId(input.chatId, input.messageId);
       if (existing) {
         // Keep retries self-healing: the callback is idempotent by message id
         // and can restore a historically orphaned chat message if needed.
@@ -243,9 +244,15 @@ export function enqueueJob(
     AgentJob,
     "id" | "status" | "attempts" | "createdAt" | "updatedAt"
   >,
-  options?: { beforeInsert?: () => void },
+  options?: { beforeInsert?: () => void; interruptActiveRun?: boolean },
 ) {
-  return transaction(() => enqueueJobInTransaction(input, options));
+  return transaction(() => {
+    // Replace and submit in one write transaction: the FIFO worker must not
+    // claim a different follow-up between cancellation and this submission.
+    const existing = input.messageId ? getJobForMessageId(input.chatId, input.messageId) : null;
+    if (options?.interruptActiveRun && !existing) requestJobCancel(input.chatId, input.userId);
+    return enqueueJobInTransaction(input, options);
+  });
 }
 
 export function drainNextQueuedMessage(chatId: string, userId?: string) {
@@ -1055,7 +1062,7 @@ export function requestJobModelSwitch(
 }
 
 export function requestJobCancel(chatId: string, userId?: string) {
-  const job = getActiveJob(chatId, userId);
+  const job = getActiveParentJob(chatId, userId) || getActiveJob(chatId, userId);
   if (!job) return null;
   const cancelled = updateJob(job.id, {
     status: "cancelled",

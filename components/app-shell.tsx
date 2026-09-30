@@ -6780,10 +6780,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   function applyServerQueuedMessages(server: PersistedQueuedMessage[], removedIds?: string[]) {
     const chatId = activeChatIdRef.current || "";
     for (const id of removedIds ?? []) removedIdsFor(chatId).add(id);
-    const consumed = new Set<string>([
-      ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
-      ...queuedSendRef.current,
-    ]);
+    const consumed = new Set<string>(stateRef.current.messages
+      .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
+      .map((message) => message.id));
     setQueuedMessages((current) => mergeQueuedFollowUps(
       current,
       server.map((message) => ({ ...message, files: [] as PendingFile[] })),
@@ -6795,10 +6794,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   function persistQueuedFollowUps(items: QueuedMessage[]) {
     const chatId = activeChatIdRef.current;
     if (!chatId) return;
-    const consumed = new Set<string>([
-      ...queuedSendRef.current,
-      ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
-    ]);
+    const consumed = new Set<string>(stateRef.current.messages
+      .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
+      .map((message) => message.id));
     const removed = removedIdsFor(chatId);
     const payload = items.filter((item) => !consumed.has(item.id) && !removed.has(item.id));
     void fetch(`/api/chats/${chatId}`, {
@@ -6853,21 +6851,29 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       busy: busy || busyRef.current,
       waitingForQuestion: Boolean(pendingQuestion),
       hasActiveRuntime: Boolean(activeRuntime),
+      interruptActiveRun: true,
     });
     if (!canStart) {
-      // "Send next" must never cancel the run that is currently applying the
-      // user's earlier changes. Move this item to the front; the normal/server
-      // FIFO drains it as soon as the current run becomes terminal.
-      setQueuedMessages((current) => [
-        message,
-        ...current.filter((item) => item.id !== message.id),
-      ]);
-      setLiveStatus("Queued follow-up will run next.");
+      toast.info("Wait for the previous message to be accepted, then try Send now again.");
       return;
     }
+    if (!modelId.trim()) {
+      toast.error("Select a model first");
+      return;
+    }
+    activeRuntime?.abortController.abort();
     queuedSendRef.current.add(message.id);
     queueDrainRef.current = true;
     queueDrainBlockedRef.current = true;
+    let released = false;
+    const releaseQueueSubmission = () => {
+      if (released) return;
+      released = true;
+      queuedSendRef.current.delete(message.id);
+      queueDrainRef.current = queuedSendRef.current.size > 0;
+      queueDrainBlockedRef.current = false;
+      setSendLockTick((value) => value + 1);
+    };
     try {
       await send(
         undefined,
@@ -6877,14 +6883,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         message.referenceText,
         message.references,
         message.id,
-        () => setQueuedMessages((current) => current.filter((item) => item.id !== message.id)),
+        () => {
+          releaseQueueSubmission();
+          setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+          if (activeChatIdRef.current === activeId) {
+            pendingQuestionIdRef.current = null;
+            setPendingQuestion(null);
+            setPendingApproval(null);
+          }
+        },
         message.storedAttachments,
+        true,
       );
     } finally {
-      queuedSendRef.current.delete(message.id);
-      queueDrainRef.current = false;
-      queueDrainBlockedRef.current = false;
-      setSendLockTick((value) => value + 1);
+      releaseQueueSubmission();
     }
   }
 
@@ -7069,6 +7081,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     messageIdOverride?: string,
     onAccepted?: () => void,
     storedAttachmentsOverride?: MsgAttachment[],
+    sendQueuedNow = false,
   ) {
     if (reverting) return;
     if (
@@ -7207,6 +7220,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         },
         storedAttachmentsOverride,
         Boolean(goalMessage),
+        sendQueuedNow,
       );
       sendSucceeded = true;
     } finally {
@@ -7245,6 +7259,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     onAccepted?: () => void,
     storedAttachmentsOverride?: MsgAttachment[],
     asComposerSubmission = false,
+    sendQueuedNow = false,
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
@@ -7365,6 +7380,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       generation,
     });
     void refreshActiveChatFromServer(chatId);
+    let submissionAccepted = false;
 
     try {
       let attachmentsPayload:
@@ -7389,6 +7405,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         body: JSON.stringify({
           chatId,
           messageId: userMsg.id,
+          ...(sendQueuedNow ? { sendQueuedNow: true } : {}),
           message: text,
           streamDeviceId: getMetisDeviceId() || undefined,
           referenceText: !incognito ? ((referenceTextOverride ?? referenceText) || undefined) : undefined,
@@ -7411,6 +7428,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
         const msg =
           (err as { error?: string }).error || `HTTP ${res.status}`;
+        if (sendQueuedNow) {
+          toast.error(msg);
+          if (activeChatIdRef.current === chatId) {
+            setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
+            setBusySynced(false);
+          }
+          return;
+        }
         if (activeChatIdRef.current === chatId) {
           setMessages((m) =>
             m.map((x) =>
@@ -7427,6 +7452,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       let runJobId: string | undefined;
       const streamType = res.headers.get("content-type") || "";
       const jsonAccepted = !streamType.includes("text/event-stream") && (res.status === 202 || streamType.includes("application/json"));
+      submissionAccepted = true;
       if (!jsonAccepted) onAccepted?.();
       if (jsonAccepted) {
         const queued = (await res.json().catch(() => ({}))) as { jobId?: string; queueMessage?: string };
@@ -8104,7 +8130,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         void refreshActiveChatFromServer(chatId);
       }
     } catch (err) {
+      if (sendQueuedNow && !submissionAccepted && activeChatIdRef.current === chatId) {
+        setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
+      }
       if ((err as Error).name !== "AbortError") {
+        if (sendQueuedNow && !submissionAccepted) toast.error(err instanceof Error ? err.message : "Could not send queued message");
         const msg = err instanceof Error ? err.message : "Request failed";
         reportClientError(`send stream failed: ${msg}`, {
           stack: err instanceof Error ? err.stack : undefined,
@@ -8138,10 +8168,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           };
         }),
       );
-      if (runtimeRef.current.get(chatId)?.generation === generation) {
-        clearChatRunning(chatId);
-      }
-      if (activeChatIdRef.current === chatId && !pendingQuestionIdRef.current) {
+      const stillCurrentRun = runtimeRef.current.get(chatId)?.generation === generation;
+      if (stillCurrentRun) clearChatRunning(chatId);
+      if (stillCurrentRun && activeChatIdRef.current === chatId && !pendingQuestionIdRef.current) {
         setBusySynced(false);
         setLiveStatus("");
       }

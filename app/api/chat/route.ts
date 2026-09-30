@@ -1,6 +1,8 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
-import { enqueueJob, getActiveJob } from "@/lib/db-jobs";
+import { resolveApproval } from "@/lib/db-approvals";
+import { cancelQuestion } from "@/lib/db-questions";
+import { enqueueJob, getActiveJob, getJobForMessageId } from "@/lib/db-jobs";
 import {
   appendMessageInTransaction,
   getChat,
@@ -30,6 +32,7 @@ type ChatBody = {
   chatId?: string;
   message?: string;
   messageId?: string;
+  sendQueuedNow?: boolean;
   referenceText?: string;
   references?: Array<{
     kind?: unknown;
@@ -95,7 +98,7 @@ export async function POST(req: Request) {
       typeof body.referenceText === "string"
         ? body.referenceText.trim().slice(0, 100_000)
         : "";
-    if (!chatId || (!message && !attachments.length)) {
+    if (!chatId || (!message && !attachments.length && !body.storedAttachments?.length)) {
       return Response.json(
         { error: "chatId and message or attachments are required" },
         { status: 400 },
@@ -116,6 +119,20 @@ export async function POST(req: Request) {
       references = [];
     }
     const requestedMessageId = body.messageId?.trim() || undefined;
+    const sendQueuedNow = body.sendQueuedNow === true;
+    if (sendQueuedNow && !requestedMessageId) {
+      return Response.json({ error: "Queued message ID is required" }, { status: 400 });
+    }
+    if (sendQueuedNow && requestedMessageId) {
+      const accepted = getJobForMessageId(chatId, requestedMessageId);
+      if (accepted) return Response.json({
+        jobId: accepted.id, runId: accepted.runId || accepted.id,
+        status: accepted.status, queueMessage: accepted.queueMessage,
+      }, { status: 202 });
+      if (chat.removedQueuedMessageIds?.includes(requestedMessageId)) {
+        return Response.json({ error: "This queued message was removed" }, { status: 409 });
+      }
+    }
     const resolvedExplicit = resolveReferences(ownerId, chatId, references);
     const pinnedReferences = chat.incognito
       ? []
@@ -145,20 +162,19 @@ export async function POST(req: Request) {
           { status: 202 },
         );
       }
-      return Response.json(
-        {
-          error:
-            "This chat already has an active run. Wait for it to finish or cancel it first.",
-        },
-        { status: 409 },
-      );
+      if (!sendQueuedNow) {
+        return Response.json(
+          { error: "This chat already has an active run. Wait for it to finish or cancel it first." },
+          { status: 409 },
+        );
+      }
     }
-    if (
+    if (!sendQueuedNow && (
       chat.pendingQuestion ||
       chat.pendingApproval ||
       chat.runStatus === "waiting_input" ||
       chat.runStatus === "waiting_for_user"
-    ) {
+    )) {
       return Response.json(
         {
           error:
@@ -185,6 +201,9 @@ export async function POST(req: Request) {
           )
           .slice(0, MAX_ATTACHMENTS)
       : [];
+    if (!message && !attachments.length && !storedAttachments.length) {
+      return Response.json({ error: "Message or valid attachments are required" }, { status: 400 });
+    }
     const stored: Awaited<ReturnType<typeof saveAttachments>>["stored"] = [];
     const messageId = requestedMessageId || crypto.randomUUID();
     const streamDeviceId = body.streamDeviceId?.trim().slice(0, 120)
@@ -210,6 +229,7 @@ export async function POST(req: Request) {
         ...(chat.incognito ? { incognito: true } : {}),
         ...(streamDeviceId ? { streamDeviceId } : {}),
       }, {
+        interruptActiveRun: sendQueuedNow,
         beforeInsert: () => {
           if (storedAttachments.length) stored.push(...storedAttachments);
           if (attachments.length) {
@@ -226,6 +246,15 @@ export async function POST(req: Request) {
             ...(references.length ? { references } : {}),
             ...(resolvedAttachments.length ? { attachments: resolvedAttachments } : {}),
           };
+          if (sendQueuedNow) {
+            const current = getChat(chatId, ownerId);
+            if (current?.pendingQuestion?.questionId) cancelQuestion(current.pendingQuestion.questionId, ownerId);
+            if (current?.pendingApproval?.id) resolveApproval(current.pendingApproval.id, "deny", ownerId);
+            updateChat(chatId, {
+              queuedMessages: (current?.queuedMessages ?? []).filter((item) => item.id !== messageId),
+              pendingQuestion: null, pendingApproval: null,
+            }, ownerId);
+          }
           const appended = appendMessageInTransaction(chatId, userMessage, ownerId);
           if (!appended) throw new Error("Chat not found while enqueueing message");
         },

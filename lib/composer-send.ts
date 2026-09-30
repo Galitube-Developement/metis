@@ -110,13 +110,14 @@ export function shouldStartQueuedFollowUp(options: {
   busy: boolean;
   waitingForQuestion: boolean;
   hasActiveRuntime?: boolean;
+  interruptActiveRun?: boolean;
 }) {
   return (
     !options.drainInFlight &&
     !options.sendInFlight &&
-    !options.busy &&
-    !options.waitingForQuestion &&
-    !options.hasActiveRuntime
+    Boolean(options.interruptActiveRun || (
+      !options.busy && !options.waitingForQuestion && !options.hasActiveRuntime
+    ))
   );
 }
 
