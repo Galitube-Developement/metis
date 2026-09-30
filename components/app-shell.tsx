@@ -152,6 +152,7 @@ import {
   shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
+import { removeQueuedFollowUp } from "@/lib/queue-client";
 import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
@@ -6788,7 +6789,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ...queuedSendRef.current,
       ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
     ]);
-    const payload = items.filter((item) => !consumed.has(item.id));
+    const removed = removedIdsFor(chatId);
+    const payload = items.filter((item) => !consumed.has(item.id) && !removed.has(item.id));
     void fetch(`/api/chats/${chatId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -6876,8 +6878,34 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function editQueuedMessage(message: QueuedMessage) {
-    setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+  async function removeMessageFromQueue(message: QueuedMessage) {
+    const chatId = activeChatIdRef.current;
+    const index = queuedMessages.findIndex((item) => item.id === message.id);
+    try {
+      return await removeQueuedFollowUp({
+        chatId,
+        messageId: message.id,
+        removedIds: removedIdsFor(chatId ?? ""),
+        removeLocally: () => setQueuedMessages((current) => current.filter((item) => item.id !== message.id)),
+        restoreLocally: () => {
+          if (activeChatIdRef.current !== chatId) return;
+          setQueuedMessages((current) => {
+            if (current.some((item) => item.id === message.id)) return current;
+            const next = [...current];
+            next.splice(Math.max(0, index), 0, message);
+            return next;
+          });
+        },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove queued message");
+      return false;
+    }
+  }
+
+  async function editQueuedMessage(message: QueuedMessage) {
+    const chatId = activeChatIdRef.current;
+    if (!await removeMessageFromQueue(message) || activeChatIdRef.current !== chatId) return;
     setInput(message.text);
     setReferenceText(message.referenceText ?? "");
     setReferences(message.references ?? []);
@@ -8751,7 +8779,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Edit queued message" title="Edit queued message" onClick={() => editQueuedMessage(message)}>
             <Pencil className="size-3.5" />
           </Button>
-          <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Remove queued message" onClick={() => setQueuedMessages((current) => current.filter((item) => item.id !== message.id))}>
+          <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Remove queued message" onClick={() => { void removeMessageFromQueue(message); }}>
             <X className="size-3.5" />
           </Button>
         </div>
