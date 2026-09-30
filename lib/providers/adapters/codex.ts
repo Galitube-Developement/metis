@@ -386,6 +386,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
 export const codexAdapter: ProviderAdapterShape = {
   key: "codex-sdk",
   capabilities: {
+    progressDelivery: "buffered",
     contextOwner: "native",
     persistentThreads: true,
     interruptibleTurns: true,

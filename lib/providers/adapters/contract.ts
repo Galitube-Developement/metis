@@ -64,6 +64,8 @@ export type ProviderExecutionKey =
   | "opencode-cli";
 
 export type ProviderAdapterCapabilities = {
+  /** Buffered SDKs may stay silent while generating a complete message/tool input. */
+  readonly progressDelivery?: "buffered" | "continuous";
   readonly contextOwner: "native" | "metis";
   readonly persistentThreads: boolean;
   readonly interruptibleTurns: boolean;
