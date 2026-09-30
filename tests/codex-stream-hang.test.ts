@@ -91,7 +91,7 @@ test("Codex adapter and OpenAI factory wire the hang guards", () => {
   const codex = readFileSync(new URL("../lib/providers/adapters/codex.ts", import.meta.url), "utf8");
   const support = readFileSync(new URL("../lib/providers/adapters/provider-support.ts", import.meta.url), "utf8");
   const runner = readFileSync(new URL("../lib/providers/runner.ts", import.meta.url), "utf8");
-  assert.match(codex, /iterateUntilAborted\(streamed\.events/);
+  assert.match(codex, /codexEventsWithResumeRetry/);
   assert.match(codex, /service_tier: serviceTier/);
   assert.match(support, /return openai\.responses\(modelId\)/);
   assert.doesNotMatch(support, /openai\.chat\(modelId\)/);

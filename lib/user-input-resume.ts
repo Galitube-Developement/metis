@@ -17,7 +17,7 @@ export function shouldQueueUserInputResume(
   heartbeatAt: string | undefined,
   now = Date.now(),
 ) {
-  if (!status) return false;
+  if (!status || ["completed", "cancelled", "queued", "switching"].includes(status)) return false;
   if (!LIVE_USER_INPUT_STATUSES.has(status)) return true;
   const heartbeat = heartbeatAt ? Date.parse(heartbeatAt) : Number.NaN;
   return !Number.isFinite(heartbeat) || now - heartbeat > USER_INPUT_HEARTBEAT_GRACE_MS;

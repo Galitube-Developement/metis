@@ -1165,6 +1165,7 @@ function runMatchesModel(
   if (run.providerId && run.providerId !== selection.providerKey) return false;
   if (run.connectionId && selection.connectionId && run.connectionId !== selection.connectionId) return false;
   if (
+    run.contextWindowSource !== "runtime" &&
     typeof run.contextWindow === "number" &&
     typeof selection.contextWindow === "number" &&
     run.contextWindow !== selection.contextWindow
@@ -8200,7 +8201,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       })),
   }) ?? latestUsage?.contextUsedTokens ?? estimatedContextTokens;
   const contextTotal = resolveContextTotal(
-    selectedContextWindow ?? latestUsage?.contextWindow,
+    latestUsage?.contextWindowSource === "runtime"
+      ? latestUsage.contextWindow
+      : selectedContextWindow ?? latestUsage?.contextWindow,
     contextUsed,
   );
   const contextEstimated = latestUsage?.contextUsedTokens === undefined

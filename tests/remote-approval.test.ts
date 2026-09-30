@@ -118,7 +118,7 @@ test("device permissions and owner-wide allowlist are enforced together", async 
   assert.equal(authorizeRemoteAction(restrictedAgain, "list_directory").allowed, false);
 });
 
-test("admin clients require approval for risky actions", async () => {
+test("Full Access admin clients execute actions without an extra approval", async () => {
   const { createUser } = await import("../lib/auth");
   const { authorizeRemoteAction, createEnrollmentToken, getRemoteClient, registerRemoteClient } = await import("../lib/remote-clients");
   const { getDatabase } = await import("../lib/sqlite");
@@ -129,10 +129,10 @@ test("admin clients require approval for risky actions", async () => {
   const client = getRemoteClient(registered.client.id, owner.id);
   assert.ok(client);
   assert.equal(client.permissionMode, "admin");
-  assert.equal(authorizeRemoteAction(client, "delete_file").requiresApproval, true);
+  assert.equal(authorizeRemoteAction(client, "delete_file").requiresApproval, false);
   assert.equal(authorizeRemoteAction(client, "delete_file").allowed, true);
   assert.equal(authorizeRemoteAction(client, "execute_command", "echo unrestricted").allowed, true);
-  assert.equal(authorizeRemoteAction(client, "execute_command", "echo unrestricted").requiresApproval, true);
+  assert.equal(authorizeRemoteAction(client, "execute_command", "echo unrestricted").requiresApproval, false);
 });
 
 test("remote MCP schema does not expose model-controlled approval", async () => {

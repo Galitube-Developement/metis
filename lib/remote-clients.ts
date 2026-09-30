@@ -394,10 +394,11 @@ export function authorizeRemoteAction(client: RemoteClient, action: RemoteAction
   }
   const sensitive = ["write_file", "edit_file", "delete_file", "execute_command", "terminal"].includes(permission);
   if (action === "computer_use") return { allowed: true, requiresApproval: false };
+  const requiresApproval = client.policy.mode !== "full_access" && client.permissionMode === "admin" && sensitive;
   return {
     allowed: true,
-    requiresApproval: client.permissionMode === "admin" && sensitive,
-    ...(client.permissionMode === "admin" && sensitive ? { reason: "Admin action requires confirmation" } : {}),
+    requiresApproval,
+    ...(requiresApproval ? { reason: "Admin action requires confirmation" } : {}),
   };
 }
 
@@ -448,6 +449,47 @@ export function createRemoteApproval(input: {
     status: "requested",
   });
   return { id, expiresAt };
+}
+
+export function remoteApprovalScope(clientId: string, action: RemoteAction, params?: Record<string, unknown>) {
+  return `remote:${clientId}:${action}:${remoteArgsHash(params)}`;
+}
+
+export function getRemoteApproval(id: string, ownerId: string): RemoteApproval | null {
+  const row = getDatabase().prepare(
+    "SELECT * FROM remote_approval_requests WHERE id = ? AND owner_id = ?",
+  ).get(id, ownerId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id), ownerId: String(row.owner_id), clientId: String(row.client_id),
+    action: row.action as RemoteAction, argsHash: String(row.args_hash),
+    requestData: safeJson(row.request_data, {}),
+    source: row.source as RemoteApproval["source"],
+    ...(row.run_id ? { runId: String(row.run_id) } : {}),
+    ...(row.tool_call_id ? { toolCallId: String(row.tool_call_id) } : {}),
+    expiresAt: String(row.expires_at), createdAt: String(row.created_at),
+    ...(row.approved_at ? { approvedAt: String(row.approved_at) } : {}),
+    ...(row.consumed_at ? { consumedAt: String(row.consumed_at) } : {}),
+  };
+}
+
+export function findApprovedRemoteApproval(input: {
+  ownerId: string; clientId: string; action: RemoteAction;
+  params?: Record<string, unknown>; runId: string;
+}) {
+  const row = getDatabase().prepare(
+    `SELECT id FROM remote_approval_requests
+     WHERE owner_id = ? AND client_id = ? AND action = ? AND args_hash = ? AND run_id = ?
+       AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at > ?
+     ORDER BY created_at DESC LIMIT 1`,
+  ).get(input.ownerId, input.clientId, input.action, remoteArgsHash(input.params), input.runId, iso()) as { id?: string } | undefined;
+  return row?.id;
+}
+
+export function denyRemoteApproval(id: string, ownerId: string) {
+  return getDatabase().prepare(
+    "UPDATE remote_approval_requests SET expires_at = ? WHERE id = ? AND owner_id = ? AND consumed_at IS NULL",
+  ).run(iso(), id, ownerId).changes > 0;
 }
 
 export function approveRemoteApproval(id: string, ownerId: string) {

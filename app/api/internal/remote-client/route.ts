@@ -1,4 +1,4 @@
-import { collectRemoteClientEvents, requestRemoteClient } from "@/lib/remote-client-gateway";
+import { collectRemoteClientEvents, requestRemoteClientWithApproval } from "@/lib/remote-client-gateway";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { listRemoteClients } from "@/lib/remote-clients";
 import { bearerTokenMatches } from "@/lib/security";
@@ -28,10 +28,10 @@ export async function POST(req: Request) {
     return Response.json({ error: "clientId and action are required" }, { status: 400 });
   }
   try {
-    const result = await requestRemoteClient({
+    const result = await requestRemoteClientWithApproval({
       clientId: body.clientId,
       ownerId,
-      action: body.action as Parameters<typeof requestRemoteClient>[0]["action"],
+      action: body.action as Parameters<typeof requestRemoteClientWithApproval>[0]["action"],
       params: body.params && typeof body.params === "object" && !Array.isArray(body.params)
         ? body.params as Record<string, unknown>
         : {},
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       ...(typeof body.toolCallId === "string" ? { toolCallId: body.toolCallId } : {}),
       ...(typeof body.timeoutMs === "number" && Number.isFinite(body.timeoutMs) ? { timeoutMs: body.timeoutMs } : {}),
       source: body.source === "agent" ? "agent" : "user",
-    });
+    }, req.signal);
     const events = body.action === "pty_input" && body.params && typeof body.params === "object" &&
       typeof (body.params as Record<string, unknown>).sessionId === "string"
       ? await collectRemoteClientEvents(String((body.params as Record<string, unknown>).sessionId))

@@ -113,6 +113,8 @@ const TIER_SUFFIX_PATTERN = /-(200k|1m)$/i;
 const CONTEXT_WINDOW_KEYS = [
   "contextWindow",
   "context_window",
+  "model_context_window",
+  "modelContextWindow",
   "maxInputTokens",
   "max_input_tokens",
   "inputTokenLimit",

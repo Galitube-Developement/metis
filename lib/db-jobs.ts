@@ -13,6 +13,7 @@ import {
   parseWorkerConcurrency,
 } from "@/lib/worker-scheduler";
 import { expireApprovals } from "@/lib/db-approvals";
+import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
 
 const iso = () => new Date().toISOString();
 const RUN_EVENT_RETENTION = 10_000;
@@ -398,6 +399,10 @@ export function claimNextJob(
       `SELECT id, chat_id as chatId, user_id as userId, data
        FROM jobs
        WHERE status = 'queued'
+         AND NOT EXISTS (
+           SELECT 1 FROM job_leases l
+           WHERE l.job_id = jobs.id AND l.expires_at > ?
+         )
          AND (
            ? = 0
            OR (
@@ -442,7 +447,7 @@ export function claimNextJob(
        LIMIT 1`,
     );
     for (;;) {
-      const row = selectQueued.get(options.interactiveOnly ? 1 : 0) as
+      const row = selectQueued.get(iso(), options.interactiveOnly ? 1 : 0) as
         | { id: string; chatId: string; userId: string | null; data: string }
         | undefined;
       if (!row) return null;
@@ -623,9 +628,49 @@ export function updateJob(
   });
 }
 
+/** Never requeue a user-input decision while a worker still owns this run. */
+export function queueUserInputResume(input: {
+  jobId: string;
+  heartbeatAt?: string;
+  resumePrompt: string;
+}) {
+  return transaction(() => {
+    const job = getJob(input.jobId);
+    if (!job || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) return null;
+    const now = iso();
+    const activeLease = getDatabase().prepare(
+      "SELECT 1 FROM job_leases WHERE job_id = ? AND expires_at > ?",
+    ).get(job.id, now);
+    if (activeLease) return null;
+    return updateJob(job.id, {
+      status: "queued",
+      error: undefined,
+      resumePrompt: input.resumePrompt,
+      resumeRequestedAt: now,
+    }, { expectedRevision: jobRevision(job) });
+  });
+}
+
+/** Release a live waiter only after all requests for its run have been resolved. */
+export function releaseUserInputWait(jobId: string) {
+  return transaction(() => {
+    const job = getJob(jobId);
+    if (!job || !["waiting_input", "waiting_for_user"].includes(job.status)) return null;
+    const db = getDatabase();
+    const waiting = db.prepare(
+      `SELECT 1 FROM pending_approvals WHERE job_id = ? AND status = 'waiting_for_user'
+       UNION ALL
+       SELECT 1 FROM pending_questions WHERE job_id = ? AND status = 'waiting_for_user'
+       LIMIT 1`,
+    ).get(jobId, jobId);
+    if (waiting) return null;
+    return updateJob(jobId, { status: "running" }, { expectedRevision: jobRevision(job) });
+  });
+}
+
 export function touchJob(id: string) {
   const current = getJob(id);
-  if (!current || current.status !== "running") return current;
+  if (!current || !["running", "waiting_input", "waiting_for_user"].includes(current.status)) return current;
   const updatedAt = iso();
   try {
     return transaction(() => {
@@ -657,7 +702,7 @@ export function touchJob(id: string) {
            '$.revision', COALESCE(CAST(json_extract(data, '$.revision') AS INTEGER), 0) + 1
          ),
          updated_at = ?
-         WHERE id = ? AND status = 'running'`,
+         WHERE id = ? AND status IN ('running', 'waiting_input', 'waiting_for_user')`,
         )
         .run(updatedAt, updatedAt, id);
       return updated.changes ? getJob(id) || { ...current, updatedAt } : null;
