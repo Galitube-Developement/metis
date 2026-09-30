@@ -2137,7 +2137,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     startY: number;
     lastX: number;
     lastY: number;
-    startedAt: number;
   } | null>(null);
   const browserInputDirtyRef = useRef(false);
   const browserNavigationVersionRef = useRef(0);
@@ -3396,7 +3395,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       startY: event.clientY,
       lastX: event.clientX,
       lastY: event.clientY,
-      startedAt: Date.now(),
     };
   }
 
@@ -3416,11 +3414,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const dx = event.clientX - gesture.startX;
     const dy = event.clientY - gesture.startY;
     const distance = Math.hypot(dx, dy);
-    const elapsed = Date.now() - gesture.startedAt;
-
-    // A short tap is a page click. A swipe scrolls the remote page. This keeps
-    // the same direct manipulation model on mouse, iPad, and phones.
-    if (distance < 9 && elapsed < 700) {
+    // Treat a stationary release as a click even when the user holds the
+    // pointer down while interacting with a verification control. A swipe
+    // scrolls the remote page on mouse, tablet, and touch devices.
+    if (distance < 9) {
       clickBrowserAt(event.currentTarget, event.clientX, event.clientY);
       return;
     }
