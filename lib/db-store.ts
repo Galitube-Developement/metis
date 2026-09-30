@@ -543,12 +543,12 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
   const updated = { ...chat, ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
   // Removal wins over delayed browser autosaves and stale worker projections.
   // Keep tombstones outside the JSON projection so an old snapshot cannot erase them.
+  const removed = new Set((getDatabase().prepare(
+    "SELECT message_id FROM queue_message_removals WHERE chat_id = ?",
+  ).all(updated.id) as Array<{ message_id: string }>).map((row) => row.message_id));
+  if (removed.size) updated.removedQueuedMessageIds = [...removed];
+  else delete updated.removedQueuedMessageIds;
   if (updated.queuedMessages?.length) {
-    const ids = updated.queuedMessages.map((message) => message.id);
-    const removed = new Set((getDatabase().prepare(
-      `SELECT message_id FROM queue_message_removals
-       WHERE chat_id = ? AND message_id IN (${ids.map(() => "?").join(",")})`,
-    ).all(updated.id, ...ids) as Array<{ message_id: string }>).map((row) => row.message_id));
     const remaining = updated.queuedMessages.filter((message) => !removed.has(message.id));
     if (remaining.length) updated.queuedMessages = remaining;
     else delete updated.queuedMessages;

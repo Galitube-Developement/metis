@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
+import { mergeQueuedFollowUps } from "../lib/composer-send";
 
 const dataDir = mkdtempSync(path.join(os.tmpdir(), "metis-queue-removal-"));
 process.env.CHAT_DATA_DIR = dataDir;
@@ -113,5 +114,11 @@ test("real queue DELETE followed by stale chat PATCH cannot revive the item", as
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).chat.queuedMessages, [kept]);
   const reloaded = await GET(new Request(url, { headers }), { params: Promise.resolve({ id: f.chat.id }) });
-  assert.deepEqual((await reloaded.json()).chat.queuedMessages, [kept]);
+  const reloadedChat = (await reloaded.json()).chat;
+  assert.deepEqual(reloadedChat.queuedMessages, [kept]);
+  assert.deepEqual(reloadedChat.removedQueuedMessageIds, [item.id]);
+  // A cached queue loaded after a page refresh must honor durable server removals.
+  assert.deepEqual(mergeQueuedFollowUps([item, kept], reloadedChat.queuedMessages, {
+    removedIds: reloadedChat.removedQueuedMessageIds,
+  }), [kept]);
 });

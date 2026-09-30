@@ -703,6 +703,7 @@ type Chat = ChatIndexEntry & {
   }>;
   modelParams?: ModelParamSelection[];
   queuedMessages?: PersistedQueuedMessage[];
+  removedQueuedMessageIds?: string[];
   canvas?: string;
   workspaces?: WorkspaceItem[];
   browserContext?: BrowserContext;
@@ -1184,6 +1185,7 @@ type ChatSnapshot = {
   modelId: string;
   modelParams: ModelParamSelection[];
   queuedMessages: PersistedQueuedMessage[];
+  removedQueuedMessageIds?: string[];
   workspaces: WorkspaceItem[];
   browserContext: BrowserContext;
   sessionState: ChatSessionState;
@@ -2422,7 +2424,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const navigateBrowserRef = useRef<(url: string) => void>(() => {});
   const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
   const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
-  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[]) => void>(() => {});
+  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -2944,6 +2946,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       agentId: s.agentId,
       modelId: s.modelId,
       modelParams: s.modelParams,
+      removedQueuedMessageIds: [...removedIdsFor(id)],
       queuedMessages: s.queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
         id,
         text,
@@ -4350,6 +4353,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setMessages(snap.messages);
     setMessageOffset(snap.messageOffset);
     setHasEarlierMessages(snap.hasEarlierMessages);
+    for (const messageId of snap.removedQueuedMessageIds ?? []) removedIdsFor(id).add(messageId);
     setQueuedMessages(
       mergeQueuedFollowUps(
         [],
@@ -4511,6 +4515,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         agentId: data.chat.agentId,
         modelId: mid,
         modelParams: Array.isArray(data.chat.modelParams) ? data.chat.modelParams : [],
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [],
         workspaces: workspacesFromChat(data.chat),
         browserContext: normalizeBrowserContext(data.chat.browserContext, data.chat.id),
@@ -4673,6 +4678,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               modelParams: Array.isArray(data.chat.modelParams)
                 ? data.chat.modelParams
                 : cached.modelParams,
+              removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
               queuedMessages: Array.isArray(data.chat.queuedMessages)
                 ? data.chat.queuedMessages
                 : [],
@@ -4709,7 +4715,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             // is still applying deltas. Keep that live state instead of
             // replacing it with the older durable snapshot.
             setMessages(() => messages);
-            applyServerQueuedMessagesRef.current(next.queuedMessages);
+            applyServerQueuedMessagesRef.current(next.queuedMessages, next.removedQueuedMessageIds);
             setWorkspaces(next.workspaces);
             setBrowserTabs(next.browserContext.tabs);
             setActiveBrowserTabId(next.browserContext.activeTabId);
@@ -4809,6 +4815,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         modelParams: Array.isArray(data.chat.modelParams)
           ? data.chat.modelParams
           : [],
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: Array.isArray(data.chat.queuedMessages)
           ? data.chat.queuedMessages
           : [],
@@ -5165,7 +5172,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         setChatTitle(data.chat.title);
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
+        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setChatGoal(data.chat.sessionState?.goal || "");
         setChatGoalReferences(data.chat.sessionState?.goalReferences || []);
@@ -5618,6 +5625,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       agentId,
       modelId,
       modelParams,
+      removedQueuedMessageIds: [...removedIdsFor(activeChatId)],
       queuedMessages: queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
         id,
         text,
@@ -6388,6 +6396,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         agentId: data.chat.agentId,
         modelId: nextModelId,
         modelParams,
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: data.chat.queuedMessages ?? [],
         workspaces: nextWorkspaces,
         browserContext: normalizeBrowserContext(data.chat.browserContext, chatId),
@@ -6768,8 +6777,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function applyServerQueuedMessages(server: PersistedQueuedMessage[]) {
+  function applyServerQueuedMessages(server: PersistedQueuedMessage[], removedIds?: string[]) {
     const chatId = activeChatIdRef.current || "";
+    for (const id of removedIds ?? []) removedIdsFor(chatId).add(id);
     const consumed = new Set<string>([
       ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
       ...queuedSendRef.current,
@@ -6886,8 +6896,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         chatId,
         messageId: message.id,
         removedIds: removedIdsFor(chatId ?? ""),
-        removeLocally: () => setQueuedMessages((current) => current.filter((item) => item.id !== message.id)),
+        removeLocally: () => {
+          setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+          if (!chatId) return;
+          const cached = chatCacheRef.current.get(chatId);
+          if (!cached) return;
+          const next = {
+            ...cached,
+            queuedMessages: cached.queuedMessages.filter((item) => item.id !== message.id),
+            removedQueuedMessageIds: [...removedIdsFor(chatId)],
+          };
+          chatCacheRef.current.set(chatId, next);
+          if (!next.incognito) void writeClientChatSnapshot(chatCacheScope, chatId, next);
+        },
         restoreLocally: () => {
+          if (chatId) {
+            chatCacheRef.current.delete(chatId);
+            void deleteClientChatSnapshot(chatCacheScope, chatId);
+          }
           if (activeChatIdRef.current !== chatId) return;
           setQueuedMessages((current) => {
             if (current.some((item) => item.id === message.id)) return current;
