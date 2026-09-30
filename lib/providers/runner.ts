@@ -34,7 +34,7 @@ import type { AgentJob } from "@/lib/jobs";
 import { appendRunEvent, getJob, touchJob, updateJob } from "@/lib/db-jobs";
 import { modeById } from "@/lib/modes";
 import { estimateProviderInputTokens } from "@/lib/providers/adapters/provider-support";
-import { activeInFlightTool } from "@/lib/providers/stream-guard";
+import { activeInFlightTool, providerIdleTimeouts } from "@/lib/providers/stream-guard";
 import { logError } from "@/lib/error-logs";
 import {
   compactMessagePartsForPersistence,
@@ -121,14 +121,10 @@ export async function runAlternativeProviderJob(
   let abortCause: AbortCause | null = null;
   let abortDetail = "";
   let lastProviderProgressAt = Date.now();
-  const providerIdleMs = Math.max(60_000, Number(process.env.AI_CHAT_PROVIDER_IDLE_MS || 3 * 60_000));
-  // Native agent SDKs can emit a tool-start event and then stay completely
-  // silent until a long shell command finishes. Five minutes is too short for
-  // builds, test suites and package installs, so keep the normal provider stall
-  // guard strict while giving an already-running tool a realistic hard limit.
-  const providerToolIdleMs = Math.max(
-    providerIdleMs,
-    Number(process.env.AI_CHAT_PROVIDER_TOOL_IDLE_MS || 30 * 60_000),
+  const execution = providerExecution(parsed.providerKey);
+  const adapter = providerAdapterForExecution(execution);
+  const { providerIdleMs, providerToolIdleMs } = providerIdleTimeouts(
+    adapter.capabilities.progressDelivery,
   );
   const markProviderProgress = () => {
     lastProviderProgressAt = Date.now();
@@ -343,8 +339,6 @@ export async function runAlternativeProviderJob(
   );
 
   try {
-    const execution = providerExecution(parsed.providerKey);
-    const adapter = providerAdapterForExecution(execution);
     if (adapter.capabilities.contextOwner === "native") {
       const binding = getProviderSessionBinding(chat, execution, credential.id);
       const selectedModel = providerModelsForConnection(credential)

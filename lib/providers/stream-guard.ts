@@ -1,3 +1,33 @@
+/**
+ * Item-buffered SDKs do not expose token deltas while generating long messages
+ * or tool arguments. Keep a finite silence limit without treating that normal
+ * generation time as the shorter timeout used by token-streaming providers.
+ */
+export function providerIdleTimeouts(
+  progressDelivery: "buffered" | "continuous" | undefined,
+  env: Record<string, string | undefined> = process.env,
+) {
+  const duration = (value: string | undefined, fallback: number) => {
+    const parsed = Number(value);
+    return value?.trim() && Number.isFinite(parsed) && parsed > 0
+      ? Math.max(60_000, parsed)
+      : fallback;
+  };
+  // The existing global override remains authoritative for both stream types.
+  const defaultIdleMs = duration(env.AI_CHAT_PROVIDER_IDLE_MS, 3 * 60_000);
+  const providerIdleMs = progressDelivery === "buffered"
+    ? duration(
+        env.AI_CHAT_PROVIDER_BUFFERED_IDLE_MS ?? env.AI_CHAT_PROVIDER_IDLE_MS,
+        15 * 60_000,
+      )
+    : defaultIdleMs;
+  const providerToolIdleMs = Math.max(
+    providerIdleMs,
+    duration(env.AI_CHAT_PROVIDER_TOOL_IDLE_MS, 30 * 60_000),
+  );
+  return { providerIdleMs, providerToolIdleMs };
+}
+
 const IN_FLIGHT_TOOL_STATUSES = new Set([
   "running",
   "in_progress",

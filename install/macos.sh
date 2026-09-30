@@ -429,7 +429,7 @@ merge_preserved_env() {
       return k
     }
     function is_structural(k) {
-      return (k == "AI_CHAT_ROOT" || k == "AI_CHAT_INSTALL_DIR" || k == "METIS_NODE_BIN" || k == "METIS_NODE_HOME" || k == "CHAT_DATA_DIR" || k == "METIS_DATA_DIR" || k == "AGENT_CWD" || k == "METIS_WORKSPACE" || k == "AI_CHAT_MCP_STATE_DIR" || k == "METIS_DOCKER" || k == "AI_CHAT_SERVICE_NAME")
+      return (k == "AI_CHAT_ROOT" || k == "AI_CHAT_INSTALL_DIR" || k == "METIS_NODE_BIN" || k == "METIS_NODE_HOME" || k == "METIS_PNPM_HOME" || k == "CHAT_DATA_DIR" || k == "METIS_DATA_DIR" || k == "AGENT_CWD" || k == "METIS_WORKSPACE" || k == "AI_CHAT_MCP_STATE_DIR" || k == "METIS_DOCKER" || k == "AI_CHAT_SERVICE_NAME")
     }
     BEGIN {
       while ((getline line < preserved) > 0) {
@@ -603,6 +603,18 @@ install_homebrew() {
 }
 
 install_homebrew
+# A LaunchAgent does not load the owner's shell profile. Recover paths saved
+# by the previous native installation before checking tools for an update.
+if [[ -f "$install_dir/.env" ]]; then
+  saved_node_bin="$(read_env_key "$install_dir/.env" METIS_NODE_BIN)"
+  saved_pnpm_home="$(read_env_key "$install_dir/.env" METIS_PNPM_HOME)"
+  if [[ -n "$saved_node_bin" && -x "$saved_node_bin" ]] && version_at_least_22 "$saved_node_bin"; then
+    export PATH="$(dirname "$saved_node_bin"):$PATH"
+  fi
+  if [[ -n "$saved_pnpm_home" && -x "$saved_pnpm_home/pnpm" ]]; then
+    export PATH="$saved_pnpm_home:$PATH"
+  fi
+fi
 command -v git >/dev/null 2>&1 || { confirm_install "git" && brew install git || die "git is required."; }
 
 if [[ -e "$install_dir/.git" ]]; then
@@ -648,8 +660,12 @@ fi
 
 node_bin="$(command -v node || true)"
 node_home=""
+pnpm_home=""
 if [[ -n "$node_bin" ]]; then
   node_home="$(dirname "$(dirname "$node_bin")")"
+fi
+if (( use_docker == 0 )); then
+  pnpm_home="$(dirname "$(command -v pnpm)")"
 fi
 secrets_key="$(openssl rand -hex 32)"
 mcp_token="$(openssl rand -hex 32)"
@@ -692,6 +708,7 @@ adopt_env_stash "$install_dir"
   else
     write_env_line METIS_NODE_BIN "$node_bin"
     write_env_line METIS_NODE_HOME "$node_home"
+    write_env_line METIS_PNPM_HOME "$pnpm_home"
   fi
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
@@ -714,7 +731,7 @@ set -a
 # shellcheck disable=SC1091
 . "$ROOT/.env"
 set +a
-export PATH="${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 cd "$ROOT"
 exec "${METIS_NODE_BIN:?METIS_NODE_BIN is missing from .env}" "$@"
 EOF
@@ -726,8 +743,9 @@ chmod 700 "$install_dir/run-service.sh"
   # shellcheck disable=SC1091
   . "$install_dir/.env"
   set +a
+  export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$PATH"
   cd "$install_dir"
-  pnpm install --frozen-lockfile
+  "$METIS_PNPM_HOME/pnpm" install --frozen-lockfile
   node scripts/sync-provider-clis.mjs
   pnpm exec playwright install chromium
   current_build_slot="${NEXT_DIST_DIR:-}"

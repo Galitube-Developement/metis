@@ -130,6 +130,15 @@ function restoreSelection(element: HTMLDivElement, offsets: Omit<ComposerSelecti
   selection.addRange(range);
 }
 
+const MAX_COMPOSER_HEIGHT = 180;
+
+function fitComposerHeight(element: HTMLDivElement) {
+  element.style.height = "auto";
+  const fullHeight = element.scrollHeight;
+  element.style.height = Math.min(MAX_COMPOSER_HEIGHT, Math.max(36, fullHeight)) + "px";
+  element.style.overflowY = fullHeight > MAX_COMPOSER_HEIGHT ? "auto" : "hidden";
+}
+
 export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputProps>(
   function RichComposerInput(
     {
@@ -169,6 +178,19 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
       return () => document.removeEventListener("selectionchange", handleSelectionChange);
     }, []);
 
+    useEffect(() => {
+      const element = editorRef.current;
+      if (!element || typeof ResizeObserver === "undefined") return;
+      let width = element.clientWidth;
+      const observer = new ResizeObserver(() => {
+        if (element.clientWidth === width) return;
+        width = element.clientWidth;
+        fitComposerHeight(element);
+      });
+      observer.observe(element);
+      return () => observer.disconnect();
+    }, []);
+
     useLayoutEffect(() => {
       const element = editorRef.current;
       if (!element) return;
@@ -179,7 +201,11 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
       if (selectionRef.current?.text !== value) selectionRef.current = null;
       element.textContent = value;
       if (value) formatText(element, mentionLabels);
-      if (force) restoreSelection(element, { start: value.length, end: value.length });
+      fitComposerHeight(element);
+      if (force) {
+        restoreSelection(element, { start: value.length, end: value.length });
+        element.scrollTop = element.scrollHeight;
+      }
     }, [mentionLabels, syncNonce, value]);
 
     return (
@@ -203,6 +229,7 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
           const text = composerPlainText(element);
           const offsets = selectionOffsets(element) || { start: cursor, end: cursor };
           selectionRef.current = { ...offsets, text };
+          fitComposerHeight(element);
           onChange(text, cursor);
         }}
         onKeyDown={onKeyDown}

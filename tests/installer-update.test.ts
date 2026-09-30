@@ -111,11 +111,21 @@ test("copied installer scripts stay in dataDir, not systemd PrivateTmp", () => {
   assert.equal(dest.includes("/tmp/"), false);
 });
 
-test("systemd-run environment always includes HOME", () => {
-  const args = installerSystemdEnvironment({ PATH: "/bin", USER: "root", NODE_ENV: "test" });
+test("systemd-run environment carries Node and pnpm from an existing install", () => {
+  const args = installerSystemdEnvironment(
+    { PATH: "/bin", USER: "root", NODE_ENV: "test", METIS_NODE_HOME: "/opt/node", METIS_PNPM_HOME: "/opt/pnpm/bin" },
+    "/opt/metis",
+  );
   assert.equal(args.some((value) => value.startsWith("--setenv=HOME=") && value.length > "--setenv=HOME=".length), true);
   assert.equal(args.includes("--setenv=USER=root"), true);
-  assert.equal(args.includes("--setenv=PATH=/bin"), true);
+  const pathArg = args.find((value) => value.startsWith("--setenv=PATH="));
+  assert.ok(pathArg);
+  const dirs = pathArg.slice("--setenv=PATH=".length).split(path.delimiter);
+  assert.ok(dirs.includes("/opt/node/bin"));
+  assert.ok(dirs.includes("/opt/pnpm/bin"));
+  assert.ok(dirs.includes("/opt/metis/.runtime/node/bin"));
+  assert.ok(dirs.includes("/opt/metis/.runtime/pnpm/bin"));
+  assert.ok(dirs.includes("/bin"));
 });
 
 test("installer logs detect the HOME unbound failure", () => {

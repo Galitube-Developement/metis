@@ -8,7 +8,7 @@ const pinned = readFileSync(new URL("../components/pinned-notes-panel.tsx", impo
 test("empty note body can start a move without blocking text clicks", () => {
   assert.match(notes, /fromEditorEmpty/);
   assert.match(notes, /armed: true/);
-  assert.match(notes, /target\.closest\("\.markdown-body, input, textarea, button, a, \[data-editor-control\]"\)/);
+  assert.match(notes, /target\.closest\("\.markdown-body, \.cm-editor, input, textarea, button, a, \[data-editor-control\]"\)/);
   assert.match(pinned, /startDrag\(event, note\)/);
 });
 

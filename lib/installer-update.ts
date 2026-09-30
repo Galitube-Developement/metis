@@ -38,9 +38,19 @@ export type InstallerUpdateResult = {
   asset: string;
 };
 
-export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
+export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env, root?: string): string[] {
   const home = env.HOME?.trim() || os.homedir();
-  const pathEnv = env.PATH?.trim() || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  const inheritedPath = env.PATH?.trim() || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  // The transient update unit does not run through run-service.sh. Carry the
+  // installed Node and pnpm directories into its non-login environment.
+  const preferred = [
+    env.METIS_PNPM_HOME || "",
+    root ? path.join(root, ".runtime", "pnpm", "bin") : "",
+    path.dirname(process.execPath),
+    env.METIS_NODE_HOME ? path.join(env.METIS_NODE_HOME, "bin") : "",
+    root ? path.join(root, ".runtime", "node", "bin") : "",
+  ].filter(Boolean);
+  const pathEnv = [...new Set([...preferred, ...inheritedPath.split(path.delimiter).filter(Boolean)])].join(path.delimiter);
   let user = env.USER?.trim() || env.LOGNAME?.trim() || "";
   if (!user) {
     try { user = os.userInfo().username; } catch { user = ""; }
@@ -234,7 +244,7 @@ function parseSystemctlShow(stdout: string) {
   return values;
 }
 
-async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], log: (message: string) => void) {
+async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], root: string, log: (message: string) => void) {
   const unit = plan.unitName;
   if (!unit) throw new Error("Linux installer updates require a systemd unit name.");
   log(`Starting installer via systemd-run (${unit}).`);
@@ -255,7 +265,7 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], lo
     `--property=StandardOutput=append:${plan.logFile}`,
     `--property=StandardError=append:${plan.logFile}`,
     "--property=PrivateTmp=no",
-    ...installerSystemdEnvironment(),
+    ...installerSystemdEnvironment(process.env, root),
     plan.command,
     ...args,
   ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
@@ -343,7 +353,7 @@ export async function runInstallerUpdate(
   const args = plan.args.map((value) => (value === plan.scriptSource ? script : value));
   log(`Running ${plan.kind} installer: ${plan.command} ${args.join(" ")}`);
   if (plan.unitName && plan.platform === "linux") {
-    await runSystemdInstaller(plan, args, log);
+    await runSystemdInstaller(plan, args, input.root, log);
   } else {
     await runSpawnedInstaller(plan, args, log);
   }

@@ -2,35 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const read = (file: string) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+const read = (file: string) => readFileSync(new URL("../" + file, import.meta.url), "utf8");
 
-test("Windows Remote Client builds stay out of GitHub Releases", () => {
-  const workflow = read(".github/workflows/remote-client-windows.yml");
-  const desktopPackage = JSON.parse(read("remote-client/desktop/package.json")) as {
-    build: { publish: Array<{ provider: string; url?: string }> };
-  };
-
-  assert.doesNotMatch(workflow, /^\s*release:\s*$/m);
-  assert.doesNotMatch(workflow, /contents:\s*write/);
-  assert.doesNotMatch(workflow, /--publish always|GH_TOKEN/);
-  assert.match(workflow, /dist\/Metis-AI-Remote-Client-Setup\.exe/);
-  assert.match(workflow, /dist\/latest\.yml/);
-  assert.deepEqual(desktopPackage.build.publish, [{
-    provider: "generic",
-    url: "https://metis.invalid/api/remote-clients/windows-updates",
-  }]);
+test("enrollment gives users the public GitHub installer URL", () => {
+  const enrollment = read("app/api/remote-clients/route.ts");
+  const installer = read("app/api/remote-clients/windows-installer/route.ts");
+  assert.match(enrollment, /installerUrl: WINDOWS_INSTALLER_URL/);
+  assert.match(installer, /isAuthenticated\(req\)/);
+  assert.match(installer, /Response\.redirect\(WINDOWS_INSTALLER_URL, 302\)/);
 });
 
-test("installer and updates are served only by the paired Metis server", () => {
-  const installerRoute = read("app/api/remote-clients/windows-installer/route.ts");
-  const updateRoute = read("app/api/remote-clients/windows-updates/[filename]/route.ts");
-  const desktopMain = read("remote-client/desktop/main.cjs");
-
-  assert.doesNotMatch(installerRoute, /github\.com|Response\.redirect/);
-  assert.match(installerRoute, /status: 503/);
-  assert.match(updateRoute, /authenticateRemoteClient/);
-  assert.match(updateRoute, /remote-client-artifacts/);
-  assert.match(desktopMain, /url: `\$\{config\.server\}\/api\/remote-clients\/windows-updates`/);
-  assert.match(desktopMain, /"x-metis-client-id": config\.clientId/);
-  assert.match(desktopMain, /Authorization: `Bearer \$\{config\.credential\}`/);
+test("existing paired clients can update through authenticated server proxy", () => {
+  const update = read("app/api/remote-clients/windows-updates/[filename]/route.ts");
+  const release = read("lib/remote-client-release.ts");
+  assert.match(update, /authenticateRemoteClient/);
+  assert.match(update, /legacyWindowsUpdate\(filename\)/);
+  assert.match(release, /github\.com\/f1shyondrugs\/metis-remote-client\/releases\/latest\/download\//);
+  assert.doesNotMatch(release, /Authorization|x-metis-client-id/);
 });

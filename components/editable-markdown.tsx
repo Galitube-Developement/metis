@@ -1,8 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEventHandler } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState, type PointerEventHandler } from "react";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { markdown } from "@codemirror/lang-markdown";
+import { syntaxTree } from "@codemirror/language";
+import { EditorState, type Range } from "@codemirror/state";
+import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { Markdown } from "@/components/markdown";
-import { replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
+import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
 
 type EditableMarkdownProps = {
@@ -15,10 +20,49 @@ type EditableMarkdownProps = {
   interactiveTasks?: boolean;
 };
 
-/**
- * The textarea owns Markdown source. The rendered result is a separate preview,
- * so React never has to reconcile text that contentEditable changed behind it.
- */
+function markdownDecorations(view: EditorView): DecorationSet {
+  const ranges: Range<Decoration>[] = [];
+  for (const visible of view.visibleRanges) {
+    for (let position = visible.from; position <= visible.to;) {
+      const line = view.state.doc.lineAt(position);
+      const heading = /^(#{1,6})(?=\s)/.exec(line.text);
+      if (heading) {
+        ranges.push(Decoration.line({ attributes: { class: "cm-md-heading cm-md-h" + heading[1].length } }).range(line.from));
+      }
+      if (line.to >= visible.to || line.number === view.state.doc.lines) break;
+      position = line.to + 1;
+    }
+    syntaxTree(view.state).iterate({
+      from: visible.from,
+      to: visible.to,
+      enter(node) {
+        const className = node.name === "StrongEmphasis" ? "cm-md-strong"
+          : node.name === "Emphasis" ? "cm-md-emphasis"
+          : node.name === "InlineCode" ? "cm-md-inline-code"
+          : node.name === "Link" ? "cm-md-link"
+          : ["HeaderMark", "EmphasisMark", "CodeMark", "LinkMark", "ListMark", "QuoteMark", "TaskMarker", "CodeInfo"].includes(node.name) ? "cm-md-syntax"
+          : "";
+        if (className && node.from < node.to) {
+          ranges.push(Decoration.mark({ class: className }).range(node.from, node.to));
+        }
+      },
+    });
+  }
+  return Decoration.set(ranges, true);
+}
+
+const markdownStyling = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = markdownDecorations(view);
+  }
+
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.viewportChanged) this.decorations = markdownDecorations(update.view);
+  }
+}, { decorations: (plugin) => plugin.decorations });
+
 export function EditableMarkdown({
   value,
   onChange,
@@ -29,24 +73,83 @@ export function EditableMarkdown({
   interactiveTasks = false,
 }: EditableMarkdownProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const editorHostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const draftRef = useRef(value);
   const lastExternalValueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
+  const syncingRef = useRef(false);
   const [draft, setDraft] = useState(value);
+  const [preview, setPreview] = useState(false);
+  const previewDraft = useDeferredValue(draft);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    const host = editorHostRef.current;
+    if (!host) return;
+    const state = EditorState.create({
+      doc: draftRef.current,
+      extensions: [
+        history(),
+        keymap.of([...defaultKeymap, ...historyKeymap]),
+        markdown(),
+        EditorView.lineWrapping,
+        editorPlaceholder(placeholder || "Write Markdown…"),
+        EditorView.contentAttributes.of({
+          "aria-label": ariaLabel || "Markdown editor",
+          spellcheck: "true",
+        }),
+        markdownStyling,
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged || syncingRef.current) return;
+          const next = update.state.doc.toString();
+          draftRef.current = next;
+          lastExternalValueRef.current = next;
+          setDraft(next);
+          onChangeRef.current(next);
+        }),
+      ],
+    });
+    const view = new EditorView({ state, parent: host });
+    viewRef.current = view;
+    return () => {
+      viewRef.current = null;
+      view.destroy();
+    };
+    // The editor instance owns cursor and undo state. External value changes sync below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (value === lastExternalValueRef.current) return;
     lastExternalValueRef.current = value;
     draftRef.current = value;
     setDraft(value);
+    const view = viewRef.current;
+    if (!view) return;
+    const change = minimalMarkdownChange(view.state.doc.toString(), value);
+    if (!change) return;
+    syncingRef.current = true;
+    try {
+      view.dispatch({ changes: change });
+    } finally {
+      syncingRef.current = false;
+    }
   }, [value]);
 
   const commit = useCallback((next: string) => {
     if (next === draftRef.current) return;
+    const view = viewRef.current;
+    if (view) {
+      const change = minimalMarkdownChange(view.state.doc.toString(), next);
+      if (change) view.dispatch({ changes: change });
+      return;
+    }
     draftRef.current = next;
     lastExternalValueRef.current = next;
     setDraft(next);
-    onChange(next);
-  }, [onChange]);
+    onChangeRef.current(next);
+  }, []);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -70,10 +173,7 @@ export function EditableMarkdown({
   return (
     <div
       ref={rootRef}
-      className={cn(
-        "editable-markdown min-h-0 w-full flex-1 overflow-hidden rounded-md text-[13px] leading-5",
-        className,
-      )}
+      className={cn("editable-markdown group relative min-h-0 w-full flex-1 overflow-hidden rounded-md", className)}
       onPointerDown={onPointerDown}
       onChangeCapture={(event) => {
         if (!interactiveTasks) return;
@@ -89,31 +189,29 @@ export function EditableMarkdown({
         if (index >= 0) commit(toggleMarkdownTask(draftRef.current, index, target.checked));
       }}
     >
-      <div className="editable-markdown-layout">
-        <div className="editable-markdown-source flex min-h-0 flex-col">
-          <div className="shrink-0 px-2 py-1 text-[10px] font-medium uppercase tracking-wide opacity-60">Markdown</div>
-          <textarea
-            value={draft}
-            onChange={(event) => commit(event.target.value)}
-            aria-label={ariaLabel || "Markdown source"}
-            placeholder={placeholder}
-            spellCheck
-            className="min-h-0 w-full flex-1 resize-none bg-transparent px-2 pb-2 font-mono text-[inherit] leading-[inherit] text-inherit outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-          />
+      <button
+        type="button"
+        className="editable-markdown-toggle"
+        aria-label={preview ? "Edit Markdown" : "Preview Markdown"}
+        onClick={() => {
+          setPreview((current) => !current);
+          if (preview) requestAnimationFrame(() => viewRef.current?.focus());
+        }}
+      >
+        {preview ? "Edit" : "Preview"}
+      </button>
+      <div ref={editorHostRef} className="editable-markdown-editor" hidden={preview} />
+      {preview && (
+        <div
+          data-markdown-preview
+          aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
+          className="editable-markdown-preview"
+        >
+          {previewDraft ? <Markdown content={previewDraft} interactiveTasks={interactiveTasks} /> : (
+            <span className="text-muted-foreground/70">{placeholder || "Nothing to preview yet."}</span>
+          )}
         </div>
-        <div className="editable-markdown-preview-pane flex min-h-0 flex-col">
-          <div className="shrink-0 px-2 py-1 text-[10px] font-medium uppercase tracking-wide opacity-60">Preview</div>
-          <div
-            data-markdown-preview
-            aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
-            className="min-h-0 flex-1 overflow-auto px-2 pb-2"
-          >
-            {draft ? <Markdown content={draft} interactiveTasks={interactiveTasks} /> : (
-              <span className="text-muted-foreground/70">{placeholder || "Preview appears here."}</span>
-            )}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

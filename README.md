@@ -51,6 +51,8 @@ Metis AI includes the following capabilities:
 | **Sharing and recovery** | Share chats and attachments through links, optionally protect them with a password, clone shared chats and revoke access |
 | **Administration** | Provider discovery and testing, model listing, preferences, status checks, recovery flows and configurable security boundaries |
 
+The Windows desktop Remote Client is maintained in the public [metis-remote-client repository](https://github.com/f1shyondrugs/metis-remote-client). Its installer and automatic updates come from that repository's GitHub Releases. Existing clients that still check their paired Metis server receive those public release files through an authenticated proxy.
+
 ### Tutorial & introduction
 
 The video walks through installation, provider setup, workspaces, notes,
@@ -105,6 +107,20 @@ not run the installer from a pipe.
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)"
 ```
+
+If an older native Linux install reports update status `127`, rerun the current
+installer once with that machine's existing installation directory (and its
+service name if customized). The old, already-running updater cannot acquire
+this PATH repair before its first successful update:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- \
+  --non-interactive --native --install-dir "/absolute/path/to/metis-ai"
+```
+
+This keeps `.env` and the data directory but replaces tracked local checkout
+changes with the selected upstream version. Native installs now save the Node
+and pnpm directories in `.env` for service starts and future updates.
 
 Uninstall with the same bootstrap:
 

@@ -28,10 +28,13 @@ test("markdown renders graph fences with GraphBoard", () => {
   assert.match(markdown, /pre: \(\{ children \}/);
 });
 
-test("editable markdown keeps source and rendered preview in separate panes", () => {
-  assert.match(editor, /<textarea/);
-  assert.match(editor, /<Markdown content=\{draft\}/);
-  assert.doesNotMatch(editor, /<div[^>]*contentEditable/);
+test("editable markdown writes in one styled surface and keeps an optional preview", () => {
+  assert.match(editor, /new EditorView/);
+  assert.match(editor, /markdownStyling/);
+  assert.match(editor, /className="editable-markdown-editor"/);
+  assert.match(editor, /setPreview/);
+  assert.match(editor, /<Markdown content=\{previewDraft\}/);
+  assert.doesNotMatch(editor, /<textarea/);
 });
 
 test("new chat from shared notes does not reopen the notes route", () => {

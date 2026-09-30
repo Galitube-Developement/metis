@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,6 +86,99 @@ test("linux installer defaults to native systemd and requires --docker", () => {
   }
 });
 
+test("native service launchers expose saved Node and pnpm paths without a login shell", { skip: process.platform === "win32" }, () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "metis runtime paths "));
+  try {
+    const nodeHome = path.join(temp, "runtime", "node");
+    const pnpmHome = path.join(temp, "runtime", "pnpm", "bin");
+    mkdirSync(path.join(nodeHome, "bin"), { recursive: true });
+    mkdirSync(pnpmHome, { recursive: true });
+    const nodeBin = path.join(nodeHome, "bin", "node");
+    writeFileSync(nodeBin, '#!/bin/sh\nprintf "%s\\n" "$PATH"\n');
+    chmodSync(nodeBin, 0o755);
+    writeFileSync(path.join(temp, ".env"), `METIS_NODE_BIN="${nodeBin}"\nMETIS_NODE_HOME="${nodeHome}"\nMETIS_PNPM_HOME="${pnpmHome}"\n`);
+    for (const platform of ["linux", "macos"]) {
+      const source = readFileSync(path.join(root, "install", `${platform}.sh`), "utf8");
+      const marker = `cat > "$install_dir/run-service.sh" <<'EOF'\n`;
+      const start = source.indexOf(marker);
+      const end = source.indexOf("\nEOF", start);
+      assert.ok(start >= 0 && end > start, `${platform} service launcher exists`);
+      const launcher = path.join(temp, `run-${platform}.sh`);
+      writeFileSync(launcher, source.slice(start + marker.length, end));
+      const output = execFileSync("/bin/bash", [launcher], {
+        env: { ...process.env, PATH: "/usr/bin:/bin" }, encoding: "utf8",
+      }).trim();
+      assert.ok(output.startsWith(`${pnpmHome}:${path.join(nodeHome, "bin")}:`), `${platform}: ${output}`);
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("Linux installer reuses its saved Node when PATH has no node", { skip: process.platform !== "linux" }, () => {
+  const source = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
+  const extract = (start: string, end: string) => {
+    const from = source.indexOf(start);
+    const to = source.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `${start} exists`);
+    return source.slice(from, to);
+  };
+  const functions = [
+    extract("read_env_key() {", "\n\nupsert_env_key()"),
+    extract("version_at_least_22() {", "\n\ninstall_node()"),
+    extract("install_node() {", "\n\nif ! command -v git"),
+  ].join("\n\n");
+  const temp = mkdtempSync(path.join(os.tmpdir(), "metis saved node "));
+  try {
+    const toolDir = path.join(temp, "tools");
+    const nodeDir = path.join(temp, "custom node", "bin");
+    mkdirSync(toolDir);
+    mkdirSync(nodeDir, { recursive: true });
+    for (const tool of ["awk", "dirname"]) symlinkSync(`/usr/bin/${tool}`, path.join(toolDir, tool));
+    const nodeBin = path.join(nodeDir, "node");
+    writeFileSync(nodeBin, '#!/bin/sh\nprintf "22\\n"\n');
+    writeFileSync(path.join(nodeDir, "npm"), "#!/bin/sh\nexit 0\n");
+    chmodSync(nodeBin, 0o755);
+    chmodSync(path.join(nodeDir, "npm"), 0o755);
+    writeFileSync(path.join(temp, ".env"), `METIS_NODE_BIN="${nodeBin}"\n`);
+    const resolved = execFileSync("/bin/bash", ["-c", `set -euo pipefail\n${functions}\ninstall_node "$TEST_INSTALL_DIR"`], {
+      env: { ...process.env, PATH: toolDir, TEST_INSTALL_DIR: temp }, encoding: "utf8",
+    });
+    assert.equal(resolved, nodeBin);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("production build finds bundled pnpm with no pnpm on inherited PATH", { skip: process.platform !== "linux" }, () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "metis build path "));
+  try {
+    const scriptDir = path.join(temp, "scripts");
+    const pnpmDir = path.join(temp, ".runtime", "pnpm", "bin");
+    const toolDir = path.join(temp, "tools");
+    mkdirSync(scriptDir);
+    mkdirSync(pnpmDir, { recursive: true });
+    mkdirSync(toolDir);
+    writeFileSync(path.join(scriptDir, "build-production-slot.sh"), readFileSync(path.join(root, "scripts", "build-production-slot.sh")));
+    writeFileSync(path.join(temp, "tsconfig.json"), "{}\n");
+    for (const tool of ["dirname", "mktemp", "cp", "rm", "mv", "mkdir"]) {
+      symlinkSync(`/usr/bin/${tool}`, path.join(toolDir, tool));
+    }
+    const pnpmBin = path.join(pnpmDir, "pnpm");
+    writeFileSync(pnpmBin, "#!/bin/sh\nprintf 'PNPM_RUNTIME_FOUND\\n'\nexit 42\n");
+    chmodSync(pnpmBin, 0o755);
+    const result = spawnSync("/bin/bash", [path.join(scriptDir, "build-production-slot.sh"), ".next-a"], {
+      cwd: temp,
+      env: { ...process.env, PATH: toolDir, PNPM_BIN: "pnpm", AI_CHAT_ROOT: "", METIS_NODE_HOME: "", METIS_PNPM_HOME: "" },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 42, result.stderr);
+    assert.match(result.stdout, /PNPM_RUNTIME_FOUND/);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("linux systemd services apply a hardened sandbox around app and worker", () => {
   const appUnit = readFileSync(path.join(root, "deploy", "systemd", "metis-ai.service.template"), "utf8");
   const workerUnit = readFileSync(path.join(root, "deploy", "systemd", "metis-ai-worker.service.template"), "utf8");
@@ -137,7 +230,7 @@ test("linux native installer installs C/C++ build tools before pnpm install", ()
     assert.match(source, /ensure_native_build_tools/);
     assert.match(source, /build-essential/);
     const toolsAt = source.search(/ensure_native_build_tools\r?\n\(/);
-    const pnpmAt = source.indexOf("pnpm install --frozen-lockfile");
+    const pnpmAt = source.indexOf('"$METIS_PNPM_HOME/pnpm" install --frozen-lockfile');
     assert.ok(toolsAt >= 0 && pnpmAt > toolsAt, "build tools must be ensured before pnpm install");
   }
 });
@@ -164,7 +257,7 @@ test("all native installers install the Playwright Chromium browser", () => {
     const content = readFileSync(path.join(root, "install", file), "utf8");
     const publicContent = readFileSync(path.join(installerDir, file), "utf8");
     for (const source of [content, publicContent]) {
-      const dependenciesAt = source.indexOf("pnpm install --frozen-lockfile");
+      const dependenciesAt = source.indexOf('"$METIS_PNPM_HOME/pnpm" install --frozen-lockfile');
       const browserAt = source.indexOf("pnpm exec playwright install chromium");
       assert.ok(dependenciesAt >= 0 && browserAt > dependenciesAt, `${file} must install Chromium after dependencies`);
     }

@@ -20,6 +20,7 @@ import {
   ArrowUp,
   ArrowDown,
   Activity,
+  Repeat2,
   CalendarClock,
   Cpu,
   Gauge,
@@ -94,6 +95,7 @@ import { toast } from "sonner";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { RichComposerInput } from "@/components/rich-composer-input";
+import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { VoiceInput } from "@/components/voice-input";
@@ -151,6 +153,7 @@ import {
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
+import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
   clearClientChatSnapshots,
@@ -747,7 +750,7 @@ function ModeIcon({ mode, className }: { mode: AgentMode; className?: string }) 
   if (mode.id === "plan") return <ClipboardList className={className} />;
   if (mode.id === "ask") return <MessageSquare className={className} />;
   if (mode.id === "agent") return <Bot className={className} />;
-  if (mode.id === "gauntlet") return <Activity className={className} />;
+  if (mode.id === "gauntlet") return <Repeat2 className={className} />;
   if (mode.icon === "eye") return <Eye className={className} />;
   if (mode.icon === "brain") return <Brain className={className} />;
   if (mode.icon === "terminal") return <Terminal className={className} />;
@@ -2171,7 +2174,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const [input, setInput] = useState("");
+  const [input, setInputState] = useState("");
+  const inputEpochRef = useRef(0);
+  const setInput: typeof setInputState = useCallback((next) => {
+    inputEpochRef.current += 1;
+    setInputState(next);
+  }, []);
   const setInputGuarded = useCallback((value: string, reason?: "submitted" | "queued") => {
     const apply = () => {
       setInput((prev) => {
@@ -2192,7 +2200,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       apply();
     }
     else startTransition(apply);
-  }, []);
+  }, [setInput]);
   const busyRef = useRef(false);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
   const [referenceMenu, setReferenceMenu] = useState<{
@@ -2438,6 +2446,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const seenChatUpdatedAtRef = useRef<Map<string, string>>(new Map());
   const chatListInitializedRef = useRef(false);
   const workspaceSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const workspaceDraftChangesRef = useRef<Map<string, WorkspaceDraftPatch>>(new Map());
   const workspaceListSaveTimerRef = useRef<number | null>(null);
   const stateRef = useRef({
     messages,
@@ -4084,7 +4093,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return () => {
       cancelled = true;
     };
-  }, [authed, models]);
+  }, [authed, models, setInput]);
 
   useEffect(() => {
     if (!activeChatId || !modelId) return;
@@ -4371,7 +4380,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setQuestionCustom(snap.pendingQuestion?.questions.map(() => "") ?? []);
     setQuestionCustomActive(snap.pendingQuestion?.questions.map(() => false) ?? []);
     setPaneKey((k) => k + 1);
-  }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, workspaceDefaultCwd]);
+  }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, setInput, workspaceDefaultCwd]);
 
   const openDraft = useCallback(
     (opts?: { skipNav?: boolean; projectId?: string | null }) => {
@@ -4476,7 +4485,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setLiveStatus("");
       setPaneKey((k) => k + 1);
     },
-    [activeChatIncognito, modelParamsByModel, models, navigateChat, persistActiveSnapshot, setBusySynced],
+    [activeChatIncognito, modelParamsByModel, models, navigateChat, persistActiveSnapshot, setBusySynced, setInput],
   );
 
   const prefetchChat = useCallback(async (id: string) => {
@@ -4827,7 +4836,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
       }
     },
-    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, workspaceDefaultCwd],
+    [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, setInput, workspaceDefaultCwd],
   );
 
   useEffect(() => {
@@ -5164,7 +5173,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setRuntimeMode(serverRuntimeMode);
         localStorage.setItem(RUNTIME_MODE_STORAGE_KEY, serverRuntimeMode);
         const serverWorkspaces = workspacesFromChat(data.chat);
-        setWorkspaces(serverWorkspaces);
+        setWorkspaces((current) => {
+          const localById = new Map(current.map((item) => [item.id, item]));
+          return serverWorkspaces.map((item) =>
+            mergeIncomingWorkspace(item, localById.get(item.id), workspaceDraftChangesRef.current.get(item.id)),
+          );
+        });
         setActiveWorkspaceId((current) =>
           current && serverWorkspaces.some((item) => item.id === current)
             ? current
@@ -8357,7 +8371,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     inputUpdatedAtRef.current = edit.updatedAt;
     composerDirtyUntilRef.current = edit.dirtyUntil;
     if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
-    setInput(value);
+    const editEpoch = ++inputEpochRef.current;
+    startTransition(() => {
+      setInputState((current) => editEpoch === inputEpochRef.current ? value : current);
+    });
     const nextSlashQuery = slashCommandQuery(value, cursorPosition);
     setSlashQuery(nextSlashQuery);
     setSlashIndex(0);
@@ -8505,8 +8522,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         error?: string;
       };
       if (response.status === 409 && body.workspace) {
-        setWorkspaces((current) => current.map((item) => item.id === workspaceId ? body.workspace! : item));
-        toast.info("Workspace changed by the agent", {
+        const pending = workspaceDraftChangesRef.current.get(workspaceId);
+        setWorkspaces((current) => current.map((item) =>
+          item.id === workspaceId ? mergeIncomingWorkspace(body.workspace!, item, pending) : item,
+        ));
+        if (pending) scheduleWorkspaceDraftSave(workspaceId);
+        else toast.info("Workspace changed by the agent", {
           description: "The newer agent version is now shown.",
         });
         return;
@@ -8514,7 +8535,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (!response.ok || !body.workspace) {
         throw new Error(body.error || "Could not save workspace.");
       }
-      setWorkspaces((current) => current.map((item) => item.id === workspaceId ? body.workspace! : item));
+      const remaining = remainingWorkspaceDraft(workspaceDraftChangesRef.current.get(workspaceId), workspace);
+      if (remaining) workspaceDraftChangesRef.current.set(workspaceId, remaining);
+      else workspaceDraftChangesRef.current.delete(workspaceId);
+      setWorkspaces((current) => current.map((item) =>
+        item.id === workspaceId
+          ? mergeIncomingWorkspace(body.workspace!, item, workspaceDraftChangesRef.current.get(workspaceId))
+          : item,
+      ));
+      if (workspaceDraftChangesRef.current.has(workspaceId) && !workspaceSaveTimersRef.current.has(workspaceId)) {
+        scheduleWorkspaceDraftSave(workspaceId);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save workspace.");
     }
@@ -8534,8 +8565,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   function updateWorkspaceDraft(
     workspaceId: string,
-    patch: Partial<Pick<WorkspaceItem, "name" | "content">>,
+    patch: WorkspaceDraftPatch,
   ) {
+    workspaceDraftChangesRef.current.set(workspaceId, {
+      ...workspaceDraftChangesRef.current.get(workspaceId),
+      ...patch,
+    });
     setWorkspaces((current) => current.map((item) =>
       item.id === workspaceId
         ? { ...item, ...patch, updatedAt: new Date().toISOString() }
@@ -8903,21 +8938,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ) : (
     <div className="w-full space-y-2">
       {queuedList}
-      {chatGoal ? (
-        <div className="rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs" role="status" aria-label="Current chat goal">
-          <div className="flex items-center gap-2">
-            <Activity className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 truncate text-muted-foreground">Goal: <span className="text-foreground/80">{chatGoal}</span></span>
-          </div>
-          {chatGoalReferences.length ? (
-            <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Goal context">
-              {chatGoalReferences.map((reference) => (
-                <span key={`${reference.kind}-${reference.id}`} className="rounded-md border border-border/60 bg-muted/25 px-1.5 py-0.5 text-muted-foreground">@{reference.label}</span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {chatGoal ? <ChatGoalBanner goal={chatGoal} references={chatGoalReferences} /> : null}
       {referenceText ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
@@ -9298,6 +9319,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               const live = composerLiveText(textareaRef.current?.innerText, input);
               const next = composerTranscriptInsert(live, transcript);
               handleComposerInputChange(next, next.length);
+              setInput(next);
               setComposerSyncNonce((current) => current + 1);
               window.requestAnimationFrame(() => textareaRef.current?.focus());
             }}
