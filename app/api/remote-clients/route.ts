@@ -5,7 +5,7 @@ import {
   listRemoteAudit,
   listRemoteClients,
 } from "@/lib/remote-clients";
-import { WINDOWS_INSTALLER_URL, remoteDesktopDownloads } from "@/lib/remote-client-release";
+import { latestWindowsInstallerUrl, remoteDesktopDownloads } from "@/lib/remote-client-release";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     commands: { linux: command, windows: windowsCommand, macos: macosCommand },
     permissionMode,
     serverUrl: publicUrl,
-    installerUrl: WINDOWS_INSTALLER_URL,
+    installerUrl: await latestWindowsInstallerUrl(),
     installerUrls,
   }, { status: 201 });
 }

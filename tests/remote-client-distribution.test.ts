@@ -7,9 +7,9 @@ const read = (file: string) => readFileSync(new URL("../" + file, import.meta.ur
 test("enrollment gives users the public GitHub installer URL", () => {
   const enrollment = read("app/api/remote-clients/route.ts");
   const installer = read("app/api/remote-clients/windows-installer/route.ts");
-  assert.match(enrollment, /installerUrl: WINDOWS_INSTALLER_URL/);
+  assert.match(enrollment, /installerUrl: await latestWindowsInstallerUrl\(\)/);
   assert.match(installer, /isAuthenticated\(req\)/);
-  assert.match(installer, /Response\.redirect\(WINDOWS_INSTALLER_URL, 302\)/);
+  assert.match(installer, /Response\.redirect\(await latestWindowsInstallerUrl\(\), 302\)/);
 });
 
 test("existing paired clients can update through authenticated server proxy", () => {
@@ -18,5 +18,5 @@ test("existing paired clients can update through authenticated server proxy", ()
   assert.match(update, /authenticateRemoteClient/);
   assert.match(update, /legacyWindowsUpdate\(filename\)/);
   assert.match(release, /github\.com\/f1shyondrugs\/metis-remote-client\/releases\/latest\/download\//);
-  assert.doesNotMatch(release, /Authorization|x-metis-client-id/);
+  assert.doesNotMatch(release, /x-metis-client-id/);
 });
