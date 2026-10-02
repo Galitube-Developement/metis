@@ -26,7 +26,9 @@ after(async () => {
 
 test("extractor does not turn ordinary prompts into global memory", () => {
   const { extractKnowledgeCandidates } = modules[2];
-  assert.deepEqual(extractKnowledgeCandidates("Ich bevorzuge kurze Antworten. Mein Server hat 256 GB RAM."), []);
+  const profile = extractKnowledgeCandidates("Ich bevorzuge kurze Antworten. Mein Server hat 256 GB RAM.");
+  assert.equal(profile.length, 2);
+  assert.deepEqual(profile.map((candidate) => candidate.kind), ["durable", "durable"]);
   assert.deepEqual(extractKnowledgeCandidates("Ich will, dass du das bitte fixst."), []);
   assert.deepEqual(extractKnowledgeCandidates("Heute brauche ich 256 GB RAM. Wie viel kostet das?"), []);
   const remembered = extractKnowledgeCandidates("Merk dir: ich bevorzuge kurze Antworten.");

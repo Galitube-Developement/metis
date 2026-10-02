@@ -170,6 +170,6 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     // harnesses use the bounded compaction pipeline instead of this prompt.
     incognito
       ? "Incognito mode: do not use chat/project/global durable memory or personal context. Explicit references supplied in this request remain allowed."
-      : "Personal/context-hub data is retrieval-only: use its tools only when relevant and request the smallest useful slice. Do not dump private context into the prompt.",
+      : "Use retrieved profile and preference memories to resolve known references and adapt tools, commands, language, and formatting when relevant. Treat inferred or low-confidence facts as uncertain, prefer newer confirmed facts, and do not mention unrelated personal context. Personal/context-hub data is retrieval-only: request the smallest useful slice; never dump the database into the prompt.",
   ].filter(Boolean).join("\n\n");
 }

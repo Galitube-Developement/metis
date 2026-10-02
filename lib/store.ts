@@ -517,6 +517,14 @@ export type Memory = {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  namespace?: "profile" | "preferences" | "device" | "project" | "infrastructure" | "software" | "workflow" | "semantic";
+  topic?: string;
+  confidence?: number;
+  importance?: number;
+  confirmed?: boolean;
+  source?: "user" | "conversation";
+  state?: "active" | "superseded" | "archived";
+  lastUsedAt?: string;
 };
 
 const DATA_DIR = config.dataDir;

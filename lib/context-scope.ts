@@ -27,6 +27,9 @@ export type ScopedLearnedFact = {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  importance?: number;
+  confidence?: number;
+  confirmed?: boolean;
 };
 
 export type ContextScope = {
@@ -250,6 +253,9 @@ export function scopeFactsFromMemories(memories: readonly Memory[]): ScopedLearn
     ...(memory.tags?.length ? { tags: memory.tags } : {}),
     createdAt: memory.createdAt,
     updatedAt: memory.updatedAt,
+    ...(memory.importance !== undefined ? { importance: memory.importance } : {}),
+    ...(memory.confidence !== undefined ? { confidence: memory.confidence } : {}),
+    ...(memory.confirmed !== undefined ? { confirmed: memory.confirmed } : {}),
   }));
 }
 
@@ -258,5 +264,7 @@ export function globalFactsForScope(input: ContextScopeInput): ScopedLearnedFact
   if (!chat || chat.incognito || input.includeGlobal === false) return [];
   const project = chat.projectId ? getProject(chat.projectId, input.ownerId ?? chat.ownerId) : null;
   if (project?.memoryMode === "project_only") return [];
-  return scopeFactsFromMemories(listMemories(input.ownerId ?? chat.ownerId));
+  return scopeFactsFromMemories(
+    listMemories(input.ownerId ?? chat.ownerId).filter((memory) => memory.state !== "superseded" && memory.state !== "archived"),
+  );
 }

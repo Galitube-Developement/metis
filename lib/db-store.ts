@@ -1187,8 +1187,26 @@ export function saveGlobalModelSettings(settings: GlobalModelSettings, ownerId?:
   return settings;
 }
 
-export function createMemory(content: string, tags?: string[], ownerId?: string): Memory {
-  const memory: Memory = { id: randomUUID(), content: content.trim(), tags, createdAt: now(), updatedAt: now() };
+export function createMemory(
+  content: string,
+  tags?: string[],
+  ownerId?: string,
+  metadata: Partial<Pick<Memory, "namespace" | "topic" | "confidence" | "importance" | "confirmed" | "source">> = {},
+): Memory {
+  const memory: Memory = {
+    id: randomUUID(),
+    content: content.trim(),
+    tags,
+    createdAt: now(),
+    updatedAt: now(),
+    namespace: metadata.namespace || (tags?.some((tag) => /preference/i.test(tag)) ? "preferences" : "semantic"),
+    topic: metadata.topic || tags?.find((tag) => !tag.startsWith("auto:") && !tag.startsWith("knowledge:")),
+    confidence: metadata.confidence ?? 1,
+    importance: metadata.importance ?? 0.8,
+    confirmed: metadata.confirmed ?? true,
+    source: metadata.source || "user",
+    state: "active",
+  };
   saveMemories([...listMemories(ownerId), memory], ownerId);
   return memory;
 }

@@ -564,9 +564,9 @@ export async function runQueuedJob(job: AgentJob) {
     markJobError(job, "Chat not found or access denied.");
     return;
   }
-  // Knowledge capture is infrastructure, not a model behavior. Ordinary user
-  // turns are not copied into global memory; only an explicit remember request
-  // becomes a durable memory. Internal child, automation and resume prompts
+  // Knowledge capture is infrastructure, not a model behavior. Ordinary
+  // requests are ignored; clear preferences and first-person profile facts may
+  // become durable memories. Internal child, automation and resume prompts
   // are not user knowledge.
   if (!job.automationId && !job.parentJobId && !job.subagentFollowUp && !job.resumePrompt && !job.incognito && !chat.incognito) {
     try {
@@ -1020,7 +1020,7 @@ export async function runQueuedJob(job: AgentJob) {
               job.automationContext ? `Automation-level context from the source chat and prior completed runs. Use it as durable background context, but keep this run's transcript separate:\n${job.automationContext}` : "",
             ]
         : [
-                  "Personal context: context_search/context_profile retrieve the smallest relevant slice from the owner's shared context hub. Ordinary user turns are not auto-saved as memories. Use context_remember only for durable facts discovered through tools or for an explicit correction. Never dump the context hub or memory list into the prompt.",
+                  "Personal context: retrieve the smallest relevant slice from the owner's shared context hub. The system selectively captures clear first-person profile facts and interaction preferences; ordinary requests, temporary state, secrets, and tool output are not auto-saved. Use context_remember for durable facts discovered through tools or for an explicit correction. Never dump the context hub or memory list into the prompt.",
           ]),
       ...(job.incognito || chat.incognito ? [] : [
       "When referring to an existing or newly created plan/canvas, include its exact Markdown link using workspace://plan/<id> or workspace://canvas/<id>.",

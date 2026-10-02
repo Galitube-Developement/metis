@@ -4,6 +4,9 @@ export type LayeredContextFact = {
   tags?: readonly string[];
   createdAt?: string;
   updatedAt?: string;
+  importance?: number;
+  confidence?: number;
+  confirmed?: boolean;
 };
 
 const STOP_WORDS = new Set([
@@ -33,6 +36,30 @@ function timestamp(value?: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+// Small multilingual concept map for common user terminology. This keeps
+// retrieval local and provider-neutral while connecting aliases that users
+// naturally use across turns (for example, OBS and streaming setup).
+const CONCEPTS: readonly (readonly string[])[] = [
+  ["obs", "obs studio", "streaming setup", "streaming software"],
+  ["capture card", "video capture", "capture device", "capture card disconnect"],
+  ["laptop", "notebook", "mobile computer"],
+  ["desktop", "desktop pc", "gaming pc", "computer"],
+  ["server", "root server", "hosting server", "vps"],
+  ["ram", "memory", "system memory"],
+  ["windows", "windows pc", "windows computer"],
+  ["debian", "debian linux", "linux server"],
+];
+
+function expandedTerms(value: string) {
+  const result = new Set(terms(value));
+  const normalizedValue = normalized(value);
+  for (const concept of CONCEPTS) {
+    if (!concept.some((alias) => normalizedValue.includes(normalized(alias)))) continue;
+    for (const alias of concept) for (const token of terms(alias)) result.add(token);
+  }
+  return result;
+}
+
 /**
  * Select durable facts for the active turn instead of injecting the entire
  * memory store into every prompt. This is intentionally deterministic and
@@ -47,7 +74,7 @@ export function retrieveRelevantFacts<T extends LayeredContextFact>(
   const limit = Math.max(0, options.limit ?? 8);
   if (!limit || !facts.length) return [];
 
-  const queryTerms = terms(query);
+  const queryTerms = [...expandedTerms(query)];
   if (!queryTerms.length) {
     const fallback = Math.max(0, Math.min(limit, options.fallback ?? 0));
     return [...facts]
@@ -59,14 +86,21 @@ export function retrieveRelevantFacts<T extends LayeredContextFact>(
   const queryNormalized = normalized(query);
   const scored = facts.map((fact, index) => {
     const body = normalized(fact.content);
-    const bodyTerms = new Set(terms(fact.content));
-    const tagTerms = new Set(terms((fact.tags || []).join(" ")));
+    const bodyTerms = expandedTerms(fact.content);
+    const tagTerms = expandedTerms((fact.tags || []).join(" "));
     let score = 0;
 
     for (const token of querySet) {
       if (tagTerms.has(token)) score += 8;
       if (bodyTerms.has(token)) score += 4;
       if (token.length >= 5 && body.includes(token)) score += 1;
+    }
+    // Explicitly confirmed and high importance facts win close relevance
+    // matches. Metadata only adjusts a fact after it has matched the query.
+    if (score > 0) {
+      score += Math.max(0, Math.min(1, fact.importance ?? 0.5)) * 2;
+      score += Math.max(0, Math.min(1, fact.confidence ?? 0.5));
+      if (fact.confirmed) score += 1;
     }
 
     for (const tag of fact.tags || []) {

@@ -8,7 +8,12 @@ export async function GET(req: Request) {
   if (!(await isAuthenticated(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return Response.json({ memories: listMemories((await getAuthenticatedUserId(req)) ?? undefined) });
+  const query = new URL(req.url).searchParams.get("q")?.trim().toLocaleLowerCase();
+  const memories = listMemories((await getAuthenticatedUserId(req)) ?? undefined)
+    .filter((memory) => memory.state !== "superseded" && memory.state !== "archived")
+    .filter((memory) => !query || [memory.content, memory.namespace, memory.topic, ...(memory.tags || [])]
+      .some((value) => value?.toLocaleLowerCase().includes(query)));
+  return Response.json({ memories });
 }
 
 export async function POST(req: Request) {

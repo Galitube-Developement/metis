@@ -20,6 +20,9 @@ export type MemoryItem = {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  namespace?: "profile" | "preferences" | "device" | "project" | "infrastructure" | "software" | "workflow" | "semantic";
+  source?: "user" | "conversation";
+  confidence?: number;
 };
 
 type Props = {
@@ -36,9 +39,15 @@ export function MemoriesPanel({
   onChanged,
 }: Props) {
   const [draft, setDraft] = useState("");
+  const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const visibleMemories = memories.filter((memory) => {
+    const query = search.trim().toLocaleLowerCase();
+    return !query || [memory.content, memory.namespace, ...(memory.tags || [])]
+      .some((value) => value?.toLocaleLowerCase().includes(query));
+  });
 
   async function addMemory() {
     const content = draft.trim();
@@ -105,8 +114,7 @@ export function MemoriesPanel({
         <SheetHeader>
           <SheetTitle>Memories</SheetTitle>
           <SheetDescription>
-            Durable facts injected into every chat turn. The agent can also
-            write these itself.
+            The agent retrieves matching memories when they help with a request. Add, edit, search, or delete anything here.
           </SheetDescription>
         </SheetHeader>
 
@@ -132,14 +140,26 @@ export function MemoriesPanel({
           </Button>
         </div>
 
-        <ScrollArea className="mt-4 flex-1 pr-2">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search memories"
+          aria-label="Search memories"
+          className="mt-4"
+        />
+
+        <ScrollArea className="mt-3 flex-1 pr-2">
           <ul className="space-y-2 pb-6">
             {memories.length === 0 ? (
               <li className="px-1 py-8 text-center text-sm text-muted-foreground">
                 No memories yet.
               </li>
+            ) : visibleMemories.length === 0 ? (
+              <li className="px-1 py-8 text-center text-sm text-muted-foreground">
+                No memories match “{search}”.
+              </li>
             ) : (
-              memories.map((m) => (
+              visibleMemories.map((m) => (
                 <li
                   key={m.id}
                   className="group flex items-start gap-2 rounded-lg border border-border/60 bg-card/40 p-3"
@@ -160,11 +180,11 @@ export function MemoriesPanel({
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">{m.content}</p>
                     )}
-                    {m.tags && m.tags.length > 0 ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {m.tags.join(" · ")}
-                      </p>
-                    ) : null}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {[m.namespace, m.source === "conversation" ? "Learned in conversation" : undefined, ...(m.tags || [])]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                   </div>
                   <Button
                     variant="ghost"

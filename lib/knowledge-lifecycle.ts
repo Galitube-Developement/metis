@@ -29,7 +29,7 @@ const VALUE_WORDS = new Set([
 const EPHEMERAL = /\b(heute|morgen|gestern|jetzt|gerade|aktuell|momentan|diesmal|gleich|später|vorhin|diese[rmn]?\s+woche|nächste[rmn]?\s+woche|heute\s+abend|today|tomorrow|yesterday|right\s+now|currently|at\s+the\s+moment|this\s+time|this\s+week|next\s+week|later)\b/i;
 const LONG_TERM_OVERRIDE = /\b(ab\s+jetzt|zukünftig|künftig|immer|standardmäßig|standardmaessig|dauerhaft|für\s+immer|in\s+zukunft|from\s+now\s+on|in\s+future|always|by\s+default|permanently)\b/i;
 const EXPLICIT_REMEMBER = /\b(merk(?:e)?\s+(?:dir\s+)?(?:das|dass)?|speicher(?:e)?\s+(?:dir\s+)?(?:das|dass)?|remember\s+(?:that|this)?|save\s+(?:that|this)?\s+(?:as\s+memory)?)\b/i;
-const PREFERENCE = /\b(ich\s+(?:bevorzuge|mag|möchte|will)\b|mir\s+ist\s+wichtig\b|mein\s+standard\b|i\s+(?:prefer|like|want)\b|my\s+default\b)/i;
+const PREFERENCE = /\b(ich\s+(?:bevorzuge|mag)\b|mir\s+ist\s+wichtig\b|mein\s+standard\b|i\s+(?:prefer|like)\b|my\s+default\b|please\s+(?:answer|respond|format)\b|bitte\s+(?:antworte|formatiere)\b)/i;
 const STABLE_FACT = /\b(ich\s+(?:heiße|heisse|wohne|nutze|verwende|habe|spiele|arbeite)\b|mein(?:e|er|em|en)?\s+[^.!?]{1,70}\s+(?:ist|sind|hat|haben|nutzt|verwendet)\b|i\s+(?:am|live|use|have|play|work)\b|my\s+[^.!?]{1,70}\s+(?:is|are|has|uses)\b)/i;
 const TASK_SCOPE = /\b(metis|projekt|project|repo|repository|codebase|app|website|webseite|ui|server|agent|modell|model|workflow|automation|diesem\s+chat|this\s+chat)\b/i;
 const REQUIREMENT = /\b(soll(?:en)?|muss|müssen|darf\s+nicht|immer|nie|standardmäßig|needs?\s+to|must|should|shouldn['’]?t|never|always|by\s+default)\b/i;
@@ -81,13 +81,16 @@ function classifyStatement(statement: string): KnowledgeClass {
   const text = statement.trim();
   if (!text || text.endsWith("?") || QUESTION_START.test(text)) return "ephemeral";
   if (SENSITIVE.test(text) || CODEISH.test(text)) return "ephemeral";
-  // Ordinary prompts must not become global memories. "ich will", "immer",
-  // preferences and stable-fact phrasing were matching almost every German request.
+  // Ordinary prompts must not become global memories. Capture only explicit
+  // remember requests plus clear preference or first-person profile statements.
   if (EXPLICIT_REMEMBER.test(text)) return "durable";
   if (EPHEMERAL.test(text) && !LONG_TERM_OVERRIDE.test(text)) return "ephemeral";
+  // Clear interaction preferences and first-person profile statements are
+  // useful across conversations. Project requirements stay chat-scoped below.
+  if (PREFERENCE.test(text) || STABLE_FACT.test(text)) return "durable";
   // Project/app requirements stay scoped to the chat even when they are
   // long-lived ("Metis should always …"). They are not global user facts.
-  if (TASK_SCOPE.test(text) && REQUIREMENT.test(text) && !PREFERENCE.test(text) && !STABLE_FACT.test(text)) return "task";
+  if (TASK_SCOPE.test(text) && REQUIREMENT.test(text)) return "task";
   return "ephemeral";
 }
 
@@ -125,18 +128,33 @@ function upsertDurable(ownerId: string | undefined, candidate: KnowledgeCandidat
   const memories = listMemories(ownerId);
   const exact = memories.find((memory) => normalized(memory.content) === normalized(candidate.content));
   if (exact) return exact;
-  const auto = memories
-    .filter((memory) => memory.tags?.includes("auto:knowledge"))
+  // Reconcile against any matching memory so a changed device, setup, or
+  // preference replaces stale manual and automatically captured entries alike.
+  const matching = memories
     .map((memory) => ({ memory, score: similarity(memory.content, candidate.content) }))
     .filter((entry) => entry.score >= 0.78)
     .sort((a, b) => b.score - a.score)[0];
-  if (auto) {
-    return updateMemory(auto.memory.id, {
+  if (matching) {
+    return updateMemory(matching.memory.id, {
       content: candidate.content,
-      tags: normalizeChatKeywords([...(auto.memory.tags || []), ...candidate.tags]),
+      tags: normalizeChatKeywords([...(matching.memory.tags || []), ...candidate.tags]),
     }, ownerId);
   }
-  return createMemory(candidate.content, candidate.tags, ownerId);
+  const namespace = PREFERENCE.test(candidate.content)
+    ? "preferences"
+    : /\b(laptop|notebook|pc|computer|device|streaming)\b/i.test(candidate.content)
+      ? "device"
+      : /\b(server|vps|debian|linux|windows|hosting|domain)\b/i.test(candidate.content)
+        ? "infrastructure"
+        : "profile";
+  return createMemory(candidate.content, candidate.tags, ownerId, {
+    namespace,
+    topic: candidate.key,
+    confidence: EXPLICIT_REMEMBER.test(candidate.content) ? 0.98 : 0.84,
+    importance: PREFERENCE.test(candidate.content) ? 0.9 : 0.8,
+    confirmed: EXPLICIT_REMEMBER.test(candidate.content),
+    source: "conversation",
+  });
 }
 
 function upsertTaskFact(ownerId: string | undefined, chatId: string, candidate: KnowledgeCandidate, messageId?: string) {
@@ -184,7 +202,7 @@ export function deriveChatKeywords(message: string, limit = 6) {
 
 /**
  * Deterministic, token-free knowledge capture for real user turns.
- * - durable: global memory only when the user explicitly asks to remember
+ * - durable: explicit remember requests and clear stable profile/preferences
  * - task: chat-scoped learned fact for project/app requirements
  * - ephemeral/questions/secrets/code/ordinary prompts: never persisted as memory
  * External repo/browser/tool output is deliberately not copied into memory;
