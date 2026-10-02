@@ -3,6 +3,7 @@ import path from "node:path";
 import { tool, jsonSchema, type ToolSet } from "ai";
 import { config } from "@/lib/config";
 import { sanitizeJsonSchema } from "@/lib/providers/tool-schema";
+import { DEVICE_TOOL_DESCRIPTIONS } from "@/lib/mcp-core/device-routing.mjs";
 
 /**
  * Bridges the internal Metis MCP gateway (77+ tools: shell, files, browser,
@@ -284,6 +285,13 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "list_recent_errors",
   "read_error_log_detail",
   "list_remote_clients",
+  "system_info",
+  "remote_client_terminal",
+  "computer_use",
+  "windows_ui",
+  "windows_screenshot",
+  "windows_desktop_job",
+  "electron_test",
   "list_notes",
   "search_notes",
   "create_note",
@@ -336,7 +344,7 @@ export async function mcpBridgeTools(
       return text || result || "";
     };
     tools[definition.name] = tool({
-      description: (definition.description || definition.name).slice(0, 500),
+      description: (DEVICE_TOOL_DESCRIPTIONS[definition.name] || definition.description || definition.name).slice(0, 500),
       inputSchema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]),
       execute: bridgedExecute,
     } as never) as ToolSet[string];
@@ -372,7 +380,7 @@ export async function mcpBridgeHttpTools(
       return text || result || "";
     };
     tools[definition.name] = tool({
-      description: (definition.description || definition.name).slice(0, 500),
+      description: (DEVICE_TOOL_DESCRIPTIONS[definition.name] || definition.description || definition.name).slice(0, 500),
       inputSchema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]),
       execute: bridgedExecute,
     } as never) as ToolSet[string];

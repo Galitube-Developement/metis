@@ -99,6 +99,7 @@ import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { VoiceInput } from "@/components/voice-input";
+import { VoiceConversation } from "@/components/voice-conversation";
 import { RichUserText } from "@/components/rich-user-text";
 import { BrowserSettingsControls } from "@/components/browser-settings-controls";
 import { BrowserPageEmpty, BrowserPageSkeleton } from "@/components/browser-page-skeleton";
@@ -2124,6 +2125,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [voiceEndpoint, setVoiceEndpoint] = useState("");
   const [voiceConnectionId, setVoiceConnectionId] = useState("");
   const [voiceRecording, setVoiceRecording] = useState(false);
+  const [voiceConversationActive, setVoiceConversationActive] = useState(false);
   const [voiceState, setVoiceState] = useState("idle");
   const [voiceStopSignal, setVoiceStopSignal] = useState(0);
   const [voiceCancelSignal, setVoiceCancelSignal] = useState(0);
@@ -9383,9 +9385,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             </div>
           ) : null}
         </div>
+          <VoiceConversation
+            chatId={activeChatId}
+            modelId={modelId}
+            disabled={voiceRecording || busy}
+            onEnsureChat={ensureChatId}
+            onActiveChange={setVoiceConversationActive}
+            onTranscriptChange={(id) => {
+              void refreshActiveChatFromServer(id);
+              void loadChats();
+            }}
+          />
           <VoiceInput
             chatId={activeChatId}
-            enabled={voiceInputEnabled}
+            enabled={voiceInputEnabled && !voiceConversationActive}
             maxDurationSeconds={voiceMaxDurationSeconds}
             provider={voiceProvider}
             modelId={voiceModelId}

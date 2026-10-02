@@ -211,7 +211,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     description: "Codex agent through the official Codex SDK and CLI runtime.",
     kind: "codex-agent",
     authTypes: ["oauth", "account", "api_key"],
-    capabilities: agentCapabilities,
+    capabilities: { ...agentCapabilities, realtimeVoice: true },
     models: models(
       {
         id: "gpt-6-astra",

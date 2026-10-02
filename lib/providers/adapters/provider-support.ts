@@ -52,6 +52,7 @@ import { persistToolsForMessage } from "@/lib/tool-persistence";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { compress } from "@/lib/compression";
 import { recoveryTranscript } from "@/lib/providers/recovery-transcript";
+import { recentVoiceContext } from "@/lib/voice-protocol";
 import { stripRawToolMarkup } from "@/lib/providers/tool-schema";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
@@ -68,6 +69,7 @@ import { LoopGuard, routeTask } from "@/lib/agent-efficiency";
 import { buildMcpContext, getMcpBridgeEnv, getMcpServers } from "@/lib/mcp";
 import { runtimeModeForChat } from "@/lib/runtime-mode";
 import { mcpBridgeHttpTools, mcpBridgeTools } from "@/lib/mcp-bridge";
+import { DEVICE_TOOL_DESCRIPTIONS } from "@/lib/mcp-core/device-routing.mjs";
 import {
   METIS_SHARED_AGENT_CONTROL,
   toolContractPrompt,
@@ -229,7 +231,7 @@ export function providerRemoteTools(context: ProviderContext): ToolSet {
     } as never) as ToolSet[string];
   const tools: ToolSet = {
     list_remote_clients: remoteTool(
-      "List all connected remote clients and their status.",
+      DEVICE_TOOL_DESCRIPTIONS.list_remote_clients,
       () => call("list_remote_clients"),
     ),
     read_file: remoteTool("Read a UTF-8 file from a remote client.", (args) =>
@@ -238,7 +240,7 @@ export function providerRemoteTools(context: ProviderContext): ToolSet {
     list_directory: remoteTool("List a directory on a remote client.", (args) =>
       call("list_directory", args),
     ),
-    execute_command: remoteTool("Run a command on a remote client.", (args) =>
+    execute_command: remoteTool(DEVICE_TOOL_DESCRIPTIONS.execute_command, (args) =>
       call("execute_command", args),
     ),
   };
@@ -528,6 +530,7 @@ export function providerCurrentTurnPrompt(context: ProviderContext): string {
     reference.content ? `  Context:\n${reference.content}` : "",
   ].filter(Boolean).join("\n")).join("\n");
   return [
+    recentVoiceContext(context.chat.messages, job.messageId),
     providerTaskMessage(job),
     references ? `Current-turn references:\n${references}` : "",
     job.referenceText ? `Current-turn referenced context:\n${job.referenceText}` : "",
