@@ -51,7 +51,6 @@ import {
 import { persistToolsForMessage } from "@/lib/tool-persistence";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { compress } from "@/lib/compression";
-import { recoveryTranscript } from "@/lib/providers/recovery-transcript";
 import { stripRawToolMarkup } from "@/lib/providers/tool-schema";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
@@ -229,7 +228,7 @@ export function providerRemoteTools(context: ProviderContext): ToolSet {
     } as never) as ToolSet[string];
   const tools: ToolSet = {
     list_remote_clients: remoteTool(
-      "List all connected remote clients and their status.",
+      "List this account's remote devices, including stable IDs, OS, hostname, capabilities, and live status. Before acting on a device, call this tool, match the user's description to the returned hostname/OS, and use that exact client ID as target=client:<id>. If the match is ambiguous or offline, ask the user or report that it is unavailable; never guess a device.",
       () => call("list_remote_clients"),
     ),
     read_file: remoteTool("Read a UTF-8 file from a remote client.", (args) =>
@@ -447,7 +446,6 @@ export function modelMessages(
   contextWindow?: number,
   contextMode: ContextMode = "normal",
   onCompaction?: (event: CompactionEvent) => void,
-  reservedTokens = 0,
 ): ModelMessage[] {
   const messages = chatToModelMessages(chat);
   if (!messages.some((message) => message.role === "user") && job.message?.trim()) {
@@ -459,7 +457,6 @@ export function modelMessages(
     contextMode,
     onCompaction,
     lastMeasuredInputTokens(chat),
-    reservedTokens,
   );
 }
 
@@ -476,14 +473,11 @@ export function estimateProviderInputTokens(
     { id: modelId, providerId: job.modelId ? job.modelId.split(":")[0] : "" },
     effectiveModelParams(chat, job),
   );
-  const instructions = providerPrompt(job);
   const messages = modelMessages(
     chat,
     job,
     contextWindow,
     contextModeOf(effectiveModelParams(chat, job)),
-    undefined,
-    estimateContextTokens(instructions),
   );
   // Includes the provider/system instructions plus the exact compacted chat
   // payload. Historical tool inputs/results are represented in modelMessages
@@ -491,7 +485,7 @@ export function estimateProviderInputTokens(
   return Math.max(
     1,
     estimateContextTokens({
-      instructions,
+      instructions: providerPrompt(job),
       messages,
     }),
   );
@@ -536,19 +530,19 @@ export function providerCurrentTurnPrompt(context: ProviderContext): string {
 }
 
 export function nativeRecoveryPrompt(context: ProviderContext, maxChars = 120_000): string {
-  compactChatHistoryForPrompt(context.chat, {
+  const compacted = compactChatHistoryForPrompt(context.chat, {
     excludeMessageId: context.job.messageId,
     contextWindow: resolvedContextWindow(context),
     contextMode: contextModeOf(effectiveModelParams(context.chat, context.job)),
     onCompaction: context.onCompaction,
     maxChars,
   });
-  const history = recoveryTranscript(context.chat, context.job.messageId, maxChars);
-  if (!history) return providerCurrentTurnPrompt(context);
+  if (!compacted.text.trim()) return providerCurrentTurnPrompt(context);
+  const bounded = compacted.text.length > maxChars ? compacted.text.slice(-maxChars) : compacted.text;
   return [
     providerCurrentTurnPrompt(context),
     `Recovery bootstrap ${COMPACTION_MARKER}: the native provider session was unavailable. This is a one-time bounded checkpoint from durable Metis history. Preserve task state, decisions, changed files, tests/errors, and TODOs; do not replay or summarize it back to the user.`,
-    history,
+    bounded,
   ].join("\n\n");
 }
 
@@ -560,7 +554,6 @@ export function providerConversationPrompt(context: ProviderContext): string {
     contextWindow,
     contextModeOf(effectiveModelParams(context.chat, context.job)),
     context.onCompaction,
-    estimateContextTokens(providerPrompt(context.job)),
   );
   const history = messages
     .map((message) => `${message.role}: ${modelMessageText(message)}`)
@@ -632,51 +625,48 @@ export function compactIfNeeded(
   contextMode: ContextMode = "normal",
   onCompaction?: (event: CompactionEvent) => void,
   measuredTokens?: number,
-  reservedTokens = 0,
 ): ModelMessage[] {
-  // System messages are authoritative input, never part of the recap or tail.
-  const systemMessages = messages.filter((message) => message.role === "system");
-  const conversation = messages.filter((message) => message.role !== "system");
-  if (!contextWindow || contextWindow <= 0 || conversation.length < 2)
+  if (!contextWindow || contextWindow <= 0 || messages.length < 2)
     return messages;
-  const systemTokens = systemMessages.reduce(
+  const total = messages.reduce(
     (sum, message) => sum + estimateContextTokens(message),
     0,
   );
-  const protectedTokens = systemTokens + Math.max(0, reservedTokens);
-  const total = conversation.reduce(
-    (sum, message) => sum + estimateContextTokens(message),
-    0,
-  );
-  const targetTokens = effectiveContextBudget(contextWindow, contextMode);
-  const budget = effectiveContextBudget(contextWindow, contextMode, protectedTokens);
+  const budget = effectiveContextBudget(contextWindow, contextMode);
   const measured =
     typeof measuredTokens === "number" && Number.isFinite(measuredTokens) && measuredTokens > 0
       ? measuredTokens
       : undefined;
-  const beforeTokens = Math.max(total + protectedTokens, measured ?? 0);
+  const beforeTokens = Math.max(total, measured ?? 0);
   // Provider usage includes prompt material that is not fully represented by
   // the locally serialized transcript. When that measured value triggers the
   // compaction, translate the provider budget onto the local estimate scale;
   // otherwise every local message can appear to fit and nothing gets removed.
-  const measuredConversation = measured ? Math.max(0, measured - protectedTokens) : undefined;
-  const localBudget = measuredConversation && measuredConversation > total
-    ? Math.max(1, Math.floor(budget * (total / measuredConversation)))
+  const localBudget = measured && measured > total
+    ? Math.max(1, Math.floor(budget * (total / measured)))
     : budget;
-  const estimatePressure = (total + protectedTokens) / contextWindow >= CONTEXT_COMPACT_RATIO;
+  const estimatePressure = total / contextWindow >= CONTEXT_COMPACT_RATIO;
   const measuredPressure = Boolean(measured && measured / contextWindow >= CONTEXT_COMPACT_RATIO);
   if (!estimatePressure && !measuredPressure) return messages;
   // One compact per pressure wave. A recap is already canonical; compacting it
   // again would drop the tail and break idempotency on the next runner step.
   if (
-    conversation.some((message) =>
+    messages.some((message) =>
       modelMessageText(message).includes(COMPACTION_MARKER),
     )
   ) {
     return messages;
   }
 
-  const source = conversation;
+  // A prior recap is already canonical. Re-summarizing it would make repeated
+  // compaction non-idempotent and can slowly erase the original task.
+  const head = messages.filter(
+    (message) => !modelMessageText(message).includes(COMPACTION_MARKER),
+  );
+  const source =
+    head.length === messages.length
+      ? messages
+      : messages.slice(-Math.max(2, Math.floor(messages.length * 0.45)));
   const protectedTail: ModelMessage[] = [];
   let tailTokens = 0;
   let index = source.length;
@@ -697,7 +687,7 @@ export function compactIfNeeded(
     systemTriggered: true,
     status: "started",
     beforeTokens,
-    targetTokens,
+    targetTokens: budget,
     removedMessages: oldMessages.length,
   });
   const recap = oldMessages
@@ -776,14 +766,14 @@ export function compactIfNeeded(
     systemTriggered: true,
     status: "completed",
     beforeTokens,
-    targetTokens,
-    afterTokens: protectedTokens + result.reduce(
+    targetTokens: budget,
+    afterTokens: result.reduce(
       (sum, message) => sum + estimateContextTokens(message),
       0,
     ),
     removedMessages: oldMessages.length,
   });
-  return [...systemMessages, ...result];
+  return result;
 }
 
 export function compactProviderMessages(
@@ -792,9 +782,8 @@ export function compactProviderMessages(
   contextMode: ContextMode = "normal",
   onCompaction?: (event: CompactionEvent) => void,
   measuredTokens?: number,
-  reservedTokens = 0,
 ): ModelMessage[] {
-  return compactIfNeeded(messages, contextWindow, contextMode, onCompaction, measuredTokens, reservedTokens);
+  return compactIfNeeded(messages, contextWindow, contextMode, onCompaction, measuredTokens);
 }
 
 type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "persistent";
@@ -1003,7 +992,6 @@ export async function consumeAiStream(
     remainingSteps: number,
   ) => ReturnType<typeof streamText>,
   initialSteps = DEFAULT_PROVIDER_STEPS,
-  reservedTokens = 0,
 ) {
   let textProduced = false;
   let toolsProduced = false;
@@ -1381,7 +1369,6 @@ export async function consumeAiStream(
       contextModeOf(effectiveModelParams(context.chat, context.job)),
       undefined,
       lastMeasuredInputTokens(context.chat),
-      reservedTokens,
     );
     current = resumeEmbedded(compactedConversation, remainingSteps);
   }
@@ -1396,10 +1383,12 @@ export async function consumeAiStream(
   return usage;
 }
 
-export function providerMcpContext(context: ProviderContext) {
+export function providerMcpContext(
+  context: ProviderContext,
+  options: { runtimeApprovalGate?: boolean } = {},
+) {
   const mode = modeById(
     context.job.modeId || context.chat.sessionState?.modeId,
-    getGlobalModelSettings(context.job.userId).customModes || [],
   );
   return buildMcpContext({
     chatId: context.job.chatId,
@@ -1408,7 +1397,10 @@ export function providerMcpContext(context: ProviderContext) {
     incognito: Boolean(context.job.incognito),
     automation: Boolean(context.job.automationId),
     modeId: mode.id,
-    runtimeMode: runtimeModeForChat(context.chat),
+    runtimeMode:
+      options.runtimeApprovalGate === false
+        ? "full-access"
+        : runtimeModeForChat(context.chat),
     modePolicy: {
       allowedCategories: mode.allowedCategories,
       toolOverrides: mode.toolOverrides || {},
