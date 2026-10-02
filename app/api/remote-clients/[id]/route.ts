@@ -46,8 +46,8 @@ export async function PATCH(req: Request, { params }: Params) {
       }
     : undefined;
   const current = getRemoteClient(id, ownerId);
-  if (policy?.permissions?.includes("computer_use") && (!current?.capabilities.includes("desktop_gui") || !String(current.os || "").toLowerCase().startsWith("windows"))) {
-    return Response.json({ error: "Computer Use requires a Windows device with an interactive display" }, { status: 400 });
+  if (policy?.permissions?.includes("computer_use") && !current?.capabilities.includes("desktop_gui")) {
+    return Response.json({ error: "Computer Use requires a device with an interactive display" }, { status: 400 });
   }
   const client = updateRemoteClient(id, ownerId, {
     ...(typeof body.name === "string" ? { name: body.name } : {}),

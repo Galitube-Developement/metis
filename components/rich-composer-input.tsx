@@ -72,7 +72,28 @@ function formatText(element: HTMLDivElement, mentionLabels: string[]) {
   }
 
   if (lastIndex < text.length) fragment.append(document.createTextNode(text.slice(lastIndex)));
+  if (!fragment.childNodes.length) fragment.append(document.createElement("br"));
   element.replaceChildren(fragment);
+}
+
+function markComposerEmpty(element: HTMLDivElement, empty: boolean) {
+  if (empty) element.setAttribute("data-empty", "");
+  else element.removeAttribute("data-empty");
+}
+
+function writeComposerDom(element: HTMLDivElement, value: string, mentionLabels: string[]) {
+  if (!value) {
+    element.replaceChildren(document.createElement("br"));
+    markComposerEmpty(element, true);
+    return;
+  }
+  markComposerEmpty(element, false);
+  element.textContent = value;
+  formatText(element, mentionLabels);
+}
+
+function placeComposerCaret(element: HTMLDivElement, offset = 0) {
+  restoreSelection(element, { start: offset, end: offset });
 }
 
 function caretOffset(element: HTMLDivElement) {
@@ -199,12 +220,13 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
       if (syncNonce !== undefined) lastSyncNonceRef.current = syncNonce;
       if (!shouldSyncComposerDom(current, value, document.activeElement === element, force)) return;
       if (selectionRef.current?.text !== value) selectionRef.current = null;
-      element.textContent = value;
-      if (value) formatText(element, mentionLabels);
+      writeComposerDom(element, value, mentionLabels);
       fitComposerHeight(element);
-      if (force) {
-        restoreSelection(element, { start: value.length, end: value.length });
-        element.scrollTop = element.scrollHeight;
+      // Empty contenteditable loses its caret after a programmatic clear (Enter-to-send).
+      // Restore it on every clear, not only forced voice/slash writes.
+      if (force || !value) {
+        placeComposerCaret(element, value.length);
+        if (force) element.scrollTop = element.scrollHeight;
       }
     }, [mentionLabels, syncNonce, value]);
 
@@ -217,6 +239,7 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
         aria-multiline="true"
         aria-label={ariaLabel}
         data-placeholder={placeholder}
+        {...(!value ? { "data-empty": "" } : {})}
         className={cn(
           "rich-composer-input min-h-9 max-h-[180px] flex-1 overflow-y-auto whitespace-pre-wrap rounded-none px-3 pt-1.5 pb-0.5 text-[15px] leading-6 outline-none",
           "focus-visible:ring-0",
@@ -227,6 +250,7 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
           const element = event.currentTarget;
           const cursor = caretOffset(element);
           const text = composerPlainText(element);
+          markComposerEmpty(element, !text);
           const offsets = selectionOffsets(element) || { start: cursor, end: cursor };
           selectionRef.current = { ...offsets, text };
           fitComposerHeight(element);
@@ -238,18 +262,38 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
           onFocus?.(event);
           const saved = selectionRef.current;
           const element = event.currentTarget;
-          if (!saved || saved.text !== composerPlainText(element)) return;
-          window.requestAnimationFrame(() => {
-            if (document.activeElement === element && saved.text === composerPlainText(element)) {
-              restoreSelection(element, saved);
-            }
-          });
+          const live = composerPlainText(element);
+          if (saved && saved.text === live) {
+            window.requestAnimationFrame(() => {
+              if (document.activeElement === element && saved.text === composerPlainText(element)) {
+                restoreSelection(element, saved);
+              }
+            });
+            return;
+          }
+          if (!live) {
+            window.requestAnimationFrame(() => {
+              if (document.activeElement === element && !composerPlainText(element)) {
+                placeComposerCaret(element, 0);
+              }
+            });
+          }
         }}
         onBlur={(event) => {
           const element = event.currentTarget;
           captureSelection();
           formatText(element, mentionLabels);
+          markComposerEmpty(element, !composerPlainText(element));
           onBlur?.(event);
+        }}
+        onMouseDown={(event) => {
+          const element = event.currentTarget;
+          if (composerPlainText(element)) return;
+          window.requestAnimationFrame(() => {
+            if (document.activeElement === element && !composerPlainText(element)) {
+              placeComposerCaret(element, 0);
+            }
+          });
         }}
         onClick={(event) => {
           const target = event.target as HTMLElement;

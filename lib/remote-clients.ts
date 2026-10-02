@@ -374,7 +374,7 @@ export function authorizeRemoteAction(client: RemoteClient, action: RemoteAction
   if (action === "computer_use" && !client.policy.permissions.includes("computer_use")) {
     return { allowed: false, requiresApproval: false, reason: "Computer Use is switched off for this device" };
   }
-  if (action === "computer_use" && (!client.capabilities.includes("desktop_gui") || !String(client.os || "").toLowerCase().startsWith("windows"))) {
+  if (action === "computer_use" && !client.capabilities.includes("desktop_gui")) {
     return { allowed: false, requiresApproval: false, reason: "This device has no interactive GUI" };
   }
   if (client.policy.mode !== "full_access" && !client.policy.permissions.includes(permission)) {

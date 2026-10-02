@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -119,7 +119,7 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       };
     }
     if (action === "computer_use") {
-      if (!desktopGuiAvailable()) throw new Error("Computer Use requires an interactive Windows display");
+      if (!desktopGuiAvailable()) throw new Error("Computer Use requires an interactive desktop display");
       const operation = String(params.operation || "");
       const controller = new AbortController();
       computerUseControllers.add(controller);
@@ -313,7 +313,7 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
   };
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const index = args.indexOf("--config");
   try {

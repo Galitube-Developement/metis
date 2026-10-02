@@ -204,6 +204,15 @@ type RemoteClient = {
   capabilities?: string[];
 };
 
+type DesktopPermissionStatus = {
+  available: boolean;
+  accessibility?: boolean;
+  screenRecording?: boolean;
+  monitors?: number;
+  backend?: string;
+  reason?: string;
+};
+
 type ArchivedChat = {
   id: string;
   title: string;
@@ -515,17 +524,22 @@ const REMOTE_PERMISSION_OPTIONS: Array<{ value: RemotePermission; label: string 
 function RemotePermissionsEditor({
   client,
   onSave,
+  desktopStatus,
+  desktopBusy,
+  onCheckDesktop,
 }: {
   client: RemoteClient;
   onSave: (client: RemoteClient, policy: RemoteClient["policy"]) => Promise<void>;
+  desktopStatus?: DesktopPermissionStatus;
+  desktopBusy?: boolean;
+  onCheckDesktop?: (prompt?: boolean) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [permissions, setPermissions] = useState<RemotePermission[]>(client.policy.permissions);
   const [fullAccess, setFullAccess] = useState(client.policy.mode === "full_access");
   const [allowlistDraft, setAllowlistDraft] = useState(client.policy.allowlist.join("\n"));
   const [saving, setSaving] = useState(false);
-  const supportsComputerUse = client.capabilities?.includes("desktop_gui")
-    && String(client.os || "").toLowerCase().startsWith("windows");
+  const supportsComputerUse = client.capabilities?.includes("desktop_gui");
   const fullAccessPermissions: RemotePermission[] = [
     ...REMOTE_PERMISSION_OPTIONS.map(({ value }) => value),
     ...(supportsComputerUse ? ["computer_use" as const] : []),
@@ -606,8 +620,31 @@ function RemotePermissionsEditor({
               : current.filter((item) => item !== "computer_use"))}
             className="size-4 accent-primary"
           />
-          <span><span className="font-medium">Computer Use</span><span className="block text-muted-foreground">Screen, mouse, and keyboard. Managed here for Windows devices with an interactive display.</span></span>
+          <span><span className="font-medium">Computer Use</span><span className="block text-muted-foreground">Screen, mouse, and keyboard. Managed here for Windows, macOS and Linux X11 devices with an interactive display.</span></span>
         </label>
+        {supportsComputerUse ? (
+          <div className="space-y-2 rounded-md border border-border/70 p-2">
+            <p className="text-xs font-medium">OS permission check</p>
+            {desktopStatus ? (
+              <ul className="space-y-1 text-xs">
+                {typeof desktopStatus.screenRecording === "boolean" ? <li>Screen Recording: {desktopStatus.screenRecording ? "on" : "off"}</li> : null}
+                {typeof desktopStatus.accessibility === "boolean" ? <li>Accessibility: {desktopStatus.accessibility ? "on" : "off"}</li> : null}
+                {typeof desktopStatus.monitors === "number" ? <li>Displays: {desktopStatus.monitors}</li> : null}
+                {desktopStatus.backend ? <li>Backend: {desktopStatus.backend}</li> : null}
+                <li>Desktop control: {desktopStatus.available ? "ready" : "blocked"}</li>
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">{client.status === "online" ? "Checking this device…" : "Device must be online to check OS permissions."}</p>
+            )}
+            {desktopStatus?.reason ? <p className="text-xs text-muted-foreground">{desktopStatus.reason}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={desktopBusy || client.status !== "online"} onClick={() => void onCheckDesktop?.(false)}>Check now</Button>
+              {String(client.os || "").toLowerCase().includes("mac") ? (
+                <Button type="button" size="sm" variant="outline" disabled={desktopBusy || client.status !== "online"} onClick={() => void onCheckDesktop?.(true)}>Grant on Mac</Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {client.permissionMode === "user" ? <p className="text-xs text-muted-foreground">Interactive terminal requires admin pairing.</p> : null}
         <div className={cn("space-y-1", fullAccess && "opacity-50")}>
           <label htmlFor={`allowlist-${client.id}`} className="text-xs font-medium">Device command allowlist</label>
@@ -721,6 +758,9 @@ export function SettingsPanel({
   const [mcpDraft, setMcpDraft] = useState<McpDraft>(emptyMcpDraft);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [remoteClients, setRemoteClients] = useState<RemoteClient[]>([]);
+  const [desktopStatusById, setDesktopStatusById] = useState<Record<string, DesktopPermissionStatus>>({});
+  const [desktopStatusBusyId, setDesktopStatusBusyId] = useState("");
+  const desktopStatusChecked = useRef<Set<string>>(new Set());
   const [remoteGlobalAllowlistDraft, setRemoteGlobalAllowlistDraft] = useState("");
   const [remoteGlobalAllowlistBusy, setRemoteGlobalAllowlistBusy] = useState(false);
   const [remoteGlobalAllowlistLoaded, setRemoteGlobalAllowlistLoaded] = useState(false);
@@ -728,7 +768,7 @@ export function SettingsPanel({
   const [remoteCommand, setRemoteCommand] = useState("");
   const [remotePairToken, setRemotePairToken] = useState("");
   const [remoteServerUrl, setRemoteServerUrl] = useState("");
-  const [remoteInstallerUrl, setRemoteInstallerUrl] = useState("");
+  const [remoteInstallerUrls, setRemoteInstallerUrls] = useState<Array<{ label: string; url: string }>>([]);
   const [remoteCommands, setRemoteCommands] = useState<{ linux: string; windows: string; macos: string } | null>(null);
   const [remotePlatform, setRemotePlatform] = useState<"linux" | "windows" | "macos">("linux");
   const [remotePermissionMode, setRemotePermissionMode] = useState<"user" | "admin">("user");
@@ -784,6 +824,28 @@ export function SettingsPanel({
       setRemoteClients(data.clients || []);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load remote clients");
+    }
+  }, []);
+
+  const checkDesktopPermissions = useCallback(async (client: RemoteClient, prompt = false) => {
+    if (client.status !== "online" || !client.capabilities?.includes("desktop_gui")) return;
+    setDesktopStatusBusyId(client.id);
+    try {
+      const response = await fetch(`/api/remote-clients/${encodeURIComponent(client.id)}/desktop-permissions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = (await response.json()) as { status?: DesktopPermissionStatus; error?: string };
+      if (!response.ok || !data.status) throw new Error(data.error || "Desktop permission check failed");
+      setDesktopStatusById((current) => ({ ...current, [client.id]: data.status as DesktopPermissionStatus }));
+      desktopStatusChecked.current.add(client.id);
+      if (prompt) toast.success(data.status.available ? `Desktop control is ready on ${client.name}` : `Permission prompt sent to ${client.name}`);
+    } catch (error) {
+      desktopStatusChecked.current.delete(client.id);
+      toast.error(error instanceof Error ? error.message : "Desktop permission check failed");
+    } finally {
+      setDesktopStatusBusyId("");
     }
   }, []);
 
@@ -890,19 +952,19 @@ export function SettingsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ os: platform, permissionMode: remotePermissionMode }),
       });
-      const data = (await response.json()) as { command?: string; commands?: { linux?: string; windows?: string; macos?: string }; token?: string; serverUrl?: string; installerUrl?: string; error?: string };
+      const data = (await response.json()) as { command?: string; commands?: { linux?: string; windows?: string; macos?: string }; token?: string; serverUrl?: string; installerUrl?: string; installerUrls?: Array<{ label: string; url: string }>; error?: string };
       if (!response.ok || !data.command) throw new Error(data.error || "Failed to create enrollment command");
       setRemoteCommand(data.command);
       setRemotePairToken(data.token || "");
       setRemoteServerUrl(data.serverUrl || "");
-      setRemoteInstallerUrl(data.installerUrl || "");
+      setRemoteInstallerUrls(data.installerUrls || (platform === "windows" && data.installerUrl ? [{ label: "Windows installer", url: data.installerUrl }] : []));
       setRemoteCommands({
         linux: data.commands?.linux || data.command,
         windows: data.commands?.windows || "",
         macos: data.commands?.macos || "",
       });
       setRemotePairStep("install");
-      if (platform !== "windows") {
+      if (platform !== "windows" && !data.installerUrls?.length) {
         await navigator.clipboard?.writeText(data.command);
         toast.success("Enrollment command copied");
       }
@@ -977,6 +1039,14 @@ export function SettingsPanel({
     const timer = window.setInterval(() => void loadRemoteClients(), 2_000);
     return () => window.clearInterval(timer);
   }, [loadRemoteClients, loadGlobalRemoteAllowlist, open, settingsTab]);
+  useEffect(() => {
+    if (!open || settingsTab !== "devices") return;
+    for (const client of remoteClients) {
+      if (client.status !== "online" || !client.capabilities?.includes("desktop_gui")) continue;
+      if (desktopStatusChecked.current.has(client.id) || desktopStatusBusyId === client.id) continue;
+      void checkDesktopPermissions(client);
+    }
+  }, [checkDesktopPermissions, desktopStatusBusyId, open, remoteClients, settingsTab]);
   useEffect(() => {
     if (remotePairStep !== "install") return;
     let active = true;
@@ -2887,16 +2957,18 @@ export function SettingsPanel({
                             </Badge>
                             <Badge variant="outline">{client.policy.mode === "full_access" ? "Full Access" : `${client.policy.permissions.length} permissions enabled`}</Badge>
                             {client.capabilities?.includes("desktop_gui") ? <Badge variant="outline">Computer Use {client.policy.permissions.includes("computer_use") ? "on" : "off"}</Badge> : null}
+                            {desktopStatusById[client.id] ? <Badge variant={desktopStatusById[client.id].available ? "outline" : "secondary"}>{desktopStatusById[client.id].available ? "Desktop ready" : "Needs OS permissions"}</Badge> : null}
                           </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
                           <span className={`size-2 rounded-full ${client.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} title={client.status} />
-                          <RemotePermissionsEditor client={client} onSave={updateRemotePolicy} />
+                          <RemotePermissionsEditor client={client} onSave={updateRemotePolicy} desktopStatus={desktopStatusById[client.id]} desktopBusy={desktopStatusBusyId === client.id} onCheckDesktop={(prompt) => checkDesktopPermissions(client, prompt)} />
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" className="max-md:min-h-11 max-md:min-w-11" aria-label={`Manage ${client.name}`}><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => void testRemoteConnection(client)}>Test connection</DropdownMenuItem>
+                              {client.capabilities?.includes("desktop_gui") ? <DropdownMenuItem onClick={() => void checkDesktopPermissions(client)}>Check desktop permissions</DropdownMenuItem> : null}
                               <DropdownMenuItem className="text-destructive" onClick={() => setRemoteClientDeleteTarget(client)}>Remove client</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -3092,13 +3164,25 @@ export function SettingsPanel({
             </div>
           ) : remotePairStep === "install" ? (
             <div className="min-w-0 space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-              {remotePlatform === "windows" ? (
+              {remoteInstallerUrls.length > 0 ? (
                 <>
                   <div>
-                    <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the Windows app</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Install the app, open it, then enter this server URL and pairing code. The code expires after 15 minutes. {remotePermissionMode === "admin" ? "For admin access, start the app as administrator and confirm UAC." : "User access runs without administrator rights."}</p>
+                    <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the {remotePlatform === "macos" ? "macOS" : remotePlatform === "linux" ? "Linux" : "Windows"} app</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Install the app, open it, then enter this server URL and pairing code. The code expires after 15 minutes. {remotePlatform === "windows" && remotePermissionMode === "admin" ? "For admin access, start the app as administrator and confirm UAC." : remotePlatform === "macos" ? "Drag the app into Applications. Desktop control needs Screen Recording and Accessibility permissions." : remotePlatform === "linux" ? "Make the AppImage executable and open it. Desktop control needs an X11 session, xdotool, wmctrl and ImageMagick." : "User access runs without administrator rights."}</p>
                   </div>
-                  <a href={remoteInstallerUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90">Download Windows installer</a>
+                  <div className="flex flex-wrap gap-2">
+                    {remoteInstallerUrls.map((installer) => <a key={installer.url} href={installer.url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2">Download {installer.label}</a>)}
+                  </div>
+                  {remotePlatform === "macos" ? (
+                    <div className="space-y-2 rounded-lg border border-border/70 bg-background p-3">
+                      <p className="text-sm font-medium">Is it saying “damaged”?</p>
+                      <p className="text-xs text-muted-foreground">macOS marks unsigned browser downloads as damaged. The file is fine. Run this in Terminal, then open the app:</p>
+                      <div className="flex gap-2">
+                        <Input readOnly value={'xattr -cr "/Applications/Metis AI Remote Client.app"'} aria-label="Fix damaged macOS app command" className="font-mono text-xs" />
+                        <Button type="button" variant="outline" onClick={() => void navigator.clipboard.writeText('xattr -cr "/Applications/Metis AI Remote Client.app"')}>Copy</Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="space-y-2">
                     <p className="text-xs font-medium">Server URL</p>
                     <div className="flex gap-2"><Input readOnly value={remoteServerUrl} aria-label="Server URL" /><Button type="button" variant="outline" onClick={() => void navigator.clipboard.writeText(remoteServerUrl)}>Copy</Button></div>
@@ -3112,7 +3196,7 @@ export function SettingsPanel({
                 <>
                   <div>
                     <p className="flex items-center gap-2 text-sm font-medium"><Monitor className="size-4 text-primary" /> Install the client</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Run this command on the device you want to connect.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Run this command on the device you want to connect. The installer includes Node.js and verifies the connection.</p>
                   </div>
                   <div className="w-full min-w-0 max-w-full overflow-hidden">
                     <Textarea readOnly value={remoteCommands?.[remotePlatform] || remoteCommand} className="block min-h-32 w-full min-w-0 max-w-full resize-y overflow-auto [field-sizing:fixed] bg-background font-mono text-xs" />

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   legacyWindowsUpdate,
+  remoteDesktopDownloads,
   WINDOWS_INSTALLER,
   WINDOWS_INSTALLER_URL,
   WINDOWS_RELEASE_BASE,
@@ -39,4 +40,36 @@ test("legacy proxy rejects unknown files and error documents", async () => {
   assert.equal(calls, 0);
   assert.equal(await legacyWindowsUpdate(WINDOWS_INSTALLER, fetcher), null);
   assert.equal(calls, 1);
+});
+
+test("macOS and Linux downloads appear only when the latest GitHub release has the files", async () => {
+  const fetcher = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("api.github.com")) {
+      return Response.json({
+        tag_name: "v1.4.1",
+        assets: [{ name: "Metis-AI-Remote-Client-arm64.dmg" }, { name: "Metis-AI-Remote-Client-x86_64.AppImage" }],
+      });
+    }
+    return new Response("missing", { status: 404 });
+  }) as typeof fetch;
+  assert.deepEqual(await remoteDesktopDownloads("macos", fetcher), [
+    { label: "macOS · Apple Silicon", url: "https://github.com/f1shyondrugs/metis-remote-client/releases/download/v1.4.1/Metis-AI-Remote-Client-arm64.dmg" },
+  ]);
+  assert.deepEqual(await remoteDesktopDownloads("linux", fetcher), [
+    { label: "Linux · Intel / AMD", url: "https://github.com/f1shyondrugs/metis-remote-client/releases/download/v1.4.1/Metis-AI-Remote-Client-x86_64.AppImage" },
+  ]);
+});
+
+test("unix downloads fall back to HEAD checks when the GitHub API is unavailable", async () => {
+  const fetcher = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("api.github.com")) return new Response("rate limited", { status: 403 });
+    if (url.endsWith("Metis-AI-Remote-Client-arm64.dmg")) return new Response(null, { status: 200 });
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  assert.deepEqual(await remoteDesktopDownloads("macos", fetcher), [
+    { label: "macOS · Apple Silicon", url: WINDOWS_RELEASE_BASE + "Metis-AI-Remote-Client-arm64.dmg" },
+  ]);
+  assert.deepEqual(await remoteDesktopDownloads("linux", fetcher), []);
 });

@@ -38,6 +38,17 @@ test("settings subsection links match the heading order in each tab", () => {
   }
 });
 
+test("Devices install step can show macOS and Linux desktop downloads", () => {
+  assert.match(settingsSource, /setRemoteInstallerUrls\(data\.installerUrls/);
+  assert.match(settingsSource, /Download \{installer\.label\}/);
+  assert.match(settingsSource, /Drag the app into Applications/);
+  assert.match(settingsSource, /Is it saying .damaged/);
+  assert.match(settingsSource, /xattr -cr/);
+  assert.match(settingsSource, /desktop-permissions/);
+  assert.match(settingsSource, /OS permission check/);
+  assert.match(settingsSource, /Grant on Mac/);
+});
+
 test("General settings end with external Website and GitHub links", () => {
   const general = settingsSource.slice(
     settingsSource.indexOf('<TabsContent value="general"'),

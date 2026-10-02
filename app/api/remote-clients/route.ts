@@ -5,7 +5,7 @@ import {
   listRemoteAudit,
   listRemoteClients,
 } from "@/lib/remote-clients";
-import { WINDOWS_INSTALLER_URL } from "@/lib/remote-client-release";
+import { WINDOWS_INSTALLER_URL, remoteDesktopDownloads } from "@/lib/remote-client-release";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,16 +53,19 @@ export async function POST(req: Request) {
   const requestBody = (await req.json().catch(() => ({}))) as { os?: unknown; permissionMode?: unknown };
   const selectedOs = requestBody.os === "windows" || requestBody.os === "macos" ? requestBody.os : "linux";
   const permissionMode = requestBody.permissionMode === "admin" ? "admin" : "user";
-  const token = createEnrollmentToken(ownerId, undefined, permissionMode);
   let publicUrl: string;
   try {
     publicUrl = publicOrigin(req);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Public server URL is not configured" }, { status: 400 });
   }
-  const command = `curl -fsSL ${publicUrl}/install/remote-client.sh | bash -s -- --server ${publicUrl} --enrollment-token ${token.token} --permission-mode ${permissionMode}`;
-  const windowsCommand = `& ([scriptblock]::Create((irm ${publicUrl}/install/remote-client.ps1))) -Server '${publicUrl}' -EnrollmentToken '${token.token}' -PermissionMode '${permissionMode}'`;
-  const macosCommand = `curl -fsSL ${publicUrl}/install/remote-client-macos.sh | bash -s -- --server ${publicUrl} --enrollment-token ${token.token} --permission-mode ${permissionMode}`;
+  const token = createEnrollmentToken(ownerId, undefined, permissionMode);
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const unixCommand = `(installer="$(mktemp)" && curl -fsSL ${quote(publicUrl + "/install/remote-client.sh")} -o "$installer" && bash "$installer" --server ${quote(publicUrl)} --enrollment-token ${quote(token.token)} --permission-mode ${permissionMode}; result=$?; rm -f -- "$installer"; exit "$result")`;
+  const command = unixCommand;
+  const windowsCommand = `& ([scriptblock]::Create((irm '${publicUrl.replaceAll("'", "''")}/install/remote-client.ps1'))) -Server '${publicUrl.replaceAll("'", "''")}' -EnrollmentToken '${token.token}' -PermissionMode '${permissionMode}'`;
+  const macosCommand = unixCommand;
+  const installerUrls = await remoteDesktopDownloads(selectedOs);
   const selectedCommand = selectedOs === "windows" ? windowsCommand : selectedOs === "macos" ? macosCommand : command;
   return Response.json({
     ...token,
@@ -71,6 +74,7 @@ export async function POST(req: Request) {
     permissionMode,
     serverUrl: publicUrl,
     installerUrl: WINDOWS_INSTALLER_URL,
+    installerUrls,
   }, { status: 201 });
 }
 

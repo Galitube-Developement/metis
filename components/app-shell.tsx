@@ -6835,6 +6835,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return next;
     });
     setInputGuarded("", "queued");
+    setComposerSyncNonce((current) => current + 1);
     setReferenceText("");
     setReferences([]);
     clearPendingFiles();
@@ -7312,6 +7313,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (!isOverride) {
       setInputGuarded("", "submitted");
       draftInputRef.current = "";
+      setComposerSyncNonce((current) => current + 1);
       window.setTimeout(() => textareaRef.current?.focus(), 0);
       void fetch("/api/preferences", {
         method: "PATCH",

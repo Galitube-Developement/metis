@@ -4,12 +4,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 set -a
 # shellcheck disable=SC1091
 . "$ROOT/.env"
-# The deployment slot takes precedence over the installation environment.
-if [[ -f "$ROOT/.deploy.env" ]]; then
-  # shellcheck disable=SC1091
-  . "$ROOT/.deploy.env"
-fi
 set +a
-export PATH="${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+export PATH="${METIS_PNPM_HOME:+$METIS_PNPM_HOME:}${METIS_NODE_HOME:+$METIS_NODE_HOME/bin:}$ROOT/node_modules/.bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 cd "$ROOT"
 exec "${METIS_NODE_BIN:?METIS_NODE_BIN is missing from .env}" "$@"

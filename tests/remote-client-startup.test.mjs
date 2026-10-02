@@ -126,9 +126,19 @@ async function runInstaller(platform, mode, systemd = false) {
   const testHome = path.join(directory, "home");
   for (const file of [install, bin, testHome]) fs.mkdirSync(file);
   const executable = (name, lines) => fs.writeFileSync(path.join(bin, name), lines.join("\n") + "\n", { mode: 0o755 });
-  for (const name of ["bash", "mkdir", "chmod", "nohup", "grep", "awk", "tail", "id", "cat"]) {
+  for (const name of ["bash", "mkdir", "chmod", "nohup", "grep", "awk", "tail", "id", "cat", "mktemp", "mv", "tar", "gzip", "rm", "cksum", "sha256sum", "shasum", "readlink", "ln"]) {
     fs.symlinkSync(executablePath(name), path.join(bin, name));
   }
+  executable("uname", ["#!/bin/sh", "if [ \"$1\" = -s ]; then echo " + (platform === "macos" ? "Darwin" : "Linux") + "; else echo x86_64; fi"]);
+  executable("xcrun", ["#!/bin/sh", "exit 1"]);
+  const nodeArchiveName = "node-v22.99.0-" + (platform === "macos" ? "darwin" : "linux") + "-x64.tar.gz";
+  const nodeArchiveRoot = path.join(directory, nodeArchiveName.replace(".tar.gz", ""));
+  fs.mkdirSync(path.join(nodeArchiveRoot, "bin"), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(nodeArchiveRoot, "bin", "node"));
+  fs.symlinkSync(path.join(bin, "npm"), path.join(nodeArchiveRoot, "bin", "npm"));
+  execFileSync(executablePath("tar"), ["-czf", path.join(directory, nodeArchiveName), "-C", directory, path.basename(nodeArchiveRoot)]);
+  const { createHash } = await import("node:crypto");
+  fs.writeFileSync(path.join(directory, "SHASUMS256.txt"), createHash("sha256").update(fs.readFileSync(path.join(directory, nodeArchiveName))).digest("hex") + "  " + nodeArchiveName + "\n");
   fs.symlinkSync(process.execPath, path.join(bin, "node"));
   // Shorten the polling interval; retain all 15 attempts and real client I/O.
   executable("sleep", ["#!/bin/sh", "exec " + executablePath("sleep") + " 0.2"]);
@@ -146,8 +156,9 @@ async function runInstaller(platform, mode, systemd = false) {
     "const args = process.argv.slice(2);",
     "const output = args.indexOf('-o');",
     "if (output >= 0) {",
-    "  const file = args.find(value => value.startsWith('http')).endsWith('remote-client.mjs') ? 'remote-client.mjs' : 'remote-client-uninstall.sh';",
-    "  fs.copyFileSync(process.env.TEST_REPO_ROOT + '/public/install/' + file, args[output + 1]);",
+    "  const file = args.find(value => value.startsWith('http')).split('/').pop();",
+    "  const source = file === 'SHASUMS256.txt' || file.endsWith('.tar.gz') ? process.env.TEST_FIXTURE_DIR + '/' + file : process.env.TEST_REPO_ROOT + '/public/install/' + file;",
+    "  fs.copyFileSync(source, args[output + 1]);",
     "} else {",
     "  fetch(args[args.indexOf('POST') + 1], { method: 'POST' }).then(async response => {",
     "    if (!response.ok) process.exitCode = 1;",
@@ -160,7 +171,7 @@ async function runInstaller(platform, mode, systemd = false) {
     "const fs = require('node:fs');",
     "const { spawn } = require('node:child_process');",
     "const dir = process.env.TEST_INSTALL_DIR;",
-    "const command = process.argv[2];",
+    "const command = process.argv.slice(2).find(value => !value.startsWith('--'));",
     "const pidFile = dir + '/test-service.pid';",
     "function stop() {",
     "  if (fs.existsSync(pidFile)) {",
@@ -170,14 +181,15 @@ async function runInstaller(platform, mode, systemd = false) {
     "  if (process.env.TEST_INSTALL_MODE === 'race') fs.appendFileSync(dir + '/client.log', 'old-session authenticated new-client\\n');",
     "}",
     "function start() {",
-    "  const child = spawn(process.execPath, [dir + '/client.mjs', '--config', dir + '/config.json'], { detached: true, stdio: 'ignore', env: process.env });",
+    "  const child = spawn(process.execPath, [dir + '/current/client.mjs', '--config', dir + '/current/config.json'], { detached: true, stdio: 'ignore', env: process.env });",
     "  fs.writeFileSync(pidFile, String(child.pid));",
     "  fs.appendFileSync(dir + '/test-service-pids.jsonl', String(child.pid) + '\\n');",
     "  child.unref();",
     "}",
     "fs.appendFileSync(dir + '/service-calls.jsonl', JSON.stringify(process.argv.slice(2)) + '\\n');",
     "if (command === 'bootout' || command === 'stop') stop();",
-    "if (command === 'bootstrap' || command === 'start' || command === 'restart' || (command === 'enable' && process.argv.includes('--now'))) start();",
+    "if (command === 'restart') stop();",
+    "if (command === 'bootstrap' || command === 'start' || command === 'restart') start();",
   ];
   if (platform === "macos") executable("launchctl", serviceShim);
   if (systemd) {
@@ -197,7 +209,7 @@ async function runInstaller(platform, mode, systemd = false) {
   let authCount = 0;
   const server = http.createServer((request, response) => {
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ client: { id: "new-client" }, credential: "test-credential" }));
+    response.end(JSON.stringify({ client: { id: "new-client", permissionMode: "user" }, credential: "test-credential" }));
   });
   const websocket = new WebSocketServer({ server });
   websocket.on("connection", (socket) => socket.on("message", (raw) => {
@@ -222,7 +234,7 @@ async function runInstaller(platform, mode, systemd = false) {
     env: {
       ...process.env, PATH: bin, HOME: testHome,
       TEST_INSTALL_DIR: install, TEST_INSTALL_MODE: mode,
-      TEST_REPO_ROOT: root, TEST_MODULES_DIR: path.join(root, "node_modules"),
+      TEST_FIXTURE_DIR: directory, TEST_REPO_ROOT: root, TEST_MODULES_DIR: path.join(root, "node_modules"),
     },
   });
   let output = "";
@@ -234,12 +246,12 @@ async function runInstaller(platform, mode, systemd = false) {
       new Promise((resolve) => child.once("exit", resolve)),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Installer timed out: " + output)), 20_000); }),
     ]);
-    const unit = path.join(install, "generated.service");
+    const unitsDir = path.join(testHome, ".config/systemd/user");
+    const unit = systemd ? path.join(unitsDir, fs.readdirSync(unitsDir)[0]) : "";
     if (systemd && mode === "success") {
-      const calls = fs.readFileSync(path.join(install, "service-calls.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const calls = fs.readFileSync(path.join(install, "service-calls.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line).filter(value => value !== "--user"));
       assert.equal(calls.filter(([command]) => ["start", "restart"].includes(command)).length, 1);
       assert.ok(calls.filter(([command]) => command === "enable").every((args) => !args.includes("--now")));
-      assert.ok(calls.findIndex(([command]) => command === "stop") < calls.findIndex(([command]) => command === "start"));
       const validator = spawnSync("systemd-analyze", ["verify", unit], { encoding: "utf8" });
       if (!validator.error) assert.equal(validator.status, 0, validator.stderr);
       if (process.env.METIS_TEST_EVIDENCE_DIR) {
@@ -279,10 +291,10 @@ for (const [platform, mode, systemd] of installerCases) {
     const result = await runInstaller(platform, mode, systemd);
     assert.equal(result.exitCode, mode === "success" ? 0 : 1, result.output);
     assert.ok(result.authCount > 0, "the newly enrolled client must attempt authentication");
-    if (mode === "success") assert.match(result.output, /enrolled successfully/);
+    if (mode === "success") assert.match(result.output, /Remote client authenticated/);
     else {
-      assert.match(result.output, /did not authenticate/);
-      assert.doesNotMatch(result.output, /enrolled successfully/);
+      assert.match(result.output, /No authenticated connection/);
+      assert.doesNotMatch(result.output, /Remote client authenticated/);
     }
   });
 }

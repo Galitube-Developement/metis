@@ -18,8 +18,8 @@ test("Computer Use runs behind the worker message boundary", async () => {
     });
     assert.equal(response.id, id);
     assert.ok(response.type === "result" || response.type === "error");
-    if (process.platform === "win32") assert.equal(response.type, "result");
-    else assert.match(response.error?.message || "", /requires (?:a )?Windows/i);
+    if (response.type === "result") assert.equal(typeof response.result.available, "boolean");
+    else assert.match(response.error?.message || "", /desktop|display|permission/i);
   } finally {
     await worker.terminate();
   }

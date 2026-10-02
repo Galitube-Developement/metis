@@ -1,6 +1,6 @@
 ---
 name: computer-use
-description: Control an enabled Windows desktop with the Metis computer_use tool.
+description: Control an enabled Windows, macOS or Linux X11 desktop with the Metis computer_use tool.
 category: automation
 ---
 
@@ -8,11 +8,11 @@ category: automation
 
 The Metis `computer_use` MCP tool is the runtime. The private `@oai/sky` package from the reference skill is not required.
 
-This option is available only for a connected Windows client with an interactive display. Computer Use is enabled and configured only in Settings → Devices → Permissions on the Metis website; the desktop client has no separate permission switch. New compatible devices start with Computer Use and Full Access enabled. Headless clients use the CLI tools.
+This option is available for a connected Windows, macOS or Linux X11 client with an interactive display. Computer Use is enabled and configured only in Settings → Devices → Permissions on the Metis website; the desktop client has no separate permission switch. New compatible devices start with Computer Use and Full Access enabled. macOS requires Screen Recording and Accessibility permissions. Linux requires X11, xdotool, wmctrl and ImageMagick; Wayland is unavailable. Headless clients use the CLI tools.
 
 ## Observe, act, observe
 
-1. Use `list_remote_clients` to select exactly one online Windows client with `desktop_gui`.
+1. Use `list_remote_clients` to select exactly one online client with `desktop_gui`.
 2. Call `computer_use` with `operation: "list_windows"`. Select exactly one returned window ID. Never invent a handle.
 3. Call `computer_use` with `operation: "observe"` and that window ID. Inspect the screenshot and keep its `observation_id`.
 4. Perform exactly one `move`, `click`, `key`, `type`, `scroll`, or `drag` using that observation ID and window-relative coordinates.
