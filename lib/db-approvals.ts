@@ -125,6 +125,8 @@ function selectOne(approvalId: string) {
 }
 
 export function createApproval(input: {
+  /** Server-generated ID shared with an existing remote approval request. */
+  approvalId?: string;
   jobId?: string;
   chatId: string;
   ownerId?: string;
@@ -163,7 +165,7 @@ export function createApproval(input: {
       db.prepare("DELETE FROM pending_approvals WHERE id = ?").run(oldest.id);
   }
 
-  const approvalId = randomUUID();
+  const approvalId = input.approvalId || randomUUID();
   const timestamp = iso();
   db.prepare(
     `INSERT INTO pending_approvals

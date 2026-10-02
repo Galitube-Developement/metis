@@ -152,6 +152,7 @@ import {
   shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
+import { removeQueuedFollowUp } from "@/lib/queue-client";
 import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
@@ -702,6 +703,7 @@ type Chat = ChatIndexEntry & {
   }>;
   modelParams?: ModelParamSelection[];
   queuedMessages?: PersistedQueuedMessage[];
+  removedQueuedMessageIds?: string[];
   canvas?: string;
   workspaces?: WorkspaceItem[];
   browserContext?: BrowserContext;
@@ -1165,6 +1167,7 @@ function runMatchesModel(
   if (run.providerId && run.providerId !== selection.providerKey) return false;
   if (run.connectionId && selection.connectionId && run.connectionId !== selection.connectionId) return false;
   if (
+    run.contextWindowSource !== "runtime" &&
     typeof run.contextWindow === "number" &&
     typeof selection.contextWindow === "number" &&
     run.contextWindow !== selection.contextWindow
@@ -1182,6 +1185,7 @@ type ChatSnapshot = {
   modelId: string;
   modelParams: ModelParamSelection[];
   queuedMessages: PersistedQueuedMessage[];
+  removedQueuedMessageIds?: string[];
   workspaces: WorkspaceItem[];
   browserContext: BrowserContext;
   sessionState: ChatSessionState;
@@ -2420,7 +2424,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const navigateBrowserRef = useRef<(url: string) => void>(() => {});
   const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
   const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
-  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[]) => void>(() => {});
+  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -2942,6 +2946,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       agentId: s.agentId,
       modelId: s.modelId,
       modelParams: s.modelParams,
+      removedQueuedMessageIds: [...removedIdsFor(id)],
       queuedMessages: s.queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
         id,
         text,
@@ -4348,6 +4353,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setMessages(snap.messages);
     setMessageOffset(snap.messageOffset);
     setHasEarlierMessages(snap.hasEarlierMessages);
+    for (const messageId of snap.removedQueuedMessageIds ?? []) removedIdsFor(id).add(messageId);
     setQueuedMessages(
       mergeQueuedFollowUps(
         [],
@@ -4509,6 +4515,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         agentId: data.chat.agentId,
         modelId: mid,
         modelParams: Array.isArray(data.chat.modelParams) ? data.chat.modelParams : [],
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [],
         workspaces: workspacesFromChat(data.chat),
         browserContext: normalizeBrowserContext(data.chat.browserContext, data.chat.id),
@@ -4671,6 +4678,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               modelParams: Array.isArray(data.chat.modelParams)
                 ? data.chat.modelParams
                 : cached.modelParams,
+              removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
               queuedMessages: Array.isArray(data.chat.queuedMessages)
                 ? data.chat.queuedMessages
                 : [],
@@ -4707,7 +4715,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             // is still applying deltas. Keep that live state instead of
             // replacing it with the older durable snapshot.
             setMessages(() => messages);
-            applyServerQueuedMessagesRef.current(next.queuedMessages);
+            applyServerQueuedMessagesRef.current(next.queuedMessages, next.removedQueuedMessageIds);
             setWorkspaces(next.workspaces);
             setBrowserTabs(next.browserContext.tabs);
             setActiveBrowserTabId(next.browserContext.activeTabId);
@@ -4807,6 +4815,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         modelParams: Array.isArray(data.chat.modelParams)
           ? data.chat.modelParams
           : [],
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: Array.isArray(data.chat.queuedMessages)
           ? data.chat.queuedMessages
           : [],
@@ -5163,7 +5172,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         setChatTitle(data.chat.title);
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : []);
+        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setChatGoal(data.chat.sessionState?.goal || "");
         setChatGoalReferences(data.chat.sessionState?.goalReferences || []);
@@ -5616,6 +5625,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       agentId,
       modelId,
       modelParams,
+      removedQueuedMessageIds: [...removedIdsFor(activeChatId)],
       queuedMessages: queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
         id,
         text,
@@ -6386,6 +6396,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         agentId: data.chat.agentId,
         modelId: nextModelId,
         modelParams,
+        removedQueuedMessageIds: data.chat.removedQueuedMessageIds,
         queuedMessages: data.chat.queuedMessages ?? [],
         workspaces: nextWorkspaces,
         browserContext: normalizeBrowserContext(data.chat.browserContext, chatId),
@@ -6766,12 +6777,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function applyServerQueuedMessages(server: PersistedQueuedMessage[]) {
+  function applyServerQueuedMessages(server: PersistedQueuedMessage[], removedIds?: string[]) {
     const chatId = activeChatIdRef.current || "";
-    const consumed = new Set<string>([
-      ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
-      ...queuedSendRef.current,
-    ]);
+    for (const id of removedIds ?? []) removedIdsFor(chatId).add(id);
+    const consumed = new Set<string>(stateRef.current.messages
+      .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
+      .map((message) => message.id));
     setQueuedMessages((current) => mergeQueuedFollowUps(
       current,
       server.map((message) => ({ ...message, files: [] as PendingFile[] })),
@@ -6783,11 +6794,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   function persistQueuedFollowUps(items: QueuedMessage[]) {
     const chatId = activeChatIdRef.current;
     if (!chatId) return;
-    const consumed = new Set<string>([
-      ...queuedSendRef.current,
-      ...stateRef.current.messages.filter((message) => message.role === "user").map((message) => message.id),
-    ]);
-    const payload = items.filter((item) => !consumed.has(item.id));
+    const consumed = new Set<string>(stateRef.current.messages
+      .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
+      .map((message) => message.id));
+    const removed = removedIdsFor(chatId);
+    const payload = items.filter((item) => !consumed.has(item.id) && !removed.has(item.id));
     void fetch(`/api/chats/${chatId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -6840,21 +6851,29 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       busy: busy || busyRef.current,
       waitingForQuestion: Boolean(pendingQuestion),
       hasActiveRuntime: Boolean(activeRuntime),
+      interruptActiveRun: true,
     });
     if (!canStart) {
-      // "Send next" must never cancel the run that is currently applying the
-      // user's earlier changes. Move this item to the front; the normal/server
-      // FIFO drains it as soon as the current run becomes terminal.
-      setQueuedMessages((current) => [
-        message,
-        ...current.filter((item) => item.id !== message.id),
-      ]);
-      setLiveStatus("Queued follow-up will run next.");
+      toast.info("Wait for the previous message to be accepted, then try Send now again.");
       return;
     }
+    if (!modelId.trim()) {
+      toast.error("Select a model first");
+      return;
+    }
+    activeRuntime?.abortController.abort();
     queuedSendRef.current.add(message.id);
     queueDrainRef.current = true;
     queueDrainBlockedRef.current = true;
+    let released = false;
+    const releaseQueueSubmission = () => {
+      if (released) return;
+      released = true;
+      queuedSendRef.current.delete(message.id);
+      queueDrainRef.current = queuedSendRef.current.size > 0;
+      queueDrainBlockedRef.current = false;
+      setSendLockTick((value) => value + 1);
+    };
     try {
       await send(
         undefined,
@@ -6864,19 +6883,67 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         message.referenceText,
         message.references,
         message.id,
-        () => setQueuedMessages((current) => current.filter((item) => item.id !== message.id)),
+        () => {
+          releaseQueueSubmission();
+          setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+          if (activeChatIdRef.current === activeId) {
+            pendingQuestionIdRef.current = null;
+            setPendingQuestion(null);
+            setPendingApproval(null);
+          }
+        },
         message.storedAttachments,
+        true,
       );
     } finally {
-      queuedSendRef.current.delete(message.id);
-      queueDrainRef.current = false;
-      queueDrainBlockedRef.current = false;
-      setSendLockTick((value) => value + 1);
+      releaseQueueSubmission();
     }
   }
 
-  function editQueuedMessage(message: QueuedMessage) {
-    setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+  async function removeMessageFromQueue(message: QueuedMessage) {
+    const chatId = activeChatIdRef.current;
+    const index = queuedMessages.findIndex((item) => item.id === message.id);
+    try {
+      return await removeQueuedFollowUp({
+        chatId,
+        messageId: message.id,
+        removedIds: removedIdsFor(chatId ?? ""),
+        removeLocally: () => {
+          setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+          if (!chatId) return;
+          const cached = chatCacheRef.current.get(chatId);
+          if (!cached) return;
+          const next = {
+            ...cached,
+            queuedMessages: cached.queuedMessages.filter((item) => item.id !== message.id),
+            removedQueuedMessageIds: [...removedIdsFor(chatId)],
+          };
+          chatCacheRef.current.set(chatId, next);
+          if (!next.incognito) void writeClientChatSnapshot(chatCacheScope, chatId, next);
+        },
+        restoreLocally: () => {
+          if (chatId) {
+            chatCacheRef.current.delete(chatId);
+            void deleteClientChatSnapshot(chatCacheScope, chatId);
+          }
+          if (activeChatIdRef.current !== chatId) return;
+          setQueuedMessages((current) => {
+            if (current.some((item) => item.id === message.id)) return current;
+            const next = [...current];
+            next.splice(Math.max(0, index), 0, message);
+            return next;
+          });
+        },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove queued message");
+      return false;
+    }
+  }
+
+  async function editQueuedMessage(message: QueuedMessage) {
+    const chatId = activeChatIdRef.current;
+    if (!await removeMessageFromQueue(message) || activeChatIdRef.current !== chatId) return;
     setInput(message.text);
     setReferenceText(message.referenceText ?? "");
     setReferences(message.references ?? []);
@@ -7014,6 +7081,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     messageIdOverride?: string,
     onAccepted?: () => void,
     storedAttachmentsOverride?: MsgAttachment[],
+    sendQueuedNow = false,
   ) {
     if (reverting) return;
     if (
@@ -7152,6 +7220,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         },
         storedAttachmentsOverride,
         Boolean(goalMessage),
+        sendQueuedNow,
       );
       sendSucceeded = true;
     } finally {
@@ -7190,6 +7259,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     onAccepted?: () => void,
     storedAttachmentsOverride?: MsgAttachment[],
     asComposerSubmission = false,
+    sendQueuedNow = false,
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
@@ -7310,6 +7380,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       generation,
     });
     void refreshActiveChatFromServer(chatId);
+    let submissionAccepted = false;
 
     try {
       let attachmentsPayload:
@@ -7334,6 +7405,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         body: JSON.stringify({
           chatId,
           messageId: userMsg.id,
+          ...(sendQueuedNow ? { sendQueuedNow: true } : {}),
           message: text,
           streamDeviceId: getMetisDeviceId() || undefined,
           referenceText: !incognito ? ((referenceTextOverride ?? referenceText) || undefined) : undefined,
@@ -7356,6 +7428,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
         const msg =
           (err as { error?: string }).error || `HTTP ${res.status}`;
+        if (sendQueuedNow) {
+          toast.error(msg);
+          if (activeChatIdRef.current === chatId) {
+            setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
+            setBusySynced(false);
+          }
+          return;
+        }
         if (activeChatIdRef.current === chatId) {
           setMessages((m) =>
             m.map((x) =>
@@ -7372,6 +7452,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       let runJobId: string | undefined;
       const streamType = res.headers.get("content-type") || "";
       const jsonAccepted = !streamType.includes("text/event-stream") && (res.status === 202 || streamType.includes("application/json"));
+      submissionAccepted = true;
       if (!jsonAccepted) onAccepted?.();
       if (jsonAccepted) {
         const queued = (await res.json().catch(() => ({}))) as { jobId?: string; queueMessage?: string };
@@ -8049,7 +8130,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         void refreshActiveChatFromServer(chatId);
       }
     } catch (err) {
+      if (sendQueuedNow && !submissionAccepted && activeChatIdRef.current === chatId) {
+        setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
+      }
       if ((err as Error).name !== "AbortError") {
+        if (sendQueuedNow && !submissionAccepted) toast.error(err instanceof Error ? err.message : "Could not send queued message");
         const msg = err instanceof Error ? err.message : "Request failed";
         reportClientError(`send stream failed: ${msg}`, {
           stack: err instanceof Error ? err.stack : undefined,
@@ -8083,10 +8168,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           };
         }),
       );
-      if (runtimeRef.current.get(chatId)?.generation === generation) {
-        clearChatRunning(chatId);
-      }
-      if (activeChatIdRef.current === chatId && !pendingQuestionIdRef.current) {
+      const stillCurrentRun = runtimeRef.current.get(chatId)?.generation === generation;
+      if (stillCurrentRun) clearChatRunning(chatId);
+      if (stillCurrentRun && activeChatIdRef.current === chatId && !pendingQuestionIdRef.current) {
         setBusySynced(false);
         setLiveStatus("");
       }
@@ -8197,7 +8281,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       })),
   }) ?? latestUsage?.contextUsedTokens ?? estimatedContextTokens;
   const contextTotal = resolveContextTotal(
-    selectedContextWindow ?? latestUsage?.contextWindow,
+    latestUsage?.contextWindowSource === "runtime"
+      ? latestUsage.contextWindow
+      : selectedContextWindow ?? latestUsage?.contextWindow,
     contextUsed,
   );
   const contextEstimated = latestUsage?.contextUsedTokens === undefined
@@ -8748,7 +8834,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Edit queued message" title="Edit queued message" onClick={() => editQueuedMessage(message)}>
             <Pencil className="size-3.5" />
           </Button>
-          <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Remove queued message" onClick={() => setQueuedMessages((current) => current.filter((item) => item.id !== message.id))}>
+          <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Remove queued message" onClick={() => { void removeMessageFromQueue(message); }}>
             <X className="size-3.5" />
           </Button>
         </div>

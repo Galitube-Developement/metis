@@ -6,6 +6,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
+import { codexCachedContextWindow } from "@/lib/providers/codex-context";
 import { codexCliExecutable, codexCliVersion } from "@/lib/providers/codex-cli";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
@@ -405,6 +406,7 @@ async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWit
         connection,
         modelId: id,
         displayName: model.displayName || id,
+        providerContextWindow: contextWindowOf(model) ?? codexCachedContextWindow(codexHome.home, id),
         allowInference: false,
       });
       const speed = codexSpeedOptions(model);

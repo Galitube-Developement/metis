@@ -13,6 +13,7 @@ import {
   type RemoteAction,
 } from "@/lib/remote-clients";
 import { redactSensitiveData } from "@/lib/agent-trace";
+import { approvedRemoteActionId, publishRemoteApproval, waitForRemoteApproval } from "@/lib/remote-approval-flow";
 
 type SocketLike = {
   readyState: number;
@@ -134,13 +135,15 @@ export function requestRemoteClient(input: {
     throw new Error(authorization.reason || "Remote action denied");
   }
   if (authorization.requiresApproval) {
-    if (!input.approvalId || !consumeRemoteApproval({
-      id: input.approvalId,
+    const approvalId = input.approvalId || approvedRemoteActionId(input);
+    if (!approvalId || !consumeRemoteApproval({
+      id: approvalId,
       ownerId: input.ownerId,
       clientId: input.clientId,
       action: input.action,
       params: input.params,
     })) {
+      if (approvalId) throw new Error(`Remote approval ${approvalId} is pending, expired, already used, or does not match this action.`);
       const approval = createRemoteApproval({
         ownerId: input.ownerId,
         clientId: input.clientId,
@@ -150,6 +153,7 @@ export function requestRemoteClient(input: {
         runId: input.runId,
         toolCallId: input.toolCallId,
       });
+      publishRemoteApproval(input, approval.id);
       throw new RemoteApprovalRequiredError(approval.id);
     }
   }
@@ -227,6 +231,19 @@ export function requestRemoteClient(input: {
     });
     throw error;
   });
+}
+
+/** Internal agent calls wait on the visible card instead of returning an invisible ID. */
+export async function requestRemoteClientWithApproval(
+  input: Parameters<typeof requestRemoteClient>[0], signal?: AbortSignal,
+) {
+  try {
+    return await requestRemoteClient(input);
+  } catch (error) {
+    if (!(error instanceof RemoteApprovalRequiredError)
+      || !(await waitForRemoteApproval(input, error.approvalId, signal))) throw error;
+    return requestRemoteClient({ ...input, approvalId: error.approvalId });
+  }
 }
 
 export async function collectRemoteClientEvents(sessionId: string, waitMs = 150) {

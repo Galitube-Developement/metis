@@ -3,6 +3,7 @@ import path from "node:path";
 import type { CodexOptions } from "@openai/codex-sdk";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
+import { readCodexThreadContext } from "@/lib/providers/codex-context";
 import { codexCliExecutable } from "@/lib/providers/codex-cli";
 import { getMcpServers } from "@/lib/mcp";
 import { updateProviderConnection } from "@/lib/provider-connections";
@@ -15,7 +16,7 @@ import {
   RUNTIME_MODE_TO_CODEX,
   runtimeModeForChat,
 } from "@/lib/runtime-mode";
-import { iterateUntilAborted } from "@/lib/providers/stream-guard";
+import { codexEventsWithResumeRetry } from "@/lib/providers/codex-resume";
 import {
   asRecord,
   asString,
@@ -296,12 +297,13 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
     ]
       .filter(Boolean)
       .join("\n\nUser request:\n");
-    const streamed = await thread.runStreamed(prompt, {
-      signal: context.signal,
-    });
+    const events = codexEventsWithResumeRetry(async () => {
+      const streamed = await thread.runStreamed(prompt, { signal: context.signal });
+      return streamed.events;
+    }, { resume: Boolean(previousId), signal: context.signal });
     let usage: ProviderResult["usage"] | undefined;
     let emittedAgentMessage = false;
-    for await (const event of iterateUntilAborted(streamed.events, context.signal)) {
+    for await (const event of events) {
       context.onStream({
         type: event.type,
         ...("item" in event ? { item: event.item } : {}),
@@ -315,10 +317,11 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
           outputTokens: event.usage.output_tokens,
           cachedInputTokens: event.usage.cached_input_tokens,
           cacheWriteInputTokens: event.usage.cache_write_input_tokens,
-          // Codex SDK 0.147 exposes per-turn usage but not the app-server's
-          // context-window maximum. The shared model metadata resolver supplies
-          // that exact provider/registry window; do not manufacture one here.
-          usedTokens: event.usage.input_tokens,
+          // SDK usage accumulates across model calls. Native last-token usage
+          // supplies the current context and its actual runtime budget instead.
+          ...(codexHome && thread.id
+            ? readCodexThreadContext(codexHome.home, thread.id)
+            : {}),
           totalTokens: event.usage.input_tokens + event.usage.output_tokens,
         };
       } else if (event.type === "turn.failed") {
@@ -359,8 +362,8 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
         candidateCursor: thread.id,
         promoteCursor: true,
         modelId: context.modelId,
-        ...(usage?.inputTokens !== undefined ? { lastContextTokens: usage.inputTokens } : {}),
-        ...(usage?.inputTokens !== undefined ? { lastContextWindow: resolvedContextWindow(context) } : {}),
+        ...(usage?.usedTokens !== undefined ? { lastContextTokens: usage.usedTokens } : {}),
+        ...(usage?.usedTokens !== undefined ? { lastContextWindow: usage.maxTokens ?? resolvedContextWindow(context) } : {}),
       });
     }
     return {

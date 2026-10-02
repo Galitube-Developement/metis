@@ -1,8 +1,8 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { resolveApproval } from "@/lib/db-approvals";
-import { getJob, updateJob } from "@/lib/db-jobs";
+import { resolveActionApproval } from "@/lib/remote-approval-flow";
+import { getPendingApprovalForChat } from "@/lib/db-approvals";
+import { queueUserInputResume, releaseUserInputWait } from "@/lib/db-jobs";
 import { getChat, updateChat } from "@/lib/db-store";
-import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,35 +35,36 @@ export async function POST(req: Request) {
     );
   }
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
-  const resolved = resolveApproval(approvalId, decision, userId, version);
+  const resolved = resolveActionApproval(approvalId, decision, userId, version);
   if (!resolved) {
     return Response.json(
       { error: "Approval not found or already resolved" },
       { status: 404 },
     );
   }
-  const resolvedJob = resolved.jobId ? getJob(resolved.jobId) : null;
-  if (
-    resolved.jobId &&
-    shouldQueueUserInputResume(resolvedJob?.status, resolved.heartbeatAt)
-  ) {
-    updateJob(resolved.jobId, {
-      status: "queued",
-      error: undefined,
+  if (resolved.jobId) {
+    queueUserInputResume({
+      jobId: resolved.jobId,
+      heartbeatAt: resolved.heartbeatAt,
       resumePrompt:
         resolved.decision === "deny"
           ? "The user denied the pending action. Continue without executing it."
           : `The user approved the pending action (${resolved.sessionScope || approvalId}). Retry that exact tool call now; its durable one-time approval is ready to be consumed.`,
-      resumeRequestedAt: new Date().toISOString(),
     });
+    releaseUserInputWait(resolved.jobId);
   }
   const currentChat = getChat(resolved.chatId, userId);
   if (currentChat?.pendingApproval?.id === approvalId) {
+    const next = getPendingApprovalForChat(resolved.chatId, userId);
     updateChat(
       resolved.chatId,
       {
-        runStatus: "running",
-        pendingApproval: null,
+        runStatus: next ? "waiting_for_user" : "running",
+        badge: next ? "red" : null,
+        pendingApproval: next ? {
+          id: next.approvalId, title: next.title, command: next.command,
+          files: next.files, createdAt: next.createdAt,
+        } : null,
         ...(resolved.decision === "allow-session" && resolved.sessionScope
           ? {
               approvedPatterns: [

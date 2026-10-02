@@ -1,7 +1,6 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { questionLimits, resolveQuestion } from "@/lib/db-questions";
-import { getJob, updateJob } from "@/lib/db-jobs";
-import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
+import { queueUserInputResume } from "@/lib/db-jobs";
 import { getChat, updateChat } from "@/lib/db-store";
 
 export const runtime = "nodejs";
@@ -43,16 +42,11 @@ export async function POST(req: Request) {
       { status: 404 },
     );
   }
-  const resolvedJob = resolved.jobId ? getJob(resolved.jobId) : null;
-  if (
-    resolved.jobId &&
-    shouldQueueUserInputResume(resolvedJob?.status, resolved.heartbeatAt)
-  ) {
-    updateJob(resolved.jobId, {
-      status: "queued",
-      error: undefined,
+  if (resolved.jobId) {
+    queueUserInputResume({
+      jobId: resolved.jobId,
+      heartbeatAt: resolved.heartbeatAt,
       resumePrompt: `The user answered the pending question with: ${JSON.stringify(resolved.answers)}`,
-      resumeRequestedAt: new Date().toISOString(),
     });
   }
   // Release the durable UI state immediately. The MCP request will observe

@@ -540,7 +540,19 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
-  const updated = options?.touchUpdatedAt === false ? chat : { ...chat, updatedAt: now() };
+  const updated = { ...chat, ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
+  // Removal wins over delayed browser autosaves and stale worker projections.
+  // Keep tombstones outside the JSON projection so an old snapshot cannot erase them.
+  const removed = new Set((getDatabase().prepare(
+    "SELECT message_id FROM queue_message_removals WHERE chat_id = ?",
+  ).all(updated.id) as Array<{ message_id: string }>).map((row) => row.message_id));
+  if (removed.size) updated.removedQueuedMessageIds = [...removed];
+  else delete updated.removedQueuedMessageIds;
+  if (updated.queuedMessages?.length) {
+    const remaining = updated.queuedMessages.filter((message) => !removed.has(message.id));
+    if (remaining.length) updated.queuedMessages = remaining;
+    else delete updated.queuedMessages;
+  }
   getDatabase()
     .prepare(
       `INSERT INTO chats (id, owner_id, data, created_at, updated_at)
@@ -1041,9 +1053,12 @@ export function cloneChatByShareId(shareId: string, password: string | undefined
 export function removeQueuedMessage(chatId: string, messageId: string, ownerId?: string) {
   return transaction(() => {
     const chat = getChat(chatId, ownerId);
-    if (!chat?.queuedMessages?.length) return chat;
-    const nextQueue = chat.queuedMessages.filter((message) => message.id !== messageId);
-    if (nextQueue.length === chat.queuedMessages.length) return chat;
+    if (!chat) return null;
+    // Record the intent even if the first queue PATCH has not arrived yet.
+    getDatabase().prepare(
+      "INSERT OR IGNORE INTO queue_message_removals (chat_id, message_id) VALUES (?, ?)",
+    ).run(chatId, messageId);
+    const nextQueue = (chat.queuedMessages ?? []).filter((message) => message.id !== messageId);
     const next = { ...chat };
     if (nextQueue.length) next.queuedMessages = nextQueue;
     else delete next.queuedMessages;

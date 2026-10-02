@@ -239,6 +239,11 @@ export function getDatabase(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS chats_owner_updated ON chats(owner_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS chats_share_id ON chats(json_extract(data, '$.share.id'));
+    CREATE TABLE IF NOT EXISTS queue_message_removals (
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      PRIMARY KEY (chat_id, message_id)
+    );
     CREATE TABLE IF NOT EXISTS tool_revert_snapshots (
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       message_id TEXT NOT NULL,

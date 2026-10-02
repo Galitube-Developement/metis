@@ -475,8 +475,8 @@ export async function runAlternativeProviderJob(
       : selectedModel?.contextWindowSource || (selectedContextWindow ? "catalog" as const : undefined);
     const compactionAfter = [...parts].reverse().find((item) => item.type === "compaction")?.afterTokens;
     const contextUsedTokens =
-      compactionAfter ??
       result.usage?.usedTokens ??
+      compactionAfter ??
       inputTokens;
     if (contextUsedTokens || contextWindow) {
       emit("context", {

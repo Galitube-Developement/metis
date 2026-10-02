@@ -3,6 +3,7 @@ import path from "node:path";
 import { config } from "@/lib/config";
 import type { ProviderConnection, ProviderModelDefinition } from "@/lib/providers/types";
 import { inferContextWindow } from "@/lib/context-window";
+import { codexCachedContextWindow, codexSessionHome } from "@/lib/providers/codex-context";
 
 export type ContextWindowSource =
   | "provider"
@@ -147,7 +148,7 @@ export function lookupRegistryContextMetadata(
 
 /** Provider/runtime metadata wins. Static registry is a fallback, never an override. */
 export function resolveModelContextMetadata(input: {
-  connection: Pick<ProviderConnection, "providerKey" | "slug" | "label" | "baseUrl">;
+  connection: Pick<ProviderConnection, "providerKey" | "slug" | "label" | "baseUrl"> & Partial<Pick<ProviderConnection, "ownerId" | "id">>;
   modelId: string;
   displayName?: string;
   providerContextWindow?: number;
@@ -164,6 +165,14 @@ export function resolveModelContextMetadata(input: {
       source: "provider",
       ...(finitePositive(input.maxOutputTokens, 1) ? { maxOutputTokens: finitePositive(input.maxOutputTokens, 1) } : {}),
     };
+  }
+
+  if (input.connection.providerKey === "codex" && input.connection.ownerId && input.connection.id) {
+    const cached = codexCachedContextWindow(
+      codexSessionHome(config.dataDir, input.connection.ownerId, input.connection.id),
+      input.modelId,
+    );
+    if (cached) return { contextWindow: cached, source: "provider" };
   }
 
   const stored = finitePositive(input.storedContextWindow);

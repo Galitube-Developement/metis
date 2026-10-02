@@ -110,7 +110,7 @@ export function ContextUsageText({
   const state = contextBudgetState({ used, effectiveInputBudget: total, measuredAt, error, compacting });
   const remaining = pressure.known ? Math.max(0, total - used) : null;
   const remainingPct = pressure.known ? percentLeft(pressure.usedPercent) : null;
-  const label = pressure.known ? `${formatTokenCount(used)} / ${formatTokenCount(total)}` : `${formatTokenCount(used)} / —`;
+  const label = pressure.known ? `${formatTokenCount(used)} / ${formatTokenCount(total)}` : `${formatTokenCount(used)} tokens`;
   const freshness = estimated ? "current draft" : formatAge(measuredAt);
   const stateClass = state === "overflow" || state === "error" ? "text-red-400" : state === "compacting" ? "text-amber-400" : "text-muted-foreground/65";
   return (

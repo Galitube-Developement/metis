@@ -442,6 +442,8 @@ export type Chat = {
   /** Cursor model params, e.g. [{ id: "fast", value: "true" }] */
   modelParams?: Array<{ id: string; value: string }>;
   messages: ChatMessage[];
+  /** Server-owned queue deletions used to invalidate stale client snapshots. */
+  removedQueuedMessageIds?: string[];
   queuedMessages?: Array<{
     id: string;
     text: string;
