@@ -49,7 +49,7 @@ base_url="${server%/}"
 response="$(curl -fsSL -X POST "$base_url/api/remote-clients/enroll" \
   -H 'Content-Type: application/json' \
   --data "$(node -e 'console.log(JSON.stringify({token:process.argv[1],name:require("node:os").hostname(),os:process.platform,architecture:process.arch,version:"1.0.0",hostname:require("node:os").hostname(),permissionMode:process.argv[2],capabilities:process.argv[2]==="admin"?["user_files","user_processes","user_directories","system_files","services","disks","admin_processes"]:["user_files","user_processes","user_directories"]}))' "$token" "$permission_mode")")"
-node -e 'const value=JSON.parse(process.argv[1]); if (!value.client?.id || !value.credential) process.exit(1)' "$response" ||
+client_id="$(node -e 'const value=JSON.parse(process.argv[1]); if (typeof value.client?.id !== "string" || !value.client.id || !value.credential) process.exit(1); process.stdout.write(value.client.id)' "$response")" ||
   { printf '%s\n' 'Enrollment failed' >&2; exit 1; }
 node -e 'const fs=require("node:fs"),path=require("node:path"),value=JSON.parse(process.argv[1]),file=process.argv[2]; fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,JSON.stringify({server:process.argv[3],permissionMode:process.argv[4],clientId:value.client.id,credential:value.credential},null,2)+"\n",{mode:0o600}); fs.chmodSync(file,0o600)' \
   "$response" "$install_dir/config.json" "$base_url" "$permission_mode"
@@ -61,6 +61,7 @@ chmod 700 "$install_dir/uninstall.sh"
 
 if command -v systemctl >/dev/null 2>&1; then
   service_name="metis-ai-remote-client"
+  service_user="$(id -un)"
   sudo tee "/etc/systemd/system/$service_name.service" >/dev/null <<EOF
 [Unit]
 Description=Metis AI remote client
@@ -68,18 +69,37 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-User=$USER
+User=$service_user
 WorkingDirectory=$install_dir
-ExecStart=$(command -v node) $install_dir/client.mjs --config $install_dir/config.json
+ExecStart="$(command -v node)" "$install_dir/client.mjs" --config "$install_dir/config.json"
 Restart=always
 RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "$service_name.service"
+  sudo systemctl enable "$service_name.service"
+  sudo systemctl stop "$service_name.service"
+  : >"$install_dir/client.log"
+  sudo systemctl start "$service_name.service"
 else
-  nohup node "$install_dir/client.mjs" --config "$install_dir/config.json" >/dev/null 2>&1 &
+  : >"$install_dir/client.log"
+  nohup node "$install_dir/client.mjs" --config "$install_dir/config.json" >>"$install_dir/client.log" 2>&1 &
+fi
+
+connected=false
+for attempt in {1..15}; do
+  if awk -v client_id="$client_id" '$2 == "authenticated" && $3 == client_id { found = 1 } END { exit !found }' "$install_dir/client.log" 2>/dev/null; then connected=true; break; fi
+  if command -v systemctl >/dev/null 2>&1 && ! sudo systemctl is-active --quiet "$service_name.service"; then
+    sudo journalctl -u "$service_name.service" -n 30 --no-pager >&2 || true
+    break
+  fi
+  sleep 1
+done
+if [[ "$connected" != true ]]; then
+  printf 'Remote client service started but did not authenticate with %s within 15 seconds.\n' "$base_url" >&2
+  tail -n 40 "$install_dir/client.log" >&2 || true
+  exit 1
 fi
 printf 'Remote client enrolled successfully (%s mode): %s\n' "$permission_mode" "$install_dir"
 printf 'Remove with: %s/uninstall.sh\n' "$install_dir"

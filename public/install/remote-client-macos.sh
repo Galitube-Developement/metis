@@ -37,7 +37,7 @@ base_url="${server%/}"
 response="$(curl -fsSL -X POST "$base_url/api/remote-clients/enroll" \
   -H 'Content-Type: application/json' \
   --data "$(node -e 'console.log(JSON.stringify({token:process.argv[1],name:require("node:os").hostname(),os:"macos",architecture:process.arch,version:"1.0.0",hostname:require("node:os").hostname(),permissionMode:process.argv[2],capabilities:process.argv[2]==="admin"?["user_files","user_processes","user_directories","system_files","services","disks","admin_processes"]:["user_files","user_processes","user_directories"]}))' "$token" "$permission_mode")")"
-node -e 'const value=JSON.parse(process.argv[1]); if (!value.client?.id || !value.credential) process.exit(1)' "$response"
+client_id="$(node -e 'const value=JSON.parse(process.argv[1]); if (typeof value.client?.id !== "string" || !value.client.id || !value.credential) process.exit(1); process.stdout.write(value.client.id)' "$response")"
 node -e 'const fs=require("node:fs"),path=require("node:path"),value=JSON.parse(process.argv[1]),file=process.argv[2]; fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,JSON.stringify({server:process.argv[3],permissionMode:process.argv[4],clientId:value.client.id,credential:value.credential},null,2)+"\n",{mode:0o600}); fs.chmodSync(file,0o600)' \
   "$response" "$install_dir/config.json" "$base_url" "$permission_mode"
 curl -fsSL "$base_url/install/remote-client.mjs" -o "$install_dir/client.mjs"
@@ -64,7 +64,18 @@ cat > "$plist" <<EOF
 </dict></plist>
 EOF
 launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+: >"$install_dir/client.log"
 launchctl bootstrap "gui/$(id -u)" "$plist"
+connected=false
+for attempt in {1..15}; do
+  if awk -v client_id="$client_id" '$2 == "authenticated" && $3 == client_id { found = 1 } END { exit !found }' "$install_dir/client.log" 2>/dev/null; then connected=true; break; fi
+  sleep 1
+done
+if [[ "$connected" != true ]]; then
+  printf 'Remote client service started but did not authenticate with %s within 15 seconds.\n' "$base_url" >&2
+  tail -n 40 "$install_dir/client.log" >&2 || true
+  exit 1
+fi
 printf 'Remote client enrolled successfully: %s\n' "$install_dir"
 printf 'Remove with: %s/uninstall.sh\n' "$install_dir"
 
