@@ -42,6 +42,9 @@ jobs:
       - name: Run release and updater contract tests
         run: pnpm exec tsx --test tests/release-manifest.test.ts tests/github-releases.test.ts
 
+      - name: Test remote client startup and device routing
+        run: pnpm exec tsx --test tests/remote-client-startup.test.mjs tests/device-routing.test.ts
+
       - name: Run local release contract test
         run: pnpm test:release
 
