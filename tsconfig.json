@@ -1,44 +1,44 @@
-     1	{
-     2	  "compilerOptions": {
-     3	    "target": "ES2022",
-     4	    "lib": [
-     5	      "dom",
-     6	      "dom.iterable",
-     7	      "esnext"
-     8	    ],
-     9	    "allowJs": false,
-    10	    "skipLibCheck": true,
-    11	    "strict": true,
-    12	    "noEmit": true,
-    13	    "allowImportingTsExtensions": true,
-    14	    "esModuleInterop": true,
-    15	    "module": "esnext",
-    16	    "moduleResolution": "bundler",
-    17	    "resolveJsonModule": true,
-    18	    "isolatedModules": true,
-    19	    "jsx": "preserve",
-    20	    "incremental": true,
-    21	    "plugins": [
-    22	      {
-    23	        "name": "next"
-    24	      }
-    25	    ],
-    26	    "paths": {
-    27	      "@/*": [
-    28	        "./*"
-    29	      ]
-    30	    }
-    31	  },
-    32	  "include": [
-    33	    "**/*.ts",
-    34	    "**/*.tsx",
-    35	    ".next-a/types/**/*.ts",
-    36	    ".next/types/**/*.ts",
-    37	    "next-env.d.ts",
-    38	    ".next-b/types/**/*.ts"
-    39	  ],
-    40	  "exclude": [
-    41	    "node_modules",
-    42	    "data/provider-sessions"
-    43	  ]
-    44	}
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".next-a/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    ".next-b/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "data/provider-sessions"
+  ]
+}
