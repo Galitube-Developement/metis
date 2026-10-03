@@ -4,6 +4,7 @@ import {
   saveGlobalModelSettings,
   type GlobalModelSettings,
 } from "@/lib/db-store";
+import { agentRulesForSettings } from "@/lib/agent-rules";
 import { normalizeVoiceSettings } from "@/lib/shared-context";
 import type { CompressionMode } from "@/lib/compression";
 
@@ -195,7 +196,7 @@ export async function PATCH(req: Request) {
         ...(voiceInput !== undefined ? { voiceInput } : {}),
         ...(featureFlags !== undefined ? { featureFlags: { ...current.featureFlags, ...featureFlags } } : {}),
         ...(compression !== undefined ? { compression: { ...current.compression, ...compression } } : {}),
-        ...(responseInstructions !== undefined ? { responseInstructions } : {}),
+        ...(responseInstructions !== undefined ? { responseInstructions, agentRules: agentRulesForSettings({ responseInstructions }) } : {}),
       },
       userId,
     ),

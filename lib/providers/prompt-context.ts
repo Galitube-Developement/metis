@@ -1,3 +1,4 @@
+import { agentRulesPrompt } from "@/lib/agent-rules";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { projectContextBlock } from "@/lib/projects";
 import {
@@ -148,9 +149,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     }),
     "Working style: precise, technically fluent, proactive. Act with tools instead of narrating steps. Reply in the user's language. On clear orders decide and act; ask only when genuinely ambiguous or destructive.",
     "Execution efficiency: batch related read-only inspection instead of issuing many tiny calls; reuse the known project/repository cwd instead of rediscovering it; run targeted checks while iterating and the expensive full test/build pass only once after the working tree has stopped changing. Parallelize independent lightweight reads when safe, but do not run competing heavyweight builds. Keep progress narration to short milestone updates rather than one message per tool call.",
-    !incognito && globalSettings.responseInstructions?.trim()
-      ? `User response instructions (apply when relevant):\n${globalSettings.responseInstructions.trim().slice(0, 20_000)}`
-      : "",
+    !incognito ? agentRulesPrompt(globalSettings) : "",
     METIS_SHARED_AGENT_CONTROL,
     toolContractPrompt({
       modeId: job.modeId || chat.sessionState?.modeId || "agent",

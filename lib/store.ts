@@ -533,7 +533,10 @@ const INDEX_PATH = path.join(CHATS_DIR, "index.json");
 const MEMORIES_PATH = path.join(DATA_DIR, "memories.json");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 
+export type AgentRule = { id: string; content: string };
+
 export type GlobalModelSettings = {
+  agentRules?: AgentRule[];
   compression?: {
     enabled?: boolean;
     mode?: "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "stacked";

@@ -62,14 +62,14 @@ export function MemoriesPanel({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(
-          (err as { error?: string }).error || "Could not add rule",
+          (err as { error?: string }).error || "Could not add memory",
         );
       }
       setDraft("");
       onChanged();
-      toast.success("Rule saved");
+      toast.success("Memory saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not add rule");
+      toast.error(e instanceof Error ? e.message : "Could not add memory");
     } finally {
       setBusy(false);
     }
@@ -80,9 +80,9 @@ export function MemoriesPanel({
       const res = await fetch(`/api/memories/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
       onChanged();
-      toast.success("Rule deleted");
+      toast.success("Memory deleted");
     } catch {
-      toast.error("Could not delete rule");
+      toast.error("Could not delete memory");
     }
   }
 
@@ -96,13 +96,13 @@ export function MemoriesPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      if (!res.ok) throw new Error("Could not update rule");
+      if (!res.ok) throw new Error("Could not update memory");
       setEditingId(null);
       setEditingValue("");
       onChanged();
-      toast.success("Rule updated");
+      toast.success("Memory updated");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not update rule");
+      toast.error(e instanceof Error ? e.message : "Could not update memory");
     } finally {
       setBusy(false);
     }
@@ -112,9 +112,9 @@ export function MemoriesPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Agent Rules</SheetTitle>
+          <SheetTitle>Memories</SheetTitle>
           <SheetDescription>
-            The agent applies these rules and context when they help with a request. Add, edit, search, or delete them here.
+            The agent retrieves these memories and context when they help with a request. Add, edit, search, or delete them here.
           </SheetDescription>
         </SheetHeader>
 
@@ -122,7 +122,7 @@ export function MemoriesPanel({
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add an agent rule…"
+            placeholder="Add a memory…"
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -134,7 +134,7 @@ export function MemoriesPanel({
             size="icon"
             onClick={() => void addMemory()}
             disabled={busy || !draft.trim()}
-            aria-label="Add rule"
+            aria-label="Add memory"
           >
             <Plus className="size-4" />
           </Button>
@@ -143,8 +143,8 @@ export function MemoriesPanel({
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search agent rules"
-          aria-label="Search agent rules"
+          placeholder="Search memories"
+          aria-label="Search memories"
           className="mt-4"
         />
 
@@ -152,11 +152,11 @@ export function MemoriesPanel({
           <ul className="space-y-2 pb-6">
             {memories.length === 0 ? (
               <li className="px-1 py-8 text-center text-sm text-muted-foreground">
-                No agent rules yet.
+                No memories yet.
               </li>
             ) : visibleMemories.length === 0 ? (
               <li className="px-1 py-8 text-center text-sm text-muted-foreground">
-                No agent rules match “{search}”.
+                No memories match “{search}”.
               </li>
             ) : (
               visibleMemories.map((m) => (
@@ -175,7 +175,7 @@ export function MemoriesPanel({
                         }}
                         autoFocus
                         className="h-8 text-sm"
-                        aria-label="Edit rule"
+                        aria-label="Edit memory"
                       />
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">{m.content}</p>
@@ -191,16 +191,16 @@ export function MemoriesPanel({
                     size="icon-sm"
                     className="opacity-60 group-hover:opacity-100"
                     onClick={() => void removeMemory(m.id)}
-                    aria-label="Delete rule"
+                    aria-label="Delete memory"
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
                   {editingId === m.id ? (
                     <>
-                      <Button variant="ghost" size="icon-sm" onClick={() => void saveMemory(m.id)} disabled={busy || !editingValue.trim()} aria-label="Save rule">
+                      <Button variant="ghost" size="icon-sm" onClick={() => void saveMemory(m.id)} disabled={busy || !editingValue.trim()} aria-label="Save memory">
                         <Check className="size-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon-sm" onClick={() => setEditingId(null)} aria-label="Cancel editing rule">
+                      <Button variant="ghost" size="icon-sm" onClick={() => setEditingId(null)} aria-label="Cancel editing memory">
                         <X className="size-3.5" />
                       </Button>
                     </>
@@ -213,7 +213,7 @@ export function MemoriesPanel({
                         setEditingId(m.id);
                         setEditingValue(m.content);
                       }}
-                      aria-label="Edit rule"
+                      aria-label="Edit memory"
                     >
                       <Pencil className="size-3.5" />
                     </Button>

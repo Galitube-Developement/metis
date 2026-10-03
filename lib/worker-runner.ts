@@ -21,6 +21,7 @@ import { logError } from "@/lib/error-logs";
 import { isModelAllowed } from "@/lib/model-access";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import { formatChatGoal } from "@/lib/chat-goal";
+import { agentRulesPrompt } from "@/lib/agent-rules";
 import type { AgentJob } from "@/lib/jobs";
 import {
   findActiveConnection,
@@ -1001,6 +1002,7 @@ export async function runQueuedJob(job: AgentJob) {
       formatChatGoal(chat.sessionState, job.userId, chat.id, Boolean(job.incognito || chat.incognito)),
       "Working style: precise, technically fluent, proactive. Act with your tools instead of describing steps. Reply in the user's language — German in, German out. No filler phrases. On clear orders decide and act yourself; ask back only when genuinely ambiguous or destructive.",
       "Execution efficiency: batch related read-only inspection instead of issuing many tiny calls; reuse the known project/repository cwd instead of rediscovering it; run targeted checks while iterating and the expensive full test/build pass only once after the working tree has stopped changing. Parallelize independent lightweight reads when safe, but do not run competing heavyweight builds. Keep progress narration to short milestone updates rather than one message per tool call.",
+      !job.incognito && !chat.incognito ? agentRulesPrompt(globalModelSettings) : "",
       runToolContract,
       "Web/browser routing: use web_search for discovery and web_fetch for fast read-only extraction of ordinary public pages (local Scrapling static scraper first, public remote fallback second). For login/authenticated state, forms, uploads/downloads, purchases/checkouts, important state-changing tasks, long interactive page workflows, or any web_fetch result with requiresBrowser=true, ALWAYS use the persistent Metis in-app browser (browser_navigate, browser_form_state, browser_batch, browser_wait_for, browser_fill_form, browser_snapshot). Inspect current browser state first; navigate only when the URL needs to change and never reload/re-login merely to inspect progress. Do not use shell, curl, detached Playwright, or stealth/challenge-bypass tooling as a substitute. If a site blocks static extraction, use the normal persistent browser if appropriate or report the limitation. Request browser_screenshot only when visual reasoning is genuinely required.",
       `Available mode IDs for request_mode_change: ${availableModes || "agent (Agent), plan (Plan), ask (Ask)"}. Use the exact ID before the parentheses; never invent values such as "Code". For implementation or file changes, request modeId "agent".`,

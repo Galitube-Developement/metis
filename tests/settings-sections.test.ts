@@ -104,7 +104,7 @@ test("Models and Agent pack dense features behind settings tiles", () => {
   const models = headingIdsInTab(settingsSource, "models");
   const agent = headingIdsInTab(settingsSource, "agent");
   assert.deepEqual(models, ["settings-usage", "settings-providers", "settings-versions"]);
-  assert.deepEqual(agent, ["settings-skills", "settings-modes", "settings-mcp", "settings-memories", "settings-response-instructions"]);
+  assert.deepEqual(agent, ["settings-skills", "settings-modes", "settings-mcp", "settings-memories", "settings-agent-rules"]);
   assert.match(settingsSource, /data-settings-tile=\{id\}/);
   assert.match(settingsSource, /id=\"settings-providers\"/);
   assert.match(settingsSource, /id=\"settings-versions\"/);
@@ -118,9 +118,9 @@ test("Models and Agent pack dense features behind settings tiles", () => {
   assert.match(settingsSource, /slot="modes-manager"/);
   assert.match(settingsSource, /slot="mcp-manager"/);
   assert.match(settingsSource, /slot="memories-manager"/);
-  assert.match(settingsSource, /title="Response instructions"/);
-  assert.match(settingsSource, /Give the agent instructions for how it should respond across your chats/);
-  assert.match(settingsSource, /setSettingsPane\("response-instructions"\)/);
+  assert.match(settingsSource, /title="Agent Rules"/);
+  assert.match(settingsSource, /Manage individual instructions for how the agent responds across your chats/);
+  assert.match(settingsSource, /setSettingsPane\("agent-rules"\)/);
   assert.match(settingsSource, /data-slot=\{slot\}/);
   const modelsTab = settingsSource.slice(
     settingsSource.indexOf('<TabsContent value="models"'),
