@@ -62,14 +62,14 @@ export function MemoriesPanel({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(
-          (err as { error?: string }).error || "Failed to add memory",
+          (err as { error?: string }).error || "Could not add rule",
         );
       }
       setDraft("");
       onChanged();
-      toast.success("Memory saved");
+      toast.success("Rule saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add memory");
+      toast.error(e instanceof Error ? e.message : "Could not add rule");
     } finally {
       setBusy(false);
     }
@@ -80,9 +80,9 @@ export function MemoriesPanel({
       const res = await fetch(`/api/memories/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
       onChanged();
-      toast.success("Memory deleted");
+      toast.success("Rule deleted");
     } catch {
-      toast.error("Failed to delete memory");
+      toast.error("Could not delete rule");
     }
   }
 
@@ -96,13 +96,13 @@ export function MemoriesPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      if (!res.ok) throw new Error("Failed to update memory");
+      if (!res.ok) throw new Error("Could not update rule");
       setEditingId(null);
       setEditingValue("");
       onChanged();
-      toast.success("Memory updated");
+      toast.success("Rule updated");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update memory");
+      toast.error(e instanceof Error ? e.message : "Could not update rule");
     } finally {
       setBusy(false);
     }
@@ -134,7 +134,7 @@ export function MemoriesPanel({
             size="icon"
             onClick={() => void addMemory()}
             disabled={busy || !draft.trim()}
-            aria-label="Add memory"
+            aria-label="Add rule"
           >
             <Plus className="size-4" />
           </Button>
@@ -175,7 +175,7 @@ export function MemoriesPanel({
                         }}
                         autoFocus
                         className="h-8 text-sm"
-                        aria-label="Edit memory"
+                        aria-label="Edit rule"
                       />
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">{m.content}</p>
@@ -191,16 +191,16 @@ export function MemoriesPanel({
                     size="icon-sm"
                     className="opacity-60 group-hover:opacity-100"
                     onClick={() => void removeMemory(m.id)}
-                    aria-label="Delete memory"
+                    aria-label="Delete rule"
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
                   {editingId === m.id ? (
                     <>
-                      <Button variant="ghost" size="icon-sm" onClick={() => void saveMemory(m.id)} disabled={busy || !editingValue.trim()} aria-label="Save memory">
+                      <Button variant="ghost" size="icon-sm" onClick={() => void saveMemory(m.id)} disabled={busy || !editingValue.trim()} aria-label="Save rule">
                         <Check className="size-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon-sm" onClick={() => setEditingId(null)} aria-label="Cancel editing memory">
+                      <Button variant="ghost" size="icon-sm" onClick={() => setEditingId(null)} aria-label="Cancel editing rule">
                         <X className="size-3.5" />
                       </Button>
                     </>
@@ -213,7 +213,7 @@ export function MemoriesPanel({
                         setEditingId(m.id);
                         setEditingValue(m.content);
                       }}
-                      aria-label="Edit memory"
+                      aria-label="Edit rule"
                     >
                       <Pencil className="size-3.5" />
                     </Button>

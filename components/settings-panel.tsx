@@ -1248,14 +1248,14 @@ export function SettingsPanel({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(
-          (err as { error?: string }).error || "Failed to add memory",
+          (err as { error?: string }).error || "Could not add rule",
         );
       }
       setDraft("");
       onMemoriesChanged();
-      toast.success("Memory saved");
+      toast.success("Rule saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add memory");
+      toast.error(e instanceof Error ? e.message : "Could not add rule");
     } finally {
       setBusy(false);
     }
@@ -1268,9 +1268,9 @@ export function SettingsPanel({
       const res = await fetch(`/api/memories/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
       onMemoryDeleted(id);
-      toast.success("Memory deleted");
+      toast.success("Rule deleted");
     } catch {
-      toast.error("Failed to delete memory");
+      toast.error("Could not delete rule");
     } finally {
       setDeletingMemoryIds((current) => {
         const next = new Set(current);
@@ -2356,8 +2356,7 @@ export function SettingsPanel({
                 <div>
                   <h3 id="settings-memories" className="text-sm font-medium">Agent Rules</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Durable facts injected into every turn. The agent can
-                    write these itself.
+                    Relevant rules and context are retrieved when they can help with a request. Useful information may be saved automatically.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -2376,7 +2375,7 @@ export function SettingsPanel({
                     size="icon"
                     onClick={() => void addMemory()}
                     disabled={busy || !draft.trim()}
-                    aria-label="Add memory"
+                    aria-label="Add rule"
                   >
                     <Plus className="size-4" />
                   </Button>
@@ -2408,7 +2407,7 @@ export function SettingsPanel({
                           className="opacity-100 sm:opacity-60 sm:group-hover:opacity-100"
                           onClick={() => void removeMemory(m.id)}
                           disabled={deletingMemoryIds.has(m.id)}
-                          aria-label="Delete memory"
+                          aria-label="Delete rule"
                         >
                           <Trash2 className="size-3.5" />
                         </Button>
