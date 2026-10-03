@@ -387,7 +387,7 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
     { id: "settings-skills", label: "Skills" },
     { id: "settings-modes", label: "Agent modes" },
     { id: "settings-mcp", label: "MCP servers" },
-    { id: "settings-memories", label: "Memories" },
+    { id: "settings-memories", label: "Agent Rules" },
   ],
   devices: [
     { id: "settings-remote-clients", label: "Remote clients" },
@@ -2354,7 +2354,7 @@ export function SettingsPanel({
  >
 <section className="flex flex-col gap-3">
                 <div>
-                  <h3 id="settings-memories" className="text-sm font-medium">Memories</h3>
+                  <h3 id="settings-memories" className="text-sm font-medium">Agent Rules</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Durable facts injected into every turn. The agent can
                     write these itself.
@@ -2364,7 +2364,7 @@ export function SettingsPanel({
                   <Input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Add a memory…"
+                    placeholder="Add an agent rule…"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -2384,7 +2384,7 @@ export function SettingsPanel({
                 <ul className="flex flex-col gap-2">
                   {memories.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-                      No memories yet.
+                      No agent rules yet.
                     </li>
                   ) : (
                     memories.map((m) => (
@@ -2885,8 +2885,8 @@ export function SettingsPanel({
                 />
                 <SettingsTile
                   id="settings-memories"
-                  title="Memories"
-                  meta={memories.length ? `${memories.length} memor${memories.length === 1 ? "y" : "ies"}` : "No memories yet"}
+                  title="Agent Rules"
+                  meta={memories.length ? `${memories.length} ${memories.length === 1 ? "rule" : "rules"}` : "No agent rules yet"}
                   icon={Brain}
                   onOpen={() => setSettingsPane("memories")}
                 />

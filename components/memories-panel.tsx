@@ -112,9 +112,9 @@ export function MemoriesPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Memories</SheetTitle>
+          <SheetTitle>Agent Rules</SheetTitle>
           <SheetDescription>
-            The agent retrieves matching memories when they help with a request. Add, edit, search, or delete anything here.
+            The agent applies these rules and context when they help with a request. Add, edit, search, or delete them here.
           </SheetDescription>
         </SheetHeader>
 
@@ -122,7 +122,7 @@ export function MemoriesPanel({
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add a memory…"
+            placeholder="Add an agent rule…"
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -143,8 +143,8 @@ export function MemoriesPanel({
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search memories"
-          aria-label="Search memories"
+          placeholder="Search agent rules"
+          aria-label="Search agent rules"
           className="mt-4"
         />
 
@@ -152,11 +152,11 @@ export function MemoriesPanel({
           <ul className="space-y-2 pb-6">
             {memories.length === 0 ? (
               <li className="px-1 py-8 text-center text-sm text-muted-foreground">
-                No memories yet.
+                No agent rules yet.
               </li>
             ) : visibleMemories.length === 0 ? (
               <li className="px-1 py-8 text-center text-sm text-muted-foreground">
-                No memories match “{search}”.
+                No agent rules match “{search}”.
               </li>
             ) : (
               visibleMemories.map((m) => (
