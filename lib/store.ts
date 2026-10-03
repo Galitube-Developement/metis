@@ -517,6 +517,14 @@ export type Memory = {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  namespace?: "profile" | "preferences" | "device" | "project" | "infrastructure" | "software" | "workflow" | "semantic";
+  topic?: string;
+  confidence?: number;
+  importance?: number;
+  confirmed?: boolean;
+  source?: "user" | "conversation";
+  state?: "active" | "superseded" | "archived";
+  lastUsedAt?: string;
 };
 
 const DATA_DIR = config.dataDir;
@@ -533,6 +541,7 @@ export type GlobalModelSettings = {
     compressChatHistory?: boolean;
   };
   modelId?: string;
+  responseInstructions?: string;
   modelParams?: Array<{ id: string; value: string }>;
   modelParamsByModel?: Record<string, Array<{ id: string; value: string }>>;
   lastModelByProvider?: Record<string, string>;

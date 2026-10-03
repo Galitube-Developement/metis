@@ -39,6 +39,7 @@ export async function PATCH(req: Request) {
     voiceInput?: unknown;
     featureFlags?: unknown;
     compression?: unknown;
+    responseInstructions?: unknown;
   };
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
   const current = getGlobalModelSettings(userId);
@@ -153,6 +154,10 @@ export async function PATCH(req: Request) {
             .filter(([key, value]) => ["plans", "notes", "recovery", "askUserTimeout", "voiceInput", "browser"].includes(key) && typeof value === "boolean"),
         )
       : undefined;
+  const responseInstructions =
+    typeof body.responseInstructions === "string"
+      ? body.responseInstructions.slice(0, 20_000)
+      : undefined;
   const compression =
     body.compression && typeof body.compression === "object" && !Array.isArray(body.compression)
       ? (() => {
@@ -190,6 +195,7 @@ export async function PATCH(req: Request) {
         ...(voiceInput !== undefined ? { voiceInput } : {}),
         ...(featureFlags !== undefined ? { featureFlags: { ...current.featureFlags, ...featureFlags } } : {}),
         ...(compression !== undefined ? { compression: { ...current.compression, ...compression } } : {}),
+        ...(responseInstructions !== undefined ? { responseInstructions } : {}),
       },
       userId,
     ),

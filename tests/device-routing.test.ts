@@ -125,7 +125,7 @@ test("offline Windows device cannot trigger a desktop command on another host", 
 test("assistant status marks infrastructure scope and never invents a remote-client service", async () => {
   const result = parsed(await gateway.dispatchGatewayTool("assistant_status", {}, {
     auditCall: false,
-    context: { uid: process.getuid?.(), gid: process.getgid?.(), allowRoot: true, workspaceRoot: process.cwd(), home: os.homedir() },
+    context: { uid: process.getuid?.(), gid: process.getgid?.(), allowRoot: true, workspaceRoot: os.homedir(), home: os.homedir() },
   }));
   assert.equal(result.scope, "metis_infrastructure_only");
   assert.equal(result.remote_devices.status, "not_queried");

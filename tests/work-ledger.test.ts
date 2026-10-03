@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
+import os from "node:os";
 import {
   normalizeClaims,
   evaluateClaim,
@@ -86,7 +87,7 @@ function startGateway() {
     env: {
       ...process.env,
       AI_CHAT_INTERNAL_ORIGIN: "http://127.0.0.1:4000",
-      MCP_AGENT_CWD: process.cwd(),
+      MCP_AGENT_CWD: os.homedir(),
       MCP_OS_UID: String(process.getuid?.() ?? 0),
       MCP_OS_GID: String(process.getgid?.() ?? 0),
       MCP_ALLOW_ROOT_AGENTS: "1",

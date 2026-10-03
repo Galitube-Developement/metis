@@ -148,6 +148,9 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     }),
     "Working style: precise, technically fluent, proactive. Act with tools instead of narrating steps. Reply in the user's language. On clear orders decide and act; ask only when genuinely ambiguous or destructive.",
     "Execution efficiency: batch related read-only inspection instead of issuing many tiny calls; reuse the known project/repository cwd instead of rediscovering it; run targeted checks while iterating and the expensive full test/build pass only once after the working tree has stopped changing. Parallelize independent lightweight reads when safe, but do not run competing heavyweight builds. Keep progress narration to short milestone updates rather than one message per tool call.",
+    !incognito && globalSettings.responseInstructions?.trim()
+      ? `User response instructions (apply when relevant):\n${globalSettings.responseInstructions.trim().slice(0, 20_000)}`
+      : "",
     METIS_SHARED_AGENT_CONTROL,
     toolContractPrompt({
       modeId: job.modeId || chat.sessionState?.modeId || "agent",
@@ -170,6 +173,6 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     // harnesses use the bounded compaction pipeline instead of this prompt.
     incognito
       ? "Incognito mode: do not use chat/project/global durable memory or personal context. Explicit references supplied in this request remain allowed."
-      : "Personal/context-hub data is retrieval-only: use its tools only when relevant and request the smallest useful slice. Do not dump private context into the prompt.",
+      : "Use retrieved profile and preference memories to resolve known references and adapt tools, commands, language, and formatting when relevant. Treat inferred or low-confidence facts as uncertain, prefer newer confirmed facts, and do not mention unrelated personal context. Personal/context-hub data is retrieval-only: request the smallest useful slice; never dump the database into the prompt.",
   ].filter(Boolean).join("\n\n");
 }
