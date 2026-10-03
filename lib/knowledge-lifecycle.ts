@@ -31,6 +31,9 @@ const LONG_TERM_OVERRIDE = /\b(ab\s+jetzt|zukünftig|künftig|immer|standardmä�
 const EXPLICIT_REMEMBER = /\b(merk(?:e)?\s+(?:dir\s+)?(?:das|dass)?|speicher(?:e)?\s+(?:dir\s+)?(?:das|dass)?|remember\s+(?:that|this)?|save\s+(?:that|this)?\s+(?:as\s+memory)?)\b/i;
 const PREFERENCE = /\b(ich\s+(?:bevorzuge|mag)\b|mir\s+ist\s+wichtig\b|mein\s+standard\b|i\s+(?:prefer|like)\b|my\s+default\b|please\s+(?:answer|respond|format)\b|bitte\s+(?:antworte|formatiere)\b)/i;
 const STABLE_FACT = /\b(ich\s+(?:heiße|heisse|wohne|nutze|verwende|habe|spiele|arbeite)\b|mein(?:e|er|em|en)?\s+[^.!?]{1,70}\s+(?:ist|sind|hat|haben|nutzt|verwendet)\b|i\s+(?:am|live|use|have|play|work)\b|my\s+[^.!?]{1,70}\s+(?:is|are|has|uses)\b)/i;
+const EXPLICIT_SCOPE = /\b((?:diesem|diesen|dieses|aktuellen)\s+(?:chat|projekt|repo|repository)|(?:this|current)\s+(?:chat|project|repo|repository))\b/i;
+const SCOPED_FIRST_PERSON = /\b(?:bevorzuge|mag|heiße|heisse|wohne|nutze|verwende|habe|spiele|arbeite)\s+ich\b/i;
+const TRANSIENT_REPORT = /\b(fehler(?:meldung|code|n)?|problem(?:e|en)?|frage(?:n)?|störung(?:en)?|absturz|abgestürzt|error(?:s)?|issue(?:s)?|bug(?:s)?|crash(?:es|ed)?|trouble|question(?:s)?)\b|(?:funktioniert|reagiert)\s+nicht|\bnot\s+(?:working|responding)\b/i;
 const TASK_SCOPE = /\b(metis|projekt|project|repo|repository|codebase|app|website|webseite|ui|server|agent|modell|model|workflow|automation|diesem\s+chat|this\s+chat)\b/i;
 const REQUIREMENT = /\b(soll(?:en)?|muss|müssen|darf\s+nicht|immer|nie|standardmäßig|needs?\s+to|must|should|shouldn['’]?t|never|always|by\s+default)\b/i;
 const QUESTION_START = /^(wer|wie|was|wann|wo|warum|wieso|weshalb|welche[rmn]?|kann|können|ist|sind|hat|haben|do|does|did|is|are|can|could|should|what|when|where|why|how|which)\b/i;
@@ -81,16 +84,18 @@ function classifyStatement(statement: string): KnowledgeClass {
   const text = statement.trim();
   if (!text || text.endsWith("?") || QUESTION_START.test(text)) return "ephemeral";
   if (SENSITIVE.test(text) || CODEISH.test(text)) return "ephemeral";
-  // Ordinary prompts must not become global memories. Capture only explicit
-  // remember requests plus clear preference or first-person profile statements.
+  // An explicit chat/project boundary also applies to remember requests.
+  if (EXPLICIT_SCOPE.test(text) && (
+    EXPLICIT_REMEMBER.test(text) || PREFERENCE.test(text) || REQUIREMENT.test(text)
+    || ((STABLE_FACT.test(text) || SCOPED_FIRST_PERSON.test(text)) && !TRANSIENT_REPORT.test(text))
+  )) return "task";
   if (EXPLICIT_REMEMBER.test(text)) return "durable";
   if (EPHEMERAL.test(text) && !LONG_TERM_OVERRIDE.test(text)) return "ephemeral";
-  // Clear interaction preferences and first-person profile statements are
-  // useful across conversations. Project requirements stay chat-scoped below.
-  if (PREFERENCE.test(text) || STABLE_FACT.test(text)) return "durable";
-  // Project/app requirements stay scoped to the chat even when they are
-  // long-lived ("Metis should always …"). They are not global user facts.
+  // Scoped requirements take precedence over a preference/profile match.
   if (TASK_SCOPE.test(text) && REQUIREMENT.test(text)) return "task";
+  if (PREFERENCE.test(text)) return "durable";
+  // First-person wording alone does not make an incident a stable profile fact.
+  if (STABLE_FACT.test(text) && !TRANSIENT_REPORT.test(text)) return "durable";
   return "ephemeral";
 }
 

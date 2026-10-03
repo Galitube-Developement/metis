@@ -44,7 +44,7 @@ Metis AI includes the following capabilities:
 | **Context and files** | Image and file uploads, previews, references, pinned context and model-aware context limits |
 | **Workspaces** | Plans, canvases, notes, memories, remote files and terminals available alongside a conversation |
 | **Browser control** | Authenticated browser sessions with tabs, navigation, forms, clicks, typing, scrolling, screenshots and viewport control |
-| **Voice** | Speech transcription and realtime voice sessions when compatible credentials are configured |
+| **Voice input** | Speech transcription for composing messages |
 | **Provider freedom** | OpenAI, Anthropic, Google, xAI, OpenRouter, Cursor, Codex, Claude Code, Ollama, Vertex/ADC and generic OpenAI-compatible endpoints |
 | **MCP gateway** | Discover, register and call local or remote MCP servers, plus workflows, automations, web/documentation tools and platform integrations |
 | **Remote execution** | Enrolled remote clients with authenticated command execution, testing and file/workspace operations |

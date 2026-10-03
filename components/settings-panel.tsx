@@ -65,6 +65,7 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { MemoryItem } from "@/components/memories-panel";
+import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SkillsSettings } from "@/components/skills-settings";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
@@ -387,8 +388,8 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
     { id: "settings-skills", label: "Skills" },
     { id: "settings-modes", label: "Agent modes" },
     { id: "settings-mcp", label: "MCP servers" },
-    { id: "settings-memories", label: "Agent Rules" },
-    { id: "settings-response-instructions", label: "Response instructions" },
+    { id: "settings-memories", label: "Memories" },
+    { id: "settings-agent-rules", label: "Agent Rules" },
   ],
   devices: [
     { id: "settings-remote-clients", label: "Remote clients" },
@@ -430,7 +431,7 @@ type SettingsPaneId =
   | "modes"
   | "mcp"
   | "memories"
-  | "response-instructions";
+  | "agent-rules";
 
 const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "tab">>> = {
   "settings-browser-storage": "browser-storage",
@@ -440,7 +441,7 @@ const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "
   "settings-modes": "modes",
   "settings-mcp": "mcp",
   "settings-memories": "memories",
-  "settings-response-instructions": "response-instructions",
+  "settings-agent-rules": "agent-rules",
 };
 
 function SettingsTile({
@@ -746,49 +747,6 @@ export function SettingsPanel({
   const [browserStorageDeleteTarget, setBrowserStorageDeleteTarget] = useState<string | null>(null);
   const [browserStorageClearAll, setBrowserStorageClearAll] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPaneId>("tab");
-  const [responseInstructions, setResponseInstructions] = useState("");
-  const [responseInstructionsLoaded, setResponseInstructionsLoaded] = useState(false);
-  const [responseInstructionsBusy, setResponseInstructionsBusy] = useState(false);
-  const [responseInstructionsError, setResponseInstructionsError] = useState("");
-  const [responseInstructionsSaved, setResponseInstructionsSaved] = useState(false);
-  const [responseInstructionsReload, setResponseInstructionsReload] = useState(0);
-
-  useEffect(() => {
-    if (!open || settingsPane !== "response-instructions") return;
-    let cancelled = false;
-    setResponseInstructionsLoaded(false);
-    setResponseInstructionsError("");
-    void fetch("/api/preferences")
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Could not load response instructions.");
-        if (!cancelled) setResponseInstructions(typeof data.settings?.responseInstructions === "string" ? data.settings.responseInstructions : "");
-      })
-      .catch((error) => { if (!cancelled) setResponseInstructionsError(error instanceof Error ? error.message : "Could not load response instructions."); })
-      .finally(() => { if (!cancelled) setResponseInstructionsLoaded(true); });
-    return () => { cancelled = true; };
-  }, [open, settingsPane, responseInstructionsReload]);
-
-  const saveResponseInstructions = async () => {
-    setResponseInstructionsBusy(true);
-    setResponseInstructionsError("");
-    setResponseInstructionsSaved(false);
-    try {
-      const response = await fetch("/api/preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ responseInstructions }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not save response instructions.");
-      setResponseInstructions(typeof data.settings?.responseInstructions === "string" ? data.settings.responseInstructions : responseInstructions);
-      setResponseInstructionsSaved(true);
-    } catch (error) {
-      setResponseInstructionsError(error instanceof Error ? error.message : "Could not save response instructions.");
-    } finally {
-      setResponseInstructionsBusy(false);
-    }
-  };
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [browserStorageQuery, setBrowserStorageQuery] = useState("");
   const [compressionPreview, setCompressionPreview] = useState("");
@@ -1294,14 +1252,14 @@ export function SettingsPanel({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(
-          (err as { error?: string }).error || "Could not add rule",
+          (err as { error?: string }).error || "Could not add memory",
         );
       }
       setDraft("");
       onMemoriesChanged();
-      toast.success("Rule saved");
+      toast.success("Memory saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not add rule");
+      toast.error(e instanceof Error ? e.message : "Could not add memory");
     } finally {
       setBusy(false);
     }
@@ -1314,9 +1272,9 @@ export function SettingsPanel({
       const res = await fetch(`/api/memories/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
       onMemoryDeleted(id);
-      toast.success("Rule deleted");
+      toast.success("Memory deleted");
     } catch {
-      toast.error("Could not delete rule");
+      toast.error("Could not delete memory");
     } finally {
       setDeletingMemoryIds((current) => {
         const next = new Set(current);
@@ -2400,16 +2358,16 @@ export function SettingsPanel({
  >
 <section className="flex flex-col gap-3">
                 <div>
-                  <h3 id="settings-memories" className="text-sm font-medium">Agent Rules</h3>
+                  <h3 id="settings-memories" className="text-sm font-medium">Memories</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Relevant rules and context are retrieved when they can help with a request. Useful information may be saved automatically.
+                    Relevant memories and context are retrieved when they can help with a request. Useful information may be saved automatically.
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <Input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Add an agent rule…"
+                    placeholder="Add a memory…"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -2421,7 +2379,7 @@ export function SettingsPanel({
                     size="icon"
                     onClick={() => void addMemory()}
                     disabled={busy || !draft.trim()}
-                    aria-label="Add rule"
+                    aria-label="Add memory"
                   >
                     <Plus className="size-4" />
                   </Button>
@@ -2429,7 +2387,7 @@ export function SettingsPanel({
                 <ul className="flex flex-col gap-2">
                   {memories.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-                      No agent rules yet.
+                      No memories yet.
                     </li>
                   ) : (
                     memories.map((m) => (
@@ -2453,7 +2411,7 @@ export function SettingsPanel({
                           className="opacity-100 sm:opacity-60 sm:group-hover:opacity-100"
                           onClick={() => void removeMemory(m.id)}
                           disabled={deletingMemoryIds.has(m.id)}
-                          aria-label="Delete rule"
+                          aria-label="Delete memory"
                         >
                           <Trash2 className="size-3.5" />
                         </Button>
@@ -2463,45 +2421,15 @@ export function SettingsPanel({
                 </ul>
               </section>
  </SettingsFeaturePane>
- ) : settingsPane === "response-instructions" ? (
+ ) : settingsPane === "agent-rules" ? (
    <SettingsFeaturePane
      backLabel="Agent"
-     title="Response instructions"
-     description="Give the agent instructions for how it should respond across your chats."
-     slot="response-instructions"
+     title="Agent Rules"
+     description="Manage individual instructions for how the agent responds across your chats."
+     slot="agent-rules"
      onBack={() => setSettingsPane("tab")}
    >
-     <section className="flex max-w-3xl flex-col gap-4">
-       <div>
-         <label htmlFor="response-instructions-input" className="text-xs font-medium">How should the agent respond?</label>
-         <p className="mt-1 text-xs text-muted-foreground">These instructions guide the agent’s tone, level of detail, and formatting. They are separate from Agent Rules, which store useful facts and context.</p>
-       </div>
-       <Textarea
-         id="response-instructions-input"
-         value={responseInstructions}
-         onChange={(event) => { setResponseInstructions(event.target.value); setResponseInstructionsSaved(false); }}
-         disabled={!responseInstructionsLoaded || responseInstructionsBusy}
-         placeholder="For example: Keep answers concise, explain technical terms, and give commands I can copy and paste."
-         rows={10}
-         maxLength={20_000}
-         aria-label="How should the agent respond?"
-         className="min-h-56 resize-y text-sm"
-       />
-       <div className="flex flex-wrap items-center gap-3">
-         <Button type="button" size="sm" onClick={() => void saveResponseInstructions()} disabled={!responseInstructionsLoaded || responseInstructionsBusy}>
-           {responseInstructionsBusy ? "Saving…" : "Save instructions"}
-         </Button>
-         <span className="text-xs text-muted-foreground">{responseInstructions.length.toLocaleString()} / 20,000 characters</span>
-         {responseInstructionsSaved ? <span role="status" className="text-xs text-muted-foreground">Saved. Applies to future replies.</span> : null}
-       </div>
-       {!responseInstructionsLoaded && !responseInstructionsError ? <p role="status" className="text-xs text-muted-foreground">Loading response instructions…</p> : null}
-       {responseInstructionsError ? (
-         <div className="flex flex-wrap items-center gap-3">
-           <p role="alert" className="text-xs text-destructive">{responseInstructionsError}</p>
-           {!responseInstructionsLoaded ? null : <Button type="button" size="sm" variant="outline" onClick={() => setResponseInstructionsReload((value) => value + 1)}>Retry</Button>}
-         </div>
-       ) : null}
-     </section>
+     <AgentRulesSettings />
    </SettingsFeaturePane>
  ) : (
  <>
@@ -2970,17 +2898,17 @@ export function SettingsPanel({
                 />
                 <SettingsTile
                   id="settings-memories"
-                  title="Agent Rules"
-                  meta={memories.length ? `${memories.length} ${memories.length === 1 ? "rule" : "rules"}` : "No agent rules yet"}
+                  title="Memories"
+                  meta={memories.length ? `${memories.length} ${memories.length === 1 ? "memory" : "memories"}` : "No memories yet"}
                   icon={Brain}
                   onOpen={() => setSettingsPane("memories")}
                 />
                 <SettingsTile
-                  id="settings-response-instructions"
-                  title="Response instructions"
-                  meta="Set how the agent replies"
+                  id="settings-agent-rules"
+                  title="Agent Rules"
+                  meta="Individual instructions for every chat"
                   icon={MessagesSquare}
-                  onOpen={() => setSettingsPane("response-instructions")}
+                  onOpen={() => setSettingsPane("agent-rules")}
                 />
               </div>
  </TabsContent>

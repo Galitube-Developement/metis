@@ -28,8 +28,6 @@ export type ProviderCapabilities = {
   skills?: boolean;
   subagents?: boolean;
   usage?: boolean;
-  /** Native bidirectional audio transport; availability is checked at session start. */
-  realtimeVoice?: boolean;
 };
 
 export type ProviderModelParameter = {

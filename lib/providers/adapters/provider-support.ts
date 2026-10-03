@@ -52,7 +52,6 @@ import { persistToolsForMessage } from "@/lib/tool-persistence";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { compress } from "@/lib/compression";
 import { recoveryTranscript } from "@/lib/providers/recovery-transcript";
-import { recentVoiceContext } from "@/lib/voice-protocol";
 import { stripRawToolMarkup } from "@/lib/providers/tool-schema";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import {
@@ -530,7 +529,6 @@ export function providerCurrentTurnPrompt(context: ProviderContext): string {
     reference.content ? `  Context:\n${reference.content}` : "",
   ].filter(Boolean).join("\n")).join("\n");
   return [
-    recentVoiceContext(context.chat.messages, job.messageId),
     providerTaskMessage(job),
     references ? `Current-turn references:\n${references}` : "",
     job.referenceText ? `Current-turn referenced context:\n${job.referenceText}` : "",
