@@ -1,11 +1,18 @@
 export const COMPOSER_SEND_DEDUP_MS = 900;
 
 export function composerLiveText(domText: string | null | undefined, stateText: string) {
-  const fromDom = (domText ?? "").replace(/\u00a0/g, " ");
-  return fromDom.trim() ? fromDom : stateText;
+  const fromDom = stripComposerPlaceholderLeak((domText ?? "").replace(/\u00a0/g, " "));
+  const fromState = stripComposerPlaceholderLeak(stateText.replace(/\u00a0/g, " "));
+  return fromDom.trim() ? fromDom : fromState;
 }
 
-/** While focused, skip live-sync overwrites. Always apply a programmatic clear or forced write (voice). */
+export function stripComposerPlaceholderLeak(text: string, placeholder = "Message Metis…") {
+  const live = text.replace(/\u00a0/g, " ").trim();
+  const label = placeholder.replace(/\u00a0/g, " ").trim();
+  return label && live === label ? "" : text;
+}
+
+/** Never overwrite a focused editor unless force (send, voice, mention, chat switch). */
 export function shouldSyncComposerDom(
   currentText: string,
   nextValue: string,
@@ -14,8 +21,7 @@ export function shouldSyncComposerDom(
 ) {
   if (currentText === nextValue) return false;
   if (force) return true;
-  if (focused && nextValue !== "") return false;
-  return true;
+  return !focused;
 }
 
 export function composerTranscriptInsert(current: string, transcript: string) {
@@ -41,6 +47,12 @@ export function shouldAcceptRemoteComposerInput(options: {
 }
 
 export const COMPOSER_DIRTY_MS = 1500;
+export const COMPOSER_STATE_COMMIT_MS = 320;
+
+/** Full AppShell state updates only when the field flips empty, not on every key. */
+export function shouldCommitComposerParentState(previous: string, next: string) {
+  return Boolean(previous.trim()) !== Boolean(next.trim());
+}
 
 export function shouldPersistComposerSession(options: {
   chatId: string | null | undefined;

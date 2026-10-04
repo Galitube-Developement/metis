@@ -610,11 +610,8 @@
   background-clip: padding-box;
 }
 
-.rich-composer-input:empty::before,
-.rich-composer-input[data-empty]::before {
-  content: attr(data-placeholder);
-  pointer-events: none;
-  @apply text-muted-foreground;
+.composer-placeholder {
+  user-select: none;
 }
 
 .rich-composer-input {
