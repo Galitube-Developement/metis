@@ -74,7 +74,7 @@ export function AgentRulesSettings({ onRuleCountChange }: { onRuleCountChange?: 
           rows={1}
           maxLength={20_000}
           disabled={!loaded || busy}
-          className="h-8 min-h-8 field-sizing-fixed resize-none py-1 text-sm leading-5"
+          className="h-auto min-h-8 field-sizing-content resize-y py-1 text-sm leading-5"
         />
         <Button size="icon" type="button" disabled={!loaded || busy || !draft.trim()} onClick={() => void mutate("POST", undefined, draft)} aria-label="Add rule">
           <Plus className="size-4" />
