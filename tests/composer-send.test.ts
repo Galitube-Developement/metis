@@ -9,8 +9,10 @@ import {
   shouldAutoDrainQueue,
   shouldIgnoreComposerEnter,
   shouldStartQueuedFollowUp,
+  shouldCommitComposerParentState,
   shouldSyncComposerDom,
   composerTranscriptInsert,
+  stripComposerPlaceholderLeak,
 } from "../lib/composer-send";
 
 test("composerLiveText prefers non-empty DOM text over stale React state", () => {
@@ -19,8 +21,26 @@ test("composerLiveText prefers non-empty DOM text over stale React state", () =>
   assert.equal(composerLiveText("  ", "draft"), "draft");
 });
 
-test("shouldSyncComposerDom clears a focused editor after send", () => {
-  assert.equal(shouldSyncComposerDom("hello", "", true), true);
+test("composerLiveText ignores a leaked Message Metis placeholder", () => {
+  assert.equal(composerLiveText("Message Metis…", ""), "");
+  assert.equal(composerLiveText("Message Metis…", "draft"), "draft");
+  assert.equal(stripComposerPlaceholderLeak("Message Metis…"), "");
+  assert.equal(stripComposerPlaceholderLeak("hello"), "hello");
+});
+
+test("shouldCommitComposerParentState only flips when the field becomes empty or nonempty", () => {
+  assert.equal(shouldCommitComposerParentState("", "h"), true);
+  assert.equal(shouldCommitComposerParentState("h", "he"), false);
+  assert.equal(shouldCommitComposerParentState("hello", "hell"), false);
+  assert.equal(shouldCommitComposerParentState("hello", ""), true);
+  assert.equal(shouldCommitComposerParentState("  ", "x"), true);
+});
+
+test("shouldSyncComposerDom never overwrites a focused editor without force", () => {
+  assert.equal(shouldSyncComposerDom("hello", "", true), false);
+  assert.equal(shouldSyncComposerDom("hello", "", true, true), true);
+  assert.equal(shouldSyncComposerDom("h", "", true), false);
+  assert.equal(shouldSyncComposerDom("hel", "he", true), false);
   assert.equal(shouldSyncComposerDom("hello", "hello", true), false);
   assert.equal(shouldSyncComposerDom("hello", "other draft", true), false);
   assert.equal(shouldSyncComposerDom("hello", "other draft", false), true);

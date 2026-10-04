@@ -6,6 +6,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { Eye, Pencil } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
@@ -80,7 +81,7 @@ export function EditableMarkdown({
   const onChangeRef = useRef(onChange);
   const syncingRef = useRef(false);
   const [draft, setDraft] = useState(value);
-  const [preview, setPreview] = useState(false);
+  const [preview, setPreview] = useState(true);
   const previewDraft = useDeferredValue(draft);
   onChangeRef.current = onChange;
 
@@ -193,12 +194,16 @@ export function EditableMarkdown({
         type="button"
         className="editable-markdown-toggle"
         aria-label={preview ? "Edit Markdown" : "Preview Markdown"}
+        title={preview ? "Edit Markdown" : "Preview Markdown"}
         onClick={() => {
           setPreview((current) => !current);
-          if (preview) requestAnimationFrame(() => viewRef.current?.focus());
+          if (preview) requestAnimationFrame(() => {
+            viewRef.current?.requestMeasure();
+            viewRef.current?.focus();
+          });
         }}
       >
-        {preview ? "Edit" : "Preview"}
+        {preview ? <Pencil className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
       </button>
       <div ref={editorHostRef} className="editable-markdown-editor" hidden={preview} />
       {preview && (

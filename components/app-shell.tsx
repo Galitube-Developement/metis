@@ -94,7 +94,10 @@ import {
 import { toast } from "sonner";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
-import { RichComposerInput } from "@/components/rich-composer-input";
+import { AssistantImageGallery } from "@/components/assistant-image-gallery";
+import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
+import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
+import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -141,6 +144,7 @@ import { stripTranscriptDump } from "@/lib/agent-transcript";
 import { planLooksParallelizable } from "@/lib/modes";
 import { BUILT_IN_SLASH_COMMANDS, goalCommandAction, matchSlashCommand, slashCommandQuery } from "@/lib/slash-commands";
 import {
+  COMPOSER_STATE_COMMIT_MS,
   composerLiveText,
   composerTranscriptInsert,
   composerUserEditMeta,
@@ -148,6 +152,7 @@ import {
   isDuplicateComposerSend,
   mergeQueuedFollowUps,
   shouldAcceptRemoteComposerInput,
+  shouldCommitComposerParentState,
   shouldIgnoreComposerEnter,
   shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
@@ -2220,6 +2225,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const slashResults = slashQuery === null ? [] : BUILT_IN_SLASH_COMMANDS.filter((command) => command.id.startsWith(slashQuery));
   const referenceAutocompleteDismissedRef = useRef(false);
   const previousComposerInputRef = useRef("");
+  const inputCommitTimerRef = useRef<number>(0);
   const [referenceText, setReferenceText] = useState("");
   const [selectionAction, setSelectionAction] = useState<{ text: string; x: number; y: number } | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
@@ -2426,7 +2432,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
   const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
   const queueDrainRef = useRef(false);
-  const textareaRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -4338,6 +4344,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
     if (allowRemoteComposer) {
       setInput(remoteInput);
+      if (composerPersistChatRef.current !== id) {
+        setComposerSyncNonce((current) => current + 1);
+      }
       inputUpdatedAtRef.current = session.inputUpdatedAt || "";
       if (source === "server" && composerPersistChatRef.current !== id) {
         composerDirtyUntilRef.current = 0;
@@ -4480,6 +4489,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setBrowserInput(activeTab?.url || "");
       setMessages([]);
       setInput(draftInputRef.current);
+      setComposerSyncNonce((current) => current + 1);
       setReferenceMenu(null);
       setReferences([]);
       setMessageOffset(0);
@@ -6475,6 +6485,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     });
     if (reverted) {
       setInput(target.content);
+      setComposerSyncNonce((current) => current + 1);
       setReferences(target.references ?? []);
       setReferenceText(target.referenceText ?? "");
       setRestoredAttachments(target.attachments ?? []);
@@ -6618,7 +6629,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     });
   }
 
-  function onComposerPaste(e: ClipboardEvent<HTMLDivElement>) {
+  function onComposerPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const items = e.clipboardData?.items;
     if (!items) return;
     const imageFiles: File[] = [];
@@ -6946,6 +6957,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const chatId = activeChatIdRef.current;
     if (!await removeMessageFromQueue(message) || activeChatIdRef.current !== chatId) return;
     setInput(message.text);
+    setComposerSyncNonce((current) => current + 1);
     setReferenceText(message.referenceText ?? "");
     setReferences(message.references ?? []);
     setPendingFiles(message.files);
@@ -7100,7 +7112,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     e?.preventDefault();
     const isOverride = textOverride !== undefined;
-    let text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
+    let text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     let goalMessage: string | null = null;
     const slashCommand = !isOverride ? matchSlashCommand(text) : null;
     if (!isOverride && /^\/[a-z-]+(?:\s|$)/i.test(text) && !slashCommand) {
@@ -7262,7 +7274,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     asComposerSubmission = false,
     sendQueuedNow = false,
   ) {
-    const text = (textOverride ?? composerLiveText(textareaRef.current?.innerText, input)).trim();
+    const text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
@@ -8452,22 +8464,37 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     url: browserUrl,
   });
 
+  function commitComposerParentState(value: string) {
+    const editEpoch = ++inputEpochRef.current;
+    setInputState((current) => editEpoch === inputEpochRef.current ? value : current);
+  }
+
   function handleComposerInputChange(value: string, cursorPosition: number) {
     const previousValue = previousComposerInputRef.current;
     previousComposerInputRef.current = value;
+    draftInputRef.current = value;
+    stateRef.current.input = value;
     const edit = composerUserEditMeta();
     inputUpdatedAtRef.current = edit.updatedAt;
     composerDirtyUntilRef.current = edit.dirtyUntil;
     if (activeChatIdRef.current) composerPersistChatRef.current = activeChatIdRef.current;
-    const editEpoch = ++inputEpochRef.current;
-    startTransition(() => {
-      setInputState((current) => editEpoch === inputEpochRef.current ? value : current);
-    });
+    if (inputCommitTimerRef.current) window.clearTimeout(inputCommitTimerRef.current);
+    if (shouldCommitComposerParentState(previousValue, value)) {
+      inputCommitTimerRef.current = 0;
+      commitComposerParentState(value);
+    } else {
+      inputCommitTimerRef.current = window.setTimeout(() => {
+        inputCommitTimerRef.current = 0;
+        commitComposerParentState(draftInputRef.current);
+      }, COMPOSER_STATE_COMMIT_MS);
+    }
     const nextSlashQuery = slashCommandQuery(value, cursorPosition);
-    setSlashQuery(nextSlashQuery);
-    setSlashIndex(0);
+    if (nextSlashQuery !== slashQuery) {
+      setSlashQuery(nextSlashQuery);
+      setSlashIndex(0);
+    }
     if (nextSlashQuery !== null) {
-      setReferenceMenu(null);
+      if (referenceMenu) setReferenceMenu(null);
       return;
     }
     if (referenceAutocompleteDismissedRef.current) {
@@ -8475,7 +8502,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         (value.match(/@/g) || []).length > (previousValue.match(/@/g) || []).length ||
         (value.endsWith("@") && !previousValue.endsWith("@"));
       if (!addedAtMention) {
-        setReferenceMenu(null);
+        if (referenceMenu) setReferenceMenu(null);
         return;
       }
       referenceAutocompleteDismissedRef.current = false;
@@ -8483,16 +8510,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const beforeCursor = value.slice(0, cursorPosition);
     const match = beforeCursor.match(/(?:^|\s)@([^\n]*)$/);
     if (!match) {
-      setReferenceMenu(null);
+      if (referenceMenu) setReferenceMenu(null);
       return;
     }
     const start = beforeCursor.length - match[0].length + (match[0].startsWith("@") ? 0 : 1);
-    setReferenceMenu({
+    const nextMenu = {
       query: match[1],
-      kind: null,
+      kind: null as ReferenceKind | null,
       start,
       end: cursorPosition,
-    });
+    };
+    if (
+      !referenceMenu
+      || referenceMenu.query !== nextMenu.query
+      || referenceMenu.start !== nextMenu.start
+      || referenceMenu.end !== nextMenu.end
+    ) {
+      setReferenceMenu(nextMenu);
+    }
   }
 
   function openSlashModelPicker() {
@@ -8552,33 +8587,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       caretPosition = start + completedTag.length;
       return next;
     });
+    setComposerSyncNonce((current) => current + 1);
     referenceAutocompleteDismissedRef.current = false;
     setReferenceMenu(null);
     window.requestAnimationFrame(() => {
       const element = textareaRef.current;
       if (!element) return;
       element.focus();
-      const selection = window.getSelection();
-      if (!selection) return;
-      const range = document.createRange();
-      let remaining = caretPosition;
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      let node: Node | null;
-      while ((node = walker.nextNode())) {
-        const length = node.textContent?.length || 0;
-        if (remaining <= length) {
-          range.setStart(node, remaining);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          return;
-        }
-        remaining -= length;
-      }
-      range.selectNodeContents(element);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
+      const cursor = Math.max(0, Math.min(caretPosition, element.value.length));
+      element.setSelectionRange(cursor, cursor);
     });
   }
 
@@ -8587,6 +8604,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (item) => !(item.kind === reference.kind && item.id === reference.id),
     ));
     setInput((current) => current.replace(`@${reference.label}`, "").replace(/[ \t]{2,}/g, " "));
+    setComposerSyncNonce((current) => current + 1);
   }
 
   async function saveWorkspaceDraft(chatId: string, workspaceId: string) {
@@ -8759,6 +8777,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       {queuedMessages.map((message, index) => (
         <div
           key={message.id}
+          tabIndex={0}
+          aria-label={`Queued message ${index + 1}`}
           onDragOver={(event) => {
             event.preventDefault();
             if (draggedQueueId !== message.id) setDragOverQueueId(message.id);
@@ -8770,7 +8790,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setDragOverQueueId(null);
           }}
           className={cn(
-            "flex items-center gap-2 rounded-lg border bg-muted/20 px-2.5 py-2 text-xs transition-colors",
+            "group/queue flex items-start gap-2 rounded-lg border bg-muted/20 px-2.5 py-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             dragOverQueueId === message.id ? "border-primary/70 bg-primary/10" : "border-border/40",
             draggedQueueId === message.id && "opacity-50",
           )}
@@ -8800,10 +8820,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           >
             <GripVertical className="size-3.5" aria-hidden="true" />
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-muted-foreground">
-              {index + 1}. {message.text || `Attached ${message.files.length} file${message.files.length === 1 ? "" : "s"}`}
-            </p>
+          <div className="min-w-0 flex-1 pt-1.5">
+            <QueuedPromptPreview
+              text={`${index + 1}. ${message.text || `Attached ${message.files.length} file${message.files.length === 1 ? "" : "s"}`}`}
+            />
             {message.referenceText || message.references?.length || message.storedAttachments?.length ? (
               <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-muted-foreground/80">
                 {message.referenceText ? (
@@ -9270,7 +9290,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   <span>Files</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => {
-                  const current = composerLiveText(textareaRef.current?.innerText, input);
+                  const current = composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input);
                   const prefix = current && !/\s$/.test(current) ? `${current} ` : current;
                   const next = `${prefix}@`;
                   setInput(next);
@@ -9306,6 +9326,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               setComposerFocused(false);
               setMobileKeyboardInset(0);
               mobileKeyboardBaselineRef.current = 0;
+              const live = textareaRef.current
+                ? composerPlainText(textareaRef.current, "Message Metis…")
+                : draftInputRef.current;
+              draftInputRef.current = live;
+              stateRef.current.input = live;
+              if (inputCommitTimerRef.current) {
+                window.clearTimeout(inputCommitTimerRef.current);
+                inputCommitTimerRef.current = 0;
+              }
+              if (input !== live) commitComposerParentState(live);
             }}
             onKeyDown={(e) => {
             if (slashQuery !== null && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -9404,7 +9434,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             stopSignal={voiceStopSignal}
             cancelSignal={voiceCancelSignal}
             onTranscript={(transcript) => {
-              const live = composerLiveText(textareaRef.current?.innerText, input);
+              const live = composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input);
               const next = composerTranscriptInsert(live, transcript);
               handleComposerInputChange(next, next.length);
               setInput(next);
@@ -10682,10 +10712,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     ) : m.role === "system" ? (
                       <ErrorMessageCard message={m.errorMessage || m.content} />
                     ) : (
-                      <div className="assistant-message-text text-[15px] leading-[1.55] text-foreground/95">
-                        {m.attachments && m.attachments.length > 0 ? (
+                      <div className="assistant-message-text min-w-0 max-w-full text-[15px] leading-[1.55] text-foreground/95">
+                        {m.attachments?.some((att) => att.kind !== "image") ? (
                           <div className="mb-3 flex max-w-full flex-wrap gap-2">
-                            {m.attachments.map((att) => {
+                            {m.attachments.filter((att) => att.kind !== "image").map((att) => {
                               const href = att.storedName && activeChatId
                                 ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                 : att.previewUrl;
@@ -10730,9 +10760,31 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           : partsFromFlat(m);
                           const viewBlocks = layoutAssistantParts(messageParts);
                           const hasNativeThinking = messageParts.some((part) => part.type === "thinking");
+                          const imageBlocks = viewBlocks.map((block) => block.type === "text"
+                            ? extractAssistantImages(stripAssistantControlBlocks(
+                                hasNativeThinking ? stripInlineThinkingBlocks(block.content) : block.content,
+                              ))
+                            : null);
+                          const attachmentImages = (m.attachments || []).filter((att) => att.kind === "image").flatMap((att) => {
+                            const src = att.storedName && activeChatId
+                              ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
+                              : att.previewUrl;
+                            return src ? [{ src, alt: att.name }] : [];
+                          });
+                          const sharedImageLinks = detectedFileLinks(m.content).filter((href) => {
+                            const name = href.includes("?")
+                              ? new URL(href, window.location.origin).searchParams.get("name") || ""
+                              : href.split("/").pop() || "";
+                            return mimeTypeFromFileName(name).startsWith("image/");
+                          }).map((src) => ({ src, alt: "Image" }));
+                          const responseImages = uniqueAssistantImages([
+                            ...imageBlocks.flatMap((block) => block?.images || []),
+                            ...attachmentImages,
+                            ...sharedImageLinks,
+                          ]);
                           const lastBlockIndex = viewBlocks.length - 1;
                           const fileLinks = detectedFileLinks(m.content).filter(
-                            (href) => !m.attachments?.some(
+                            (href) => !responseImages.some((image) => image.src === href) && !m.attachments?.some(
                               (attachment) =>
                                 attachment.storedName &&
                                 href.includes(encodeURIComponent(attachment.storedName)),
@@ -10860,9 +10912,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               />
                             );
                           }
-                          const displayContent = stripAssistantControlBlocks(
-                            hasNativeThinking ? stripInlineThinkingBlocks(block.content) : block.content,
-                          );
+                          const displayContent = imageBlocks[bi]?.content || "";
                           const hasLaterActivity = blocks.slice(bi + 1).some((candidate) => candidate.type !== "text");
                           return (
                             <div
@@ -10888,6 +10938,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             onOpen={(attachment) => setActiveAttachment({ attachment, chatId: activeChatId ?? undefined })}
                           />
                         ))}
+                        <AssistantImageGallery images={responseImages} />
                             </>
                           );
                         })()}
@@ -10943,24 +10994,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                   : suggestion.prompt
                                 : suggestion.prompt;
                               setInput(nextInput);
+                              setComposerSyncNonce((current) => current + 1);
                               window.setTimeout(() => {
                                 const editor = textareaRef.current;
                                 if (!editor) return;
                                 editor.focus();
+                                const end = editor.value.length;
                                 if (event.ctrlKey || event.metaKey) {
-                                  const selection = window.getSelection();
-                                  const range = document.createRange();
-                                  range.selectNodeContents(editor);
-                                  range.collapse(false);
-                                  selection?.removeAllRanges();
-                                  selection?.addRange(range);
+                                  editor.setSelectionRange(end, end);
                                   return;
                                 }
-                                const selection = window.getSelection();
-                                const range = document.createRange();
-                                range.selectNodeContents(editor);
-                                selection?.removeAllRanges();
-                                selection?.addRange(range);
+                                editor.setSelectionRange(0, end);
                               }, 0);
                             }}
                           >
