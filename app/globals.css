@@ -800,21 +800,21 @@
   }
 }
 
-/* Browser agent pointer: compact OS-style arrow, hotspot at the tip. */
+/* Agent pointer: supplied Polygon artwork, rotated so its tip is the hotspot. */
 @keyframes metis-cursor-in {
-  from { opacity: 0; transform: translate(-12%, -10%) scale(.88); }
-  to { opacity: 1; transform: translate(-12%, -10%) scale(1); }
+  from { opacity: 0; transform: translate(0, 0) scale(.88); }
+  to { opacity: 1; transform: translate(0, 0) scale(1); }
 }
 
 .metis-browser-agent-cursor {
   animation: metis-cursor-in 140ms ease-out;
   position: absolute;
   z-index: 30;
-  width: 18px;
+  width: 24px;
   height: 24px;
   pointer-events: none;
-  transform: translate(-12%, -10%);
-  transform-origin: 12% 10%;
+  transform: translate(0, 0);
+  transform-origin: 0 0;
   transition: left 120ms cubic-bezier(.22,.75,.26,1), top 120ms cubic-bezier(.22,.75,.26,1);
   will-change: left, top;
   filter: drop-shadow(0 1px 1px rgb(0 0 0 / .55)) drop-shadow(0 6px 10px rgb(0 0 0 / .28));
@@ -827,22 +827,32 @@
   height: 100%;
 }
 
-.metis-browser-agent-cursor-shape[data-kind="drag"] {
-  transform: rotate(-12deg);
-  transform-origin: 12% 10%;
-}
-
-.metis-browser-agent-cursor-shape > svg {
+/* The source polygons point up-right; rotate only the artwork, not the action markers. */
+.metis-browser-agent-cursor-shape > img {
   display: block;
   width: 100%;
   height: 100%;
-  overflow: visible;
+  object-fit: contain;
+  transform: rotate(-90deg);
+  user-select: none;
+}
+
+.metis-browser-agent-cursor-shape > .metis-agent-cursor-white {
+  display: none;
+}
+
+.dark .metis-browser-agent-cursor-shape > .metis-agent-cursor-black {
+  display: none;
+}
+
+.dark .metis-browser-agent-cursor-shape > .metis-agent-cursor-white {
+  display: block;
 }
 
 .metis-browser-agent-cursor-click {
   position: absolute;
-  left: 12%;
-  top: 10%;
+  left: 0;
+  top: 0;
   width: 18px;
   height: 18px;
   border: 1.5px solid rgb(186 236 248 / .85);

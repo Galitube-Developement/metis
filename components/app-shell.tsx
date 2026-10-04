@@ -16,6 +16,7 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
+import { AgentCursor } from "@/components/agent-cursor";
 import {
   ArrowUp,
   ArrowDown,
@@ -1220,48 +1221,6 @@ type BrowserContext = {
   updatedAt: string;
 };
 
-function BrowserAgentCursor({ kind }: { kind: string }) {
-  return (
-    <span className="metis-browser-agent-cursor-shape" data-kind={kind} aria-hidden="true">
-      <svg viewBox="0 0 52 48" role="presentation" focusable="false">
-        <defs>
-          <linearGradient id="metis-browser-cursor-glass" x1="7" y1="4" x2="39" y2="42" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="rgba(42,55,63,0.72)" />
-            <stop offset="0.44" stopColor="rgba(18,28,34,0.54)" />
-            <stop offset="1" stopColor="rgba(6,11,15,0.34)" />
-          </linearGradient>
-          <linearGradient id="metis-browser-cursor-edge" x1="5" y1="3" x2="45" y2="40" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="rgba(255,255,255,0.96)" />
-            <stop offset="0.34" stopColor="rgba(191,232,241,0.78)" />
-            <stop offset="0.7" stopColor="rgba(117,166,180,0.58)" />
-            <stop offset="1" stopColor="rgba(238,247,250,0.84)" />
-          </linearGradient>
-          <radialGradient id="metis-browser-cursor-glow" cx="0" cy="0" r="1" gradientTransform="translate(15 11) rotate(44) scale(27 18)" gradientUnits="userSpaceOnUse">
-            <stop stopColor="rgba(224,248,255,0.3)" />
-            <stop offset="1" stopColor="rgba(255,255,255,0)" />
-          </radialGradient>
-        </defs>
-        <path
-          d="M7.1 4.15C4.05 3.4 1.72 6.15 2.8 9.08l13.35 33.55c1.04 2.78 4.82 3.08 6.28.48l7.35-17.38c1.1-2.57 3.2-4.55 5.83-5.51l12.78-4.7c3.46-1.27 3.46-6.17-.03-7.39L7.1 4.15Z"
-          fill="url(#metis-browser-cursor-glass)"
-          stroke="url(#metis-browser-cursor-edge)"
-          strokeWidth="1.3"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M7.35 5.8 18.02 40.9c.43 1.46 2.43 1.61 3.08.24l6.98-15.08c1.28-2.76 3.59-4.91 6.43-5.99l12.18-4.6"
-          fill="none"
-          stroke="rgba(238,252,255,0.42)"
-          strokeWidth="0.9"
-          strokeLinecap="round"
-        />
-        <path d="M6.1 5.05 48.1 12.95 35.25 17.7 9.3 9.2Z" fill="url(#metis-browser-cursor-glow)" opacity=".82" />
-      </svg>
-      {kind === "click" ? <span className="metis-browser-agent-cursor-click" /> : null}
-      {kind === "scroll" ? <span className="metis-browser-agent-cursor-scroll"><span /></span> : null}
-    </span>
-  );
-}
 
 function fitBrowserFrame(
   containerWidth: number,
@@ -11710,7 +11669,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         className="metis-browser-agent-cursor"
                         style={{ left: `${agentPointer.x * 100}%`, top: `${agentPointer.y * 100}%` }}
                       >
-                        <BrowserAgentCursor kind={agentPointer.kind} />
+                        <AgentCursor kind={agentPointer.kind} />
                       </span>
                     ) : null}
                     {browserPhase === "loading" ? <BrowserPageSkeleton /> : null}
