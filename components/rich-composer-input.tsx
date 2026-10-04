@@ -2,169 +2,53 @@
 
 import {
   forwardRef,
-  useEffect,
-  useImperativeHandle,
   useLayoutEffect,
   useRef,
   type ClipboardEvent,
   type FocusEvent,
   type KeyboardEvent,
 } from "react";
-import { shouldSyncComposerDom } from "@/lib/composer-send";
+import { shouldSyncComposerDom, stripComposerPlaceholderLeak } from "@/lib/composer-send";
 import { cn } from "@/lib/utils";
+
+const MAX_COMPOSER_HEIGHT = 180;
+const MIN_COMPOSER_HEIGHT = 36;
 
 type RichComposerInputProps = {
   value: string;
   mentionLabels?: string[];
   syncNonce?: number;
   onChange: (value: string, cursorPosition: number) => void;
-  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
-  onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
-  onFocus?: (event: FocusEvent<HTMLDivElement>) => void;
-  onBlur?: (event: FocusEvent<HTMLDivElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
+  onFocus?: (event: FocusEvent<HTMLTextAreaElement>) => void;
+  onBlur?: (event: FocusEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
   "aria-label"?: string;
 };
 
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function composerPlainText(element: HTMLElement | null | undefined, placeholder?: string) {
+  if (!element) return "";
+  const raw =
+    element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+      ? element.value
+      : (element.textContent || "").replace(/\u00a0/g, " ");
+  return stripComposerPlaceholderLeak(raw.replace(/\u00a0/g, " "), placeholder);
 }
 
-function linkPattern(mentionLabels: string[]) {
-  const mentions = mentionLabels
-    .map((label) => label.trim())
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegExp);
-  const mentionPart = mentions.length ? `@(?:${mentions.join("|")})` : "@[^\\s]+";
-  return new RegExp(`(^|\\s)(${mentionPart}|https?:\\/\\/[^\\s]+)`, "g");
-}
-
-function composerPlainText(element: HTMLDivElement) {
-  let text = element.innerText || "";
-  const last = element.lastChild;
-  if (last && last.nodeName === "BR") text = text.replace(/\n$/, "");
-  return text;
-}
-
-function formatText(element: HTMLDivElement, mentionLabels: string[]) {
-  const text = element.innerText || "";
-  const pattern = linkPattern(mentionLabels);
-  const fragment = document.createDocumentFragment();
-  let lastIndex = 0;
-
-  for (const match of text.matchAll(pattern)) {
-    const matchStart = match.index ?? 0;
-    const token = match[2];
-    const tokenStart = matchStart + match[1].length;
-    if (tokenStart > lastIndex) fragment.append(document.createTextNode(text.slice(lastIndex, tokenStart)));
-
-    const link = document.createElement("a");
-    link.href = token.startsWith("@") ? "#" : token;
-    link.textContent = token;
-    link.dataset.composerLink = "true";
-    link.className = "underline underline-offset-2 hover:text-primary";
-    link.addEventListener("click", (event) => event.preventDefault());
-    fragment.append(link);
-    lastIndex = tokenStart + token.length;
-  }
-
-  if (lastIndex < text.length) fragment.append(document.createTextNode(text.slice(lastIndex)));
-  if (!fragment.childNodes.length) fragment.append(document.createElement("br"));
-  element.replaceChildren(fragment);
-}
-
-function markComposerEmpty(element: HTMLDivElement, empty: boolean) {
-  if (empty) element.setAttribute("data-empty", "");
-  else element.removeAttribute("data-empty");
-}
-
-function writeComposerDom(element: HTMLDivElement, value: string, mentionLabels: string[]) {
-  if (!value) {
-    element.replaceChildren(document.createElement("br"));
-    markComposerEmpty(element, true);
-    return;
-  }
-  markComposerEmpty(element, false);
-  element.textContent = value;
-  formatText(element, mentionLabels);
-}
-
-function placeComposerCaret(element: HTMLDivElement, offset = 0) {
-  restoreSelection(element, { start: offset, end: offset });
-}
-
-function caretOffset(element: HTMLDivElement) {
-  const selection = window.getSelection();
-  if (!selection?.rangeCount) return element.textContent?.length || 0;
-  const range = selection.getRangeAt(0);
-  const before = range.cloneRange();
-  before.selectNodeContents(element);
-  before.setEnd(range.startContainer, range.startOffset);
-  return before.toString().length;
-}
-
-type ComposerSelection = {
-  start: number;
-  end: number;
-  text: string;
-};
-
-function selectionOffsets(element: HTMLDivElement): Omit<ComposerSelection, "text"> | null {
-  const selection = window.getSelection();
-  if (!selection?.rangeCount) return null;
-  const range = selection.getRangeAt(0);
-  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return null;
-
-  const startRange = range.cloneRange();
-  startRange.selectNodeContents(element);
-  startRange.setEnd(range.startContainer, range.startOffset);
-  const endRange = range.cloneRange();
-  endRange.selectNodeContents(element);
-  endRange.setEnd(range.endContainer, range.endOffset);
-  return { start: startRange.toString().length, end: endRange.toString().length };
-}
-
-function pointAtOffset(element: HTMLDivElement, offset: number) {
-  let remaining = Math.max(0, offset);
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    const length = node.textContent?.length || 0;
-    if (remaining <= length) return { node, offset: remaining };
-    remaining -= length;
-  }
-  return { node: element as Node, offset: element.childNodes.length };
-}
-
-function restoreSelection(element: HTMLDivElement, offsets: Omit<ComposerSelection, "text">) {
-  const selection = window.getSelection();
-  if (!selection) return;
-  const range = document.createRange();
-  const start = pointAtOffset(element, offsets.start);
-  const end = pointAtOffset(element, Math.max(offsets.start, offsets.end));
-  range.setStart(start.node, start.offset);
-  range.setEnd(end.node, end.offset);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-const MAX_COMPOSER_HEIGHT = 180;
-
-function fitComposerHeight(element: HTMLDivElement) {
+function fitComposerHeight(element: HTMLTextAreaElement) {
   element.style.height = "auto";
   const fullHeight = element.scrollHeight;
-  element.style.height = Math.min(MAX_COMPOSER_HEIGHT, Math.max(36, fullHeight)) + "px";
+  element.style.height = Math.min(MAX_COMPOSER_HEIGHT, Math.max(MIN_COMPOSER_HEIGHT, fullHeight)) + "px";
   element.style.overflowY = fullHeight > MAX_COMPOSER_HEIGHT ? "auto" : "hidden";
 }
 
-export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputProps>(
+export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInputProps>(
   function RichComposerInput(
     {
       value,
-      mentionLabels = [],
       syncNonce,
       onChange,
       onKeyDown,
@@ -178,127 +62,57 @@ export const RichComposerInput = forwardRef<HTMLDivElement, RichComposerInputPro
     },
     ref,
   ) {
-    const editorRef = useRef<HTMLDivElement>(null);
-    const selectionRef = useRef<ComposerSelection | null>(null);
+    const editorRef = useRef<HTMLTextAreaElement>(null);
     const lastSyncNonceRef = useRef(syncNonce ?? 0);
-    useImperativeHandle(ref, () => editorRef.current as HTMLDivElement);
-
-    const captureSelection = () => {
-      const element = editorRef.current;
-      if (!element) return;
-      const offsets = selectionOffsets(element);
-      if (!offsets) return;
-      selectionRef.current = { ...offsets, text: composerPlainText(element) };
-    };
-
-    useEffect(() => {
-      const handleSelectionChange = () => {
-        if (document.activeElement === editorRef.current) captureSelection();
-      };
-      document.addEventListener("selectionchange", handleSelectionChange);
-      return () => document.removeEventListener("selectionchange", handleSelectionChange);
-    }, []);
-
-    useEffect(() => {
-      const element = editorRef.current;
-      if (!element || typeof ResizeObserver === "undefined") return;
-      let width = element.clientWidth;
-      const observer = new ResizeObserver(() => {
-        if (element.clientWidth === width) return;
-        width = element.clientWidth;
-        fitComposerHeight(element);
-      });
-      observer.observe(element);
-      return () => observer.disconnect();
-    }, []);
+    const liveValue = stripComposerPlaceholderLeak(value, placeholder);
 
     useLayoutEffect(() => {
       const element = editorRef.current;
       if (!element) return;
-      const current = composerPlainText(element);
-      const force = syncNonce !== undefined && syncNonce !== lastSyncNonceRef.current;
-      if (syncNonce !== undefined) lastSyncNonceRef.current = syncNonce;
-      if (!shouldSyncComposerDom(current, value, document.activeElement === element, force)) return;
-      if (selectionRef.current?.text !== value) selectionRef.current = null;
-      writeComposerDom(element, value, mentionLabels);
-      fitComposerHeight(element);
-      // Empty contenteditable loses its caret after a programmatic clear (Enter-to-send).
-      // Restore it on every clear, not only forced voice/slash writes.
-      if (force || !value) {
-        placeComposerCaret(element, value.length);
-        if (force) element.scrollTop = element.scrollHeight;
+      const nonceChanged = syncNonce !== undefined && syncNonce !== lastSyncNonceRef.current;
+      if (nonceChanged) lastSyncNonceRef.current = syncNonce;
+      const focused = document.activeElement === element;
+      if (!nonceChanged && focused) return;
+      if (!shouldSyncComposerDom(element.value, liveValue, focused, nonceChanged)) return;
+      element.value = liveValue;
+      if (nonceChanged) {
+        const cursor = liveValue.length;
+        if (liveValue === "") element.focus();
+        if (liveValue === "" || focused) element.setSelectionRange(cursor, cursor);
+        element.scrollTop = element.scrollHeight;
       }
-    }, [mentionLabels, syncNonce, value]);
+      fitComposerHeight(element);
+    }, [liveValue, syncNonce]);
 
     return (
-      <div
-        ref={editorRef}
-        contentEditable={!disabled}
-        suppressContentEditableWarning
-        role="textbox"
-        aria-multiline="true"
+      <textarea
+        ref={(node) => {
+          editorRef.current = node;
+          if (typeof ref === "function") ref(node);
+          else if (ref) ref.current = node;
+        }}
+        defaultValue={liveValue}
+        placeholder={placeholder}
+        disabled={disabled}
+        rows={1}
         aria-label={ariaLabel}
-        data-placeholder={placeholder}
-        {...(!value ? { "data-empty": "" } : {})}
         className={cn(
-          "rich-composer-input block min-h-9 max-h-[180px] flex-1 overflow-y-auto whitespace-pre-wrap rounded-none px-3 py-1.5 text-[15px] leading-6 outline-none",
+          "rich-composer-input block min-h-9 max-h-[180px] w-full flex-1 resize-none overflow-y-auto whitespace-pre-wrap rounded-none border-0 bg-transparent px-3 py-1.5 text-[15px] leading-6 shadow-none outline-none",
+          "placeholder:select-none placeholder:text-muted-foreground",
           "focus-visible:ring-0",
-          disabled && "pointer-events-none opacity-50",
+          "disabled:pointer-events-none disabled:opacity-50",
           className,
         )}
-        onInput={(event) => {
+        onChange={(event) => {
           const element = event.currentTarget;
-          const cursor = caretOffset(element);
-          const text = composerPlainText(element);
-          markComposerEmpty(element, !text);
-          const offsets = selectionOffsets(element) || { start: cursor, end: cursor };
-          selectionRef.current = { ...offsets, text };
+          const next = stripComposerPlaceholderLeak(element.value, placeholder);
           fitComposerHeight(element);
-          onChange(text, cursor);
+          onChange(next, element.selectionStart ?? next.length);
         }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        onFocus={(event) => {
-          onFocus?.(event);
-          const saved = selectionRef.current;
-          const element = event.currentTarget;
-          const live = composerPlainText(element);
-          if (saved && saved.text === live) {
-            window.requestAnimationFrame(() => {
-              if (document.activeElement === element && saved.text === composerPlainText(element)) {
-                restoreSelection(element, saved);
-              }
-            });
-            return;
-          }
-          if (!live) {
-            window.requestAnimationFrame(() => {
-              if (document.activeElement === element && !composerPlainText(element)) {
-                placeComposerCaret(element, 0);
-              }
-            });
-          }
-        }}
-        onBlur={(event) => {
-          const element = event.currentTarget;
-          captureSelection();
-          formatText(element, mentionLabels);
-          markComposerEmpty(element, !composerPlainText(element));
-          onBlur?.(event);
-        }}
-        onMouseDown={(event) => {
-          const element = event.currentTarget;
-          if (composerPlainText(element)) return;
-          window.requestAnimationFrame(() => {
-            if (document.activeElement === element && !composerPlainText(element)) {
-              placeComposerCaret(element, 0);
-            }
-          });
-        }}
-        onClick={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest("[data-composer-link]")) event.preventDefault();
-        }}
+        onFocus={onFocus}
+        onBlur={onBlur}
       />
     );
   },

@@ -15,23 +15,30 @@ const cssSource = readFileSync(
   "utf8",
 );
 
-test("rich composer preserves its selection across tab visibility changes", () => {
-  assert.match(source, /document\.addEventListener\("selectionchange", handleSelectionChange\)/);
-  assert.match(source, /selectionRef\.current = \{ \.\.\.offsets, text \}/);
-  assert.match(source, /onBlur=\{\(event\) => \{[\s\S]*captureSelection\(\);[\s\S]*formatText\(element, mentionLabels\)/);
-  assert.match(source, /onFocus=\{\(event\) => \{[\s\S]*restoreSelection\(element, saved\)/);
-  assert.match(source, /syncNonce/);
-  assert.match(source, /shouldSyncComposerDom\(current, value, document\.activeElement === element, force\)/);
+test("composer uses an uncontrolled textarea with an HTML placeholder", () => {
+  assert.match(source, /<textarea/);
+  assert.match(source, /placeholder=\{placeholder\}/);
+  assert.match(source, /defaultValue=\{liveValue\}/);
+  assert.match(source, /shouldSyncComposerDom\(element\.value, liveValue, focused, nonceChanged\)/);
+  assert.match(source, /if \(!nonceChanged && focused\) return;/);
+  assert.match(source, /element\.setSelectionRange\(cursor, cursor\)/);
+  assert.match(source, /HTMLTextAreaElement/);
+  assert.doesNotMatch(source, /value=\{liveValue\}/);
+  assert.doesNotMatch(source, /contentEditable/);
+  assert.doesNotMatch(source, /data-composer-placeholder/);
+  assert.doesNotMatch(source, /function writeComposerDom/);
+  assert.doesNotMatch(source, /element\.innerText/);
+  assert.doesNotMatch(cssSource, /content:\s*attr\(data-placeholder\)/);
 });
 
-test("rich composer stays typable after a programmatic send clear", () => {
-  assert.match(source, /function writeComposerDom/);
-  assert.match(source, /element\.replaceChildren\(document\.createElement\("br"\)\)/);
-  assert.match(source, /if \(force \|\| !value\)/);
-  assert.match(source, /placeComposerCaret\(element, value\.length\)/);
-  assert.match(source, /onMouseDown=/);
-  assert.match(cssSource, /\.rich-composer-input\[data-empty\]::before/);
-  assert.match(cssSource, /pointer-events:\s*none/);
+test("composer stays typable after a programmatic send clear", () => {
+  assert.match(source, /syncNonce/);
+  assert.match(source, /lastSyncNonceRef/);
+  assert.match(shellSource, /useRef<HTMLTextAreaElement>\(null\)/);
+  assert.match(shellSource, /composerPlainText\(textareaRef\.current/);
+  assert.match(shellSource, /element\.setSelectionRange\(cursor, cursor\)/);
+  assert.doesNotMatch(shellSource, /textareaRef\.current\?\.innerText/);
+  assert.doesNotMatch(shellSource, /createTreeWalker\(element/);
   assert.match(
     shellSource,
     /setInputGuarded\("", "submitted"\);\s*draftInputRef\.current = "";\s*setComposerSyncNonce/,
@@ -40,4 +47,16 @@ test("rich composer stays typable after a programmatic send clear", () => {
     shellSource,
     /setInputGuarded\("", "queued"\);\s*setComposerSyncNonce/,
   );
+  assert.match(shellSource, /setInput\(target\.content\);\s*setComposerSyncNonce/);
+  assert.match(shellSource, /setInput\(message\.text\);\s*setComposerSyncNonce/);
+  assert.match(shellSource, /setInput\(nextInput\);\s*setComposerSyncNonce/);
+  assert.match(shellSource, /shouldCommitComposerParentState\(previousValue, value\)/);
+  assert.match(shellSource, /COMPOSER_STATE_COMMIT_MS/);
+  assert.match(shellSource, /inputCommitTimerRef/);
+  const changeHandler = shellSource.slice(
+    shellSource.indexOf("function handleComposerInputChange"),
+    shellSource.indexOf("function openSlashModelPicker"),
+  );
+  assert.match(changeHandler, /shouldCommitComposerParentState/);
+  assert.doesNotMatch(changeHandler, /startTransition/);
 });
