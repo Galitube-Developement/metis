@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentRule } from "@/lib/store";
 
-export function AgentRulesSettings() {
+export function AgentRulesSettings({ onRuleCountChange }: { onRuleCountChange?: (count: number) => void }) {
   const [rules, setRules] = useState<AgentRule[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [reload, setReload] = useState(0);
@@ -26,6 +26,7 @@ export function AgentRulesSettings() {
         if (!response.ok) throw new Error(data.error || "Could not load agent rules.");
         if (!controller.signal.aborted) {
           setRules(data.rules);
+          onRuleCountChange?.(data.rules.length);
           setLoaded(true);
         }
       })
@@ -33,7 +34,7 @@ export function AgentRulesSettings() {
         if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Could not load agent rules.");
       });
     return () => controller.abort();
-  }, [reload]);
+  }, [reload, onRuleCountChange]);
 
   const mutate = async (method: "POST" | "PATCH" | "DELETE", id?: string, content?: string) => {
     if (busy || !loaded) return;
@@ -48,6 +49,7 @@ export function AgentRulesSettings() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not save agent rules.");
       setRules(data.rules);
+      onRuleCountChange?.(data.rules.length);
       if (method === "POST") setDraft("");
       if (id === editingId) setEditingId(null);
     } catch (error) {
@@ -62,16 +64,17 @@ export function AgentRulesSettings() {
       <p className="text-xs text-muted-foreground">
         Add one instruction per rule. Rules guide future replies across your chats; Memories store useful facts and context.
       </p>
-      <div className="flex items-start gap-2">
+      {loaded ? <p role="status" className="text-xs text-muted-foreground">{rules.length} {rules.length === 1 ? "rule" : "rules"} set</p> : null}
+      <div className="flex items-center gap-2">
         <Textarea
           value={draft}
           onChange={event => setDraft(event.target.value)}
           placeholder="Add an agent rule…"
           aria-label="New agent rule"
-          rows={2}
+          rows={1}
           maxLength={20_000}
           disabled={!loaded || busy}
-          className="min-h-20 resize-y text-sm"
+          className="h-auto min-h-8 field-sizing-content resize-y py-1 text-sm leading-5"
         />
         <Button size="icon" type="button" disabled={!loaded || busy || !draft.trim()} onClick={() => void mutate("POST", undefined, draft)} aria-label="Add rule">
           <Plus className="size-4" />

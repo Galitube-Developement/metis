@@ -747,6 +747,25 @@ export function SettingsPanel({
   const [browserStorageDeleteTarget, setBrowserStorageDeleteTarget] = useState<string | null>(null);
   const [browserStorageClearAll, setBrowserStorageClearAll] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPaneId>("tab");
+  const [agentRuleCount, setAgentRuleCount] = useState<number | null>(null);
+  const [agentRuleCountError, setAgentRuleCountError] = useState(false);
+
+  useEffect(() => {
+    if (!open || settingsTab !== "agent" || settingsPane !== "tab") return;
+    const controller = new AbortController();
+    setAgentRuleCount(null);
+    setAgentRuleCountError(false);
+    void fetch("/api/agent-rules", { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("Could not load rules.");
+        const data = await response.json() as { rules: unknown[] };
+        if (!controller.signal.aborted) setAgentRuleCount(data.rules.length);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setAgentRuleCountError(true);
+      });
+    return () => controller.abort();
+  }, [open, settingsTab, settingsPane]);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [browserStorageQuery, setBrowserStorageQuery] = useState("");
   const [compressionPreview, setCompressionPreview] = useState("");
@@ -2429,7 +2448,7 @@ export function SettingsPanel({
      slot="agent-rules"
      onBack={() => setSettingsPane("tab")}
    >
-     <AgentRulesSettings />
+     <AgentRulesSettings onRuleCountChange={setAgentRuleCount} />
    </SettingsFeaturePane>
  ) : (
  <>
@@ -2906,7 +2925,7 @@ export function SettingsPanel({
                 <SettingsTile
                   id="settings-agent-rules"
                   title="Agent Rules"
-                  meta="Individual instructions for every chat"
+                  meta={agentRuleCountError ? "Could not load rules" : agentRuleCount === null ? "Loading…" : `${agentRuleCount} ${agentRuleCount === 1 ? "rule" : "rules"} set`}
                   icon={MessagesSquare}
                   onOpen={() => setSettingsPane("agent-rules")}
                 />
