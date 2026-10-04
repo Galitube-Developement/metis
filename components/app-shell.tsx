@@ -97,6 +97,7 @@ import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
+import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -8776,6 +8777,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       {queuedMessages.map((message, index) => (
         <div
           key={message.id}
+          tabIndex={0}
+          aria-label={`Queued message ${index + 1}`}
           onDragOver={(event) => {
             event.preventDefault();
             if (draggedQueueId !== message.id) setDragOverQueueId(message.id);
@@ -8787,7 +8790,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setDragOverQueueId(null);
           }}
           className={cn(
-            "flex items-center gap-2 rounded-lg border bg-muted/20 px-2.5 py-2 text-xs transition-colors",
+            "group/queue flex items-start gap-2 rounded-lg border bg-muted/20 px-2.5 py-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             dragOverQueueId === message.id ? "border-primary/70 bg-primary/10" : "border-border/40",
             draggedQueueId === message.id && "opacity-50",
           )}
@@ -8817,10 +8820,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           >
             <GripVertical className="size-3.5" aria-hidden="true" />
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-muted-foreground">
-              {index + 1}. {message.text || `Attached ${message.files.length} file${message.files.length === 1 ? "" : "s"}`}
-            </p>
+          <div className="min-w-0 flex-1 pt-1.5">
+            <QueuedPromptPreview
+              text={`${index + 1}. ${message.text || `Attached ${message.files.length} file${message.files.length === 1 ? "" : "s"}`}`}
+            />
             {message.referenceText || message.references?.length || message.storedAttachments?.length ? (
               <div className="mt-1 flex min-w-0 flex-wrap gap-1 text-[10px] text-muted-foreground/80">
                 {message.referenceText ? (
