@@ -94,6 +94,8 @@ import {
 import { toast } from "sonner";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
+import { AssistantImageGallery } from "@/components/assistant-image-gallery";
+import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ProjectNav } from "@/components/project-nav";
@@ -10707,10 +10709,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     ) : m.role === "system" ? (
                       <ErrorMessageCard message={m.errorMessage || m.content} />
                     ) : (
-                      <div className="assistant-message-text text-[15px] leading-[1.55] text-foreground/95">
-                        {m.attachments && m.attachments.length > 0 ? (
+                      <div className="assistant-message-text min-w-0 max-w-full text-[15px] leading-[1.55] text-foreground/95">
+                        {m.attachments?.some((att) => att.kind !== "image") ? (
                           <div className="mb-3 flex max-w-full flex-wrap gap-2">
-                            {m.attachments.map((att) => {
+                            {m.attachments.filter((att) => att.kind !== "image").map((att) => {
                               const href = att.storedName && activeChatId
                                 ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                 : att.previewUrl;
@@ -10755,9 +10757,31 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           : partsFromFlat(m);
                           const viewBlocks = layoutAssistantParts(messageParts);
                           const hasNativeThinking = messageParts.some((part) => part.type === "thinking");
+                          const imageBlocks = viewBlocks.map((block) => block.type === "text"
+                            ? extractAssistantImages(stripAssistantControlBlocks(
+                                hasNativeThinking ? stripInlineThinkingBlocks(block.content) : block.content,
+                              ))
+                            : null);
+                          const attachmentImages = (m.attachments || []).filter((att) => att.kind === "image").flatMap((att) => {
+                            const src = att.storedName && activeChatId
+                              ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
+                              : att.previewUrl;
+                            return src ? [{ src, alt: att.name }] : [];
+                          });
+                          const sharedImageLinks = detectedFileLinks(m.content).filter((href) => {
+                            const name = href.includes("?")
+                              ? new URL(href, window.location.origin).searchParams.get("name") || ""
+                              : href.split("/").pop() || "";
+                            return mimeTypeFromFileName(name).startsWith("image/");
+                          }).map((src) => ({ src, alt: "Image" }));
+                          const responseImages = uniqueAssistantImages([
+                            ...imageBlocks.flatMap((block) => block?.images || []),
+                            ...attachmentImages,
+                            ...sharedImageLinks,
+                          ]);
                           const lastBlockIndex = viewBlocks.length - 1;
                           const fileLinks = detectedFileLinks(m.content).filter(
-                            (href) => !m.attachments?.some(
+                            (href) => !responseImages.some((image) => image.src === href) && !m.attachments?.some(
                               (attachment) =>
                                 attachment.storedName &&
                                 href.includes(encodeURIComponent(attachment.storedName)),
@@ -10885,9 +10909,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               />
                             );
                           }
-                          const displayContent = stripAssistantControlBlocks(
-                            hasNativeThinking ? stripInlineThinkingBlocks(block.content) : block.content,
-                          );
+                          const displayContent = imageBlocks[bi]?.content || "";
                           const hasLaterActivity = blocks.slice(bi + 1).some((candidate) => candidate.type !== "text");
                           return (
                             <div
@@ -10913,6 +10935,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             onOpen={(attachment) => setActiveAttachment({ attachment, chatId: activeChatId ?? undefined })}
                           />
                         ))}
+                        <AssistantImageGallery images={responseImages} />
                             </>
                           );
                         })()}
