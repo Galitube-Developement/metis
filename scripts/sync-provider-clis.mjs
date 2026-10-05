@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const dataDir = process.env.CHAT_DATA_DIR || path.join(process.cwd(), "data");
 const runtimes = path.join(dataDir, "agent-runtimes");
@@ -18,6 +19,14 @@ function run(command, args, options = {}) {
     args = [path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"), ...args];
   }
   return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 240_000, ...options }).trim();
+}
+
+export function readCliVersion(executable) {
+  // Pass CMD its required outer quote pair verbatim; Node otherwise escapes it
+  // using executable argument rules, which do not apply to CMD command strings.
+  return process.platform === "win32"
+    ? run("cmd.exe", ["/d", "/s", "/c", `""${executable}" --version"`], { windowsVerbatimArguments: true, windowsHide: true })
+    : run(executable, ["--version"]);
 }
 
 function manifestFor(id) {
@@ -51,9 +60,7 @@ function syncManaged(id) {
     mkdirSync(destination, { recursive: true });
     run("npm", ["install", "--prefix", destination, "--no-save", "--no-audit", "--no-fund", `${item.name}@${version}`]);
   }
-  const reported = process.platform === "win32"
-    ? run("cmd.exe", ["/d", "/s", "/c", `"${executable}" --version`])
-    : run(executable, ["--version"]);
+  const reported = readCliVersion(executable);
   if (!reported.includes(version)) throw new Error(`${id} CLI version check failed: ${reported}`);
   mkdirSync(root, { recursive: true });
   const file = path.join(root, "active.json");
@@ -77,6 +84,8 @@ function updateIfInstalled(binary) {
   }
 }
 
-for (const id of Object.keys(packages)) syncManaged(id);
-updateIfInstalled("cursor-agent");
-updateIfInstalled("agy");
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  for (const id of Object.keys(packages)) syncManaged(id);
+  updateIfInstalled("cursor-agent");
+  updateIfInstalled("agy");
+}

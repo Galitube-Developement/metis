@@ -260,7 +260,8 @@ test("all native installers install the Playwright Chromium browser", () => {
     const publicContent = readFileSync(path.join(installerDir, file), "utf8");
     for (const source of [content, publicContent]) {
       const dependenciesAt = source.indexOf('"$METIS_PNPM_HOME/pnpm" install --frozen-lockfile');
-      const browserAt = source.indexOf("pnpm exec playwright install chromium");
+      const browserCommand = file === "linux.sh" ? "pnpm exec playwright install --with-deps chromium" : "pnpm exec playwright install chromium";
+      const browserAt = source.indexOf(browserCommand);
       assert.ok(dependenciesAt >= 0 && browserAt > dependenciesAt, `${file} must install Chromium after dependencies`);
     }
   }

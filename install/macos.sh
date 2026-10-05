@@ -758,6 +758,7 @@ adopt_env_stash "$install_dir"
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
 merge_preserved_env "$install_dir/.env"
+upsert_env_key "$install_dir/.env" NODE_ENV "production"
 apply_merged_runtime_ports "$install_dir/.env"
 
 if (( use_docker )); then

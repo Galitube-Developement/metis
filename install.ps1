@@ -40,7 +40,19 @@ if ($isUninstall) {
   $forward = $mapped
 }
 $rel = "/install/windows.ps1"
-$dest = Join-Path ([System.IO.Path]::GetTempPath()) ("metis-ai-windows-" + [guid]::NewGuid().ToString() + ".ps1")
-Invoke-WebRequest -UseBasicParsing -Uri ($base + $rel) -OutFile $dest
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dest @forward
-exit $LASTEXITCODE
+$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("metis-ai-windows-" + [guid]::NewGuid().ToString())
+$dest = Join-Path $tempDir "windows.ps1"
+try {
+  New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+  Invoke-WebRequest -UseBasicParsing -Uri ($base + $rel) -OutFile $dest
+  if ($isUninstall) {
+    Invoke-WebRequest -UseBasicParsing -Uri ($base + "/install/uninstall.ps1") -OutFile (Join-Path $tempDir "uninstall.ps1")
+  }
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dest @forward
+  if ($LASTEXITCODE -ne 0) {
+    throw "Metis AI installer failed (exit $LASTEXITCODE). See the error above; this PowerShell session remains open."
+  }
+} finally {
+  Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+# Do not call exit: under irm | iex that would close the user\'s PowerShell session.

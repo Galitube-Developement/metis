@@ -46,14 +46,48 @@ if (-not $Yes) {
 function Invoke-Step([scriptblock]$Action, [string]$Description) {
   if ($DryRun) { Write-Host "+ $Description" } else { & $Action }
 }
+function Test-InstallProcess($Process, [string[]]$Roots) {
+  if ($Process.Name -notin @("node.exe", "esbuild.exe")) { return $false }
+  foreach ($root in $Roots) {
+    if (-not $root) { continue }
+    $prefix = $root.TrimEnd('\') + '\'
+    if ($Process.Name -eq "node.exe" -and $Process.CommandLine -and
+        $Process.CommandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    if ($Process.Name -eq "esbuild.exe" -and $Process.ExecutablePath -and
+        $Process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  }
+  return $false
+}
+
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $rootNorm = [IO.Path]::GetFullPath($InstallDir).TrimEnd("\")
 $hostExe = Join-Path $InstallDir "MetisHost.exe"
-if (Test-Path -LiteralPath $hostExe) {
+$scriptHost = Join-Path $InstallDir "windows-script-host.mjs"
+if (Test-Path -LiteralPath $scriptHost) {
+  Invoke-Step {
+    $node = (Get-Command node -ErrorAction Stop).Source
+    & $node $scriptHost --stop
+    if ($LASTEXITCODE -ne 0) { throw "Metis script host did not stop. Check host.log." }
+  } "Stop Metis script background host"
+}
+$hostProcesses = @(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) })
+if ($hostProcesses.Count) {
   Invoke-Step {
     Start-Process -FilePath $hostExe -ArgumentList "--stop" -Wait
-    foreach ($proc in @(Get-Process MetisHost -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe })) {
-      if (-not $proc.WaitForExit(15000)) { throw "Metis host did not stop. Check host.log." }
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+      $running = @(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) })
+      if (-not $running.Count) { break }
+      Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    foreach ($proc in $running) {
+      Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if (@(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) }).Count) {
+      throw "Metis host did not stop. Check host.log."
     }
   } "Stop Metis background host"
 }
@@ -68,9 +102,13 @@ foreach ($suffix in @("app", "worker", "mcp")) {
   Invoke-Step { Remove-ItemProperty -LiteralPath $runKey -Name $task -ErrorAction SilentlyContinue } "Remove startup entry $task"
   Invoke-Step { cmd.exe /c "schtasks /Delete /TN `"$task`" /F >nul 2>&1" } "Delete scheduled task $task"
 }
+$rootAliases = @($InstallDir, $rootNorm)
+if ($manifest.installDir -and [IO.Path]::GetFullPath([string]$manifest.installDir).TrimEnd('\') -eq $rootNorm) {
+  $rootAliases += [string]$manifest.installDir
+}
 Invoke-Step {
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq "node.exe" -and $_.CommandLine -and $_.CommandLine.IndexOf($rootNorm, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+    Where-Object { Test-InstallProcess $_ $rootAliases } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } "Stop running Metis node processes"
 }
