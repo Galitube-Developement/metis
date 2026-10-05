@@ -8,12 +8,14 @@ import { config } from "@/lib/config";
 import { getUserAgentCwd } from "@/lib/mcp";
 import { isPrivateAddress } from "@/lib/url-security";
 import { isPlaywrightBrowserMissing } from "@/lib/playwright-install";
+import { closeBrowserResources } from "@/lib/browser-resource-cleanup";
 
 const MAX_SNAPSHOT_LENGTH = 120_000;
 const SESSION_IDLE_MS = 15 * 60 * 1000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_EPHEMERAL_CACHE_ENTRIES = 2_000;
 const MAX_TABS = 12;
+const MAX_OWNER_PAGES = 24;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
 type BrowserContextState = {
@@ -208,6 +210,8 @@ const pageMeta = new WeakMap<Page, { ownerId: string; chatId: string; tabId: str
 
 const persistentContexts = new Map<string, Promise<BrowserContext>>();
 const sessions = new Map<string, BrowserContextState>();
+const sessionCreations = new Map<string, Promise<BrowserContextState>>();
+const closingContexts = new Map<string, Promise<void>>();
 const actionLocks = new Map<string, Promise<void>>();
 const allowedAddressCache = new Map<string, { expiresAt: number }>();
 const browserProfilesDir = path.join(config.dataDir, "browser-profiles");
@@ -344,12 +348,17 @@ function recordOrigin(ownerId: string, rawUrl: string) {
 }
 
 async function getPersistentContext(ownerId: string) {
+  await closingContexts.get(ownerId);
   const existing = persistentContexts.get(ownerId);
   if (existing) return existing;
   fs.mkdirSync(browserProfilesDir, { recursive: true, mode: 0o700 });
   const pending = chromium.launchPersistentContext(profilePath(ownerId), {
     headless: true,
     viewport: DEFAULT_VIEWPORT,
+  }).then(async (context) => {
+    // Restored/background pages have no chat owner and otherwise bypass idle cleanup.
+    await closeBrowserResources(context.pages());
+    return context;
   });
   persistentContexts.set(ownerId, pending);
   try {
@@ -407,6 +416,9 @@ function attachPageEventTracking(page: Page, ownerId: string, chatId: string, ta
 
 async function createSession(ownerId: string, chatId: string) {
   const context = await getPersistentContext(ownerId);
+  if (context.pages().length >= MAX_OWNER_PAGES) {
+    throw new Error(`At most ${MAX_OWNER_PAGES} browser tabs can be open across your chats. Close unused browser tabs and retry.`);
+  }
   const page = await context.newPage();
   await installRequestGuard(page);
   attachPageEventTracking(page, ownerId, chatId, "browser-1");
@@ -425,7 +437,16 @@ async function createSession(ownerId: string, chatId: string) {
 async function getSession(ownerId: string, chatId: string) {
   const key = sessionKey(ownerId, chatId);
   let state = sessions.get(key);
-  if (!state) state = await createSession(ownerId, chatId);
+  if (!state) {
+    let pending = sessionCreations.get(key);
+    if (!pending) {
+      pending = createSession(ownerId, chatId).finally(() => {
+        if (sessionCreations.get(key) === pending) sessionCreations.delete(key);
+      });
+      sessionCreations.set(key, pending);
+    }
+    state = await pending;
+  }
   state.lastUsed = Date.now();
   return state;
 }
@@ -699,6 +720,9 @@ async function performBrowserActionUnlocked(ownerId: string, chatId: string, act
 
   if (action.action === "new_tab") {
     if (state.tabs.size >= MAX_TABS) throw new Error(`A browser session can have at most ${MAX_TABS} tabs`);
+    if (state.context.pages().length >= MAX_OWNER_PAGES) {
+      throw new Error(`At most ${MAX_OWNER_PAGES} browser tabs can be open across your chats. Close unused browser tabs and retry.`);
+    }
     tabId = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     page = await state.context.newPage();
     await installRequestGuard(page);
@@ -921,19 +945,18 @@ export async function performBrowserAction(ownerId: string, chatId: string, acti
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const queued = previous.then(() => gate);
   actionLocks.set(key, queued);
-  await withTimeout(
-    previous,
-    BROWSER_ACTION_QUEUE_TIMEOUT_MS,
-    "A previous browser action exceeded the queue wait limit.",
-  );
   try {
+    await withTimeout(
+      previous,
+      BROWSER_ACTION_QUEUE_TIMEOUT_MS,
+      "A previous browser action exceeded the queue wait limit.",
+    );
     // A killed Chromium (e.g. OOM or external kill) leaves a zombie session:
     // process gone, CDP pipe dead, calls resolving never. Detect that up front
     // and rebuild the session instead of queueing every action behind a corpse.
     const state = sessions.get(key);
     if (state && !isContextAlive(state)) {
-      sessions.delete(key);
-      void closeBrowserSession(ownerId, chatId).catch(() => undefined);
+      await closeBrowserSession(ownerId, chatId);
     }
     return await withTimeout(
       performBrowserActionUnlocked(ownerId, chatId, action),
@@ -964,32 +987,50 @@ function isContextAlive(state: BrowserContextState) {
   return true;
 }
 
+function ownerHasBrowserSessions(ownerId: string) {
+  return [...sessions.values()].some((state) => state.ownerId === ownerId)
+    || [...sessionCreations.keys()].some((key) => key.startsWith(`${ownerId}:`));
+}
+
+async function retireBrowserContext(ownerId: string, context: BrowserContext) {
+  const existing = closingContexts.get(ownerId);
+  if (existing) { await existing; return; }
+  const closing = closeBrowserResources([context]);
+  closingContexts.set(ownerId, closing);
+  persistentContexts.delete(ownerId);
+  try { await closing; } finally {
+    if (closingContexts.get(ownerId) === closing) closingContexts.delete(ownerId);
+  }
+}
+
 export async function closeBrowserSession(ownerId: string, chatId: string) {
   const key = sessionKey(ownerId, chatId);
   const state = sessions.get(key);
   if (!state) return;
   sessions.delete(key);
-  await Promise.all([...state.tabs.values()].map((page) => page.close().catch(() => undefined)));
-  if (![...sessions.values()].some((candidate) => candidate.ownerId === ownerId)) {
-    persistentContexts.delete(ownerId);
-    await state.context.close().catch(() => undefined);
-  }
+  await closeBrowserResources(state.tabs.values());
+  if (!ownerHasBrowserSessions(ownerId)) await retireBrowserContext(ownerId, state.context);
 }
 
 export async function cleanupBrowserSessions() {
   pruneEphemeralCaches();
   const cutoff = Date.now() - SESSION_IDLE_MS;
   for (const [key, state] of [...sessions.entries()]) {
-    if (state.lastUsed >= cutoff) continue;
+    if (state.lastUsed >= cutoff || actionLocks.has(key)) continue;
     sessions.delete(key);
-    await Promise.all([...state.tabs.values()].map((page) => page.close().catch(() => undefined)));
+    await closeBrowserResources(state.tabs.values());
   }
   const owners = new Set([...persistentContexts.keys()]);
   for (const ownerId of owners) {
-    if ([...sessions.values()].some((state) => state.ownerId === ownerId)) continue;
-    const context = await persistentContexts.get(ownerId)?.catch(() => undefined);
-    persistentContexts.delete(ownerId);
-    await context?.close().catch(() => undefined);
+    if (ownerHasBrowserSessions(ownerId)) continue;
+    const context = await withTimeout(
+      persistentContexts.get(ownerId) || Promise.resolve(undefined), 5_000,
+      "Browser context cleanup timed out.",
+    ).catch(() => undefined);
+    // A chat can start creating a page while cleanup awaits the context.
+    if (ownerHasBrowserSessions(ownerId)) continue;
+    if (context) await retireBrowserContext(ownerId, context);
+    else persistentContexts.delete(ownerId);
   }
 }
 

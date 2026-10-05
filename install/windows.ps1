@@ -543,11 +543,14 @@ try {
   & node scripts/sync-provider-clis.mjs
   if ($LASTEXITCODE -ne 0) { throw "Provider CLI synchronization failed." }
   & $pnpmCommand exec playwright install chromium
+  if ($LASTEXITCODE -ne 0) { throw "Browser installation failed." }
   $env:METIS_AI_BOOTSTRAP_USERNAME = $username
   $env:METIS_AI_BOOTSTRAP_PASSWORD = $passwordPlain
   $env:METIS_AI_BOOTSTRAP_OPTIONAL = "1"
   & $pnpmCommand exec tsx scripts/bootstrap-user.ts
+  if ($LASTEXITCODE -ne 0) { throw "User bootstrap failed." }
   & $pnpmCommand build
+  if ($LASTEXITCODE -ne 0) { throw "Production build failed; existing services were not restarted." }
 } finally {
   if ($null -ne $previousNodeEnv) { $env:NODE_ENV = $previousNodeEnv }
   Pop-Location

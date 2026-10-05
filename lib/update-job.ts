@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import {
   initializeInstallerUpdateLog,
   installerLogForJob,
+  installerExitCode,
+  installerProcessIsRunning,
   installerLogIndicatesFailure,
   installerLogIndicatesSuccess,
   installerUpdateIsRunning,
@@ -42,13 +44,27 @@ function jobStorePath(dataDir = config.dataDir) {
   return path.join(dataDir, "metis-update-job.json");
 }
 
-async function persistJob(job: UpdateJob) {
+let jobPersistence: Promise<void> = Promise.resolve();
+
+function persistJob(job: UpdateJob, required = false) {
+  // Polling and installer completion may write concurrently. Serialize snapshots
+  // so an older write cannot replace a terminal job or truncate the JSON file.
+  const snapshot = { ...job, logs: [...job.logs] };
+  jobPersistence = jobPersistence.catch(() => {}).then(() => writeJobSnapshot(snapshot, required));
+  return jobPersistence;
+}
+
+async function writeJobSnapshot(job: UpdateJob, required: boolean) {
   try {
     await mkdir(config.dataDir, { recursive: true });
-    await writeFile(jobStorePath(), `${JSON.stringify(job)}\n`, { encoding: "utf8", mode: 0o600 });
-    await upsertUpdateHistoryEntry(historyEntryFromJob(job));
-  } catch {
-    // Status polling can still recover from the installer log after a restart.
+    const temporary = `${jobStorePath()}.${randomUUID()}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(job)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, jobStorePath());
+    // History is secondary; failure here must not invalidate a saved job.
+    await upsertUpdateHistoryEntry(historyEntryFromJob(job)).catch(() => {});
+  } catch (error) {
+    if (required) throw error;
+    // A later poll can retry a snapshot; the initial durable record is mandatory.
   }
 }
 
@@ -94,14 +110,19 @@ export function settleUpdateJobFromInstaller(
   if (!scopedLog) return job;
 
   const logs = scopedLog.trim().split(/\r?\n/);
-  if (input.installerRunning) return { ...job, logs };
+  if (input.installerRunning || installerProcessIsRunning(scopedLog)) return { ...job, logs };
 
   const now = input.now || new Date().toISOString();
   const last = logs.filter(Boolean).at(-1);
-  if (installerLogIndicatesFailure(scopedLog)) {
+  const exitCode = installerExitCode(scopedLog);
+  if ((exitCode !== undefined && exitCode !== 0) || (exitCode === undefined && installerLogIndicatesFailure(scopedLog))) {
     return { ...job, status: "failed", error: last || "Installer update failed.", finishedAt: now, logs };
   }
   if (!installerLogIndicatesSuccess(scopedLog)) {
+    const age = Date.parse(now) - Date.parse(job.startedAt);
+    if (exitCode === 0 || (age > 60_000 && /\[metis-update-pid:\d+\]/.test(scopedLog))) {
+      return { ...job, status: "failed", error: "Installer stopped without a verified successful installation. Check the update log and retry.", finishedAt: now, logs };
+    }
     return { ...job, logs };
   }
 
@@ -115,7 +136,7 @@ export function settleUpdateJobFromInstaller(
     status: "ready",
     finishedAt: now,
     logs,
-    result: job.result || { tag: "latest", asset: "installer", method: "installer" },
+    result: job.result || { tag: job.toTag || (job.toCommit ? "master" : "latest"), commit: job.toCommit || undefined, asset: "installer", method: "installer" },
   };
 }
 
@@ -123,7 +144,7 @@ async function applyInstallerState(job: UpdateJob) {
   if (job.status !== "preparing") return job;
   const [running, logs] = await Promise.all([
     installerUpdateIsRunning(config.serviceName),
-    readInstallerUpdateLog(config.dataDir, 200),
+    readInstallerUpdateLog(config.dataDir, 200, job.jobId),
   ]);
   const next = settleUpdateJobFromInstaller(job, {
     installerRunning: running,
@@ -158,7 +179,13 @@ async function startUpdateJob(
   log("Maintenance mode enabled.");
   await setMaintenanceState(job.jobId, reason);
   jobs.set(job.jobId, job);
-  await persistJob(job);
+  try {
+    await persistJob(job, true);
+  } catch (error) {
+    jobs.delete(job.jobId);
+    await clearMaintenanceState();
+    throw error;
+  }
 
   void prepare(log).then(async (result) => {
     job.result = result;
@@ -177,7 +204,39 @@ async function startUpdateJob(
   return job;
 }
 
-export function startInstallerUpdateJob(input: InstallerUpdateInput, range?: UpdateJobRange) {
+let startingJob: Promise<UpdateJob> | undefined;
+
+export function startInstallerUpdateJob(input: InstallerUpdateInput, range?: UpdateJobRange): Promise<UpdateJob> {
+  if (startingJob) return startingJob;
+  startingJob = withUpdateStartLock(() => startExclusiveInstallerUpdate(input, range)).finally(() => { startingJob = undefined; });
+  return startingJob;
+}
+
+async function withUpdateStartLock(start: () => Promise<UpdateJob>) {
+  await mkdir(config.dataDir, { recursive: true });
+  const lock = path.join(config.dataDir, "metis-update-start.lock");
+  try {
+    await mkdir(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // This lock covers job creation only; it is released before the build starts.
+    const age = Date.now() - (await stat(lock)).mtimeMs;
+    if (age <= 60_000) throw new Error("Another update request is starting. Please retry shortly.");
+    await rm(lock, { recursive: true, force: true });
+    await mkdir(lock);
+  }
+  try { return await start(); } finally { await rm(lock, { recursive: true, force: true }); }
+}
+
+async function startExclusiveInstallerUpdate(input: InstallerUpdateInput, range?: UpdateJobRange) {
+  const stored = await readPersistedJob();
+  if (stored?.status === "preparing") {
+    const existing = await applyInstallerState(jobs.get(stored.jobId) || stored);
+    if (existing.status === "preparing") return existing;
+  }
+  if (await installerUpdateIsRunning(input.serviceName, input.platform ?? process.platform)) {
+    throw new Error("An installer update is already running.");
+  }
   const labels = range || {
     fromLabel: "unknown",
     toLabel: input.commit || input.tag || (input.channel === "commits" ? "master" : "latest"),

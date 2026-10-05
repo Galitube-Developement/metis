@@ -180,5 +180,9 @@ export function mergeQueuedFollowUps<T extends { id: string }>(
     seen.add(next.id);
     merged.push(next);
   }
-  return merged;
+  // Preserve React state identity for live-sync echoes. A new but equal queue
+  // otherwise triggers autosave, another sync event, and an endless refresh loop.
+  return merged.length === local.length && merged.every((item, index) => item === local[index])
+    ? local
+    : merged;
 }

@@ -21,7 +21,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { AutomationCard } from "@/components/automation-card";
 import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
@@ -353,14 +353,14 @@ export const ToolCallChip = memo(function ToolCallChip({
   // "running". The result is terminal evidence, so never keep the spinner in
   // that case (including an intentionally empty response).
   const running = isToolRunning(status) && result === undefined;
-  const display = enrichToolDisplay({ name, input, result, kind });
+  const display = useMemo(() => enrichToolDisplay({ name, input, result, kind }), [name, input, result, kind]);
   const todoItems = todos?.length ? todos : display.todos;
   const resolvedKind = display.kind;
   const isCommand = resolvedKind === "shell";
   const expanded = isCommand ? userOpen === true : locked ? autoExpand : userOpen ?? autoExpand;
   const resolvedName = display.name || name;
   const deleteTool = /(^|[._:/-])(delete|remove|unlink)(?=[._:/-]|$)/i.test(resolvedName);
-  const headline = toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames });
+  const headline = useMemo(() => toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames }), [resolvedName, resolvedKind, input, detail, path, hostnames]);
  const sourceLabel = source === "mcp" && resolvedKind !== "mcp" ? "Metis" : source === "native" ? "CLI" : null;
   const Icon = deleteTool && (resolvedKind === "edit" || headline.icon === "edit")
     ? Trash2
@@ -742,6 +742,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   workspaces?: Array<{ id: string; type?: string; name?: string; content?: string }>;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const { planTools, noteTools, canvasTools, memoryTools, todoTools, regularTools, automationTools, regularEntries } = useMemo(() => {
   const isTodoTool = (tool: ToolCallData) =>
     tool.kind === "todo" ||
     Boolean(tool.todos?.length) ||
@@ -761,6 +762,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   );
   const automationTools = tools.filter((tool) => isAutomationCardTool(tool));
   const regularEntries = regularTools.filter((tool) => !isAutomationCardTool(tool));
+    return { planTools, noteTools, canvasTools, memoryTools, todoTools, regularTools, automationTools, regularEntries };
+  }, [tools, includePlans]);
   const thinkingFromActivity = (activity || [])
  .filter((entry): entry is Extract<ActivityEntry, { type: "thinking" }> => entry.type === "thinking")
  .map((entry) => entry.thinking);
