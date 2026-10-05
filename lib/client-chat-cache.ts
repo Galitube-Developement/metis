@@ -24,6 +24,65 @@ export function shouldPersistClientChatSnapshot(options: { busy: boolean; incogn
   return !options.busy && !options.incognito;
 }
 
+export const MAX_MEMORY_CHAT_CACHE_BYTES = 16 * 1024 * 1024;
+
+// Reject oversized cache copies; the server remains the source of chat history.
+export function estimateChatSnapshotBytes(value: unknown, limit = MAX_MEMORY_CHAT_CACHE_BYTES): number {
+  const seen = new WeakSet<object>();
+  const pending: unknown[] = [value];
+  let bytes = 0;
+  let visited = 0;
+  while (pending.length) {
+    const item = pending.pop();
+    if (++visited > 50_000) return limit + 1;
+    if (typeof item === "string") bytes += item.length * 2;
+    else if (item && typeof item === "object" && !seen.has(item)) {
+      seen.add(item);
+      bytes += 64;
+      for (const key in item) {
+        if (!Object.prototype.hasOwnProperty.call(item, key)) continue;
+        bytes += key.length * 2 + 8;
+        if (bytes > limit || pending.length >= 50_000) return limit + 1;
+        pending.push((item as Record<string, unknown>)[key]);
+      }
+    } else bytes += 8;
+    if (bytes > limit) return limit + 1;
+  }
+  return bytes;
+}
+
+/** Enforce count and byte budgets on every write, including prefetch/background updates. */
+export class BoundedChatSnapshotCache<K, V> extends Map<K, V> {
+  private readonly sizes = new Map<K, number>();
+  constructor(
+    private readonly protectedKeys: () => Iterable<K> = () => [],
+    private readonly maxEntries = MAX_MEMORY_CHAT_SNAPSHOTS,
+    private readonly maxBytes = MAX_MEMORY_CHAT_CACHE_BYTES,
+  ) { super(); }
+
+  override set(key: K, value: V): this {
+    const size = estimateChatSnapshotBytes(value, this.maxBytes);
+    this.delete(key);
+    if (size > this.maxBytes) return this;
+    super.set(key, value);
+    this.sizes.set(key, size);
+    const keep = new Set(this.protectedKeys());
+    const overBudget = () => this.size > this.maxEntries || [...this.sizes.values()].reduce((sum, bytes) => sum + bytes, 0) > this.maxBytes;
+    for (const candidate of this.keys()) {
+      if (!overBudget()) break;
+      if (!keep.has(candidate)) this.delete(candidate);
+    }
+    // A protected snapshot may itself consume the budget. Never grow without bound.
+    for (const candidate of this.keys()) {
+      if (!overBudget()) break;
+      this.delete(candidate);
+    }
+    return this;
+  }
+  override delete(key: K): boolean { this.sizes.delete(key); return super.delete(key); }
+  override clear(): void { this.sizes.clear(); super.clear(); }
+}
+
 type CachedSnapshot<T> = {
   key: string;
   scope: string;
@@ -45,15 +104,21 @@ function openDatabase(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {
       const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+      let settled = false;
+      const finish = (db: IDBDatabase | null) => {
+        if (settled) { db?.close(); return; }
+        settled = true;
+        resolve(db);
+      };
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: "key" });
         }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
+      request.onsuccess = () => finish(request.result);
+      request.onerror = () => finish(null);
+      request.onblocked = () => finish(null);
     } catch {
       resolve(null);
     }
@@ -64,6 +129,24 @@ function requestValue<T>(request: IDBRequest<T>): Promise<T | null> {
   return new Promise((resolve) => {
     request.onsuccess = () => resolve(request.result ?? null);
     request.onerror = () => resolve(null);
+  });
+}
+
+type SnapshotMetadata = Pick<CachedSnapshot<unknown>, "key" | "scope" | "cachedAt">;
+
+// Never clone all transcripts at once just to prune their keys.
+function readSnapshotMetadata(db: IDBDatabase): Promise<SnapshotMetadata[]> {
+  return new Promise((resolve) => {
+    const rows: SnapshotMetadata[] = [];
+    const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).openCursor();
+    request.onerror = () => resolve([]);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) { resolve(rows); return; }
+      const row = cursor.value as CachedSnapshot<unknown>;
+      rows.push({ key: row.key, scope: row.scope, cachedAt: row.cachedAt });
+      cursor.continue();
+    };
   });
 }
 
@@ -92,6 +175,10 @@ export async function writeClientChatSnapshot<T>(scope: string, chatId: string, 
   const db = await openDatabase();
   if (!db) return;
   try {
+    if (estimateChatSnapshotBytes(value) > MAX_MEMORY_CHAT_CACHE_BYTES) {
+      db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(cacheKey(scope, chatId));
+      return;
+    }
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).put({
       key: cacheKey(scope, chatId),
@@ -110,11 +197,8 @@ export async function writeClientChatSnapshot<T>(scope: string, chatId: string, 
     const count = await requestValue(countTx.objectStore(STORE_NAME).count() as IDBRequest<number>);
     if ((count || 0) <= MAX_SNAPSHOTS) return;
 
-    const readTx = db.transaction(STORE_NAME, "readonly");
-    const rows = await requestValue(
-      readTx.objectStore(STORE_NAME).getAll() as IDBRequest<Array<CachedSnapshot<unknown>>>,
-    );
-    const matching = (rows || [])
+    const rows = await readSnapshotMetadata(db);
+    const matching = rows
       .filter((row) => row.scope === (scope.trim() || "default"))
       .sort((a, b) => b.cachedAt - a.cachedAt);
     const stale = matching.slice(MAX_SNAPSHOTS);
@@ -151,11 +235,8 @@ export async function clearClientChatSnapshots(scope?: string): Promise<void> {
       tx.objectStore(STORE_NAME).clear();
       return;
     }
-    const readTx = db.transaction(STORE_NAME, "readonly");
-    const rows = await requestValue(
-      readTx.objectStore(STORE_NAME).getAll() as IDBRequest<Array<CachedSnapshot<unknown>>>,
-    );
-    const keys = (rows || []).filter((row) => row.scope === scope).map((row) => row.key);
+    const rows = await readSnapshotMetadata(db);
+    const keys = rows.filter((row) => row.scope === scope).map((row) => row.key);
     if (!keys.length) return;
     const tx = db.transaction(STORE_NAME, "readwrite");
     for (const key of keys) tx.objectStore(STORE_NAME).delete(key);

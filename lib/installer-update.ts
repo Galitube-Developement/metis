@@ -61,7 +61,7 @@ export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env
 }
 
 export function installerLogIndicatesFailure(text: string): boolean {
-  return /unbound variable|^Error:|\bError: /m.test(text);
+  return /unbound variable|^Error:|\bError: |Failed to compile\.|Build failed|ELIFECYCLE.*(?:failed|exit code)|ERR_PNPM_/m.test(text);
 }
 
 export function installerLogIndicatesSuccess(text: string): boolean {
@@ -69,9 +69,11 @@ export function installerLogIndicatesSuccess(text: string): boolean {
 }
 
 function platformOf(value: NodeJS.Platform | undefined): "linux" | "darwin" | "win32" {
+  value ??= process.platform;
   if (value === "darwin") return "darwin";
   if (value === "win32") return "win32";
-  return "linux";
+  if (value === "linux") return "linux";
+  throw new Error(`Automatic updates are not supported on platform ${value}.`);
 }
 
 export function installerUpdateUnitName(serviceName: string) {
@@ -145,6 +147,8 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
       "-Native",
       "-InstallDir",
       input.root,
+      "-ServiceName",
+      input.serviceName,
     ];
     if (input.channel === "releases" && tag) args.push("-Version", tag);
     if (input.channel === "commits" && input.commit) args.push("-Commit", input.commit);
@@ -181,10 +185,15 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
   };
 }
 
-export async function readInstallerUpdateLog(dataDir: string, limit = 80) {
+export async function readInstallerUpdateLog(dataDir: string, limit = 80, jobId?: string) {
   try {
     const text = await readFile(installerUpdateLogPath(dataDir), "utf8");
-    const lines = text.split(/\r?\n/).filter((line) => line.trim());
+    const lines = (jobId ? installerLogForJob(text, jobId) : text).split(/\r?\n/).filter((line) => line.trim());
+    // Preserve identity when displaying the tail of a long build.
+    if (jobId && lines.length > limit) {
+      const evidence = lines.filter((line) => /^\[metis-update-(?:pid|exit):/.test(line) || installerLogIndicatesSuccess(line) || installerLogIndicatesFailure(line));
+      return [lines[0], ...evidence, ...lines.slice(-limit)];
+    }
     return lines.slice(-limit);
   } catch {
     return [];
@@ -248,10 +257,8 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
   const unit = plan.unitName;
   if (!unit) throw new Error("Linux installer updates require a systemd unit name.");
   log(`Starting installer via systemd-run (${unit}).`);
-  try {
-    await execFileAsync("systemctl", ["stop", unit], { timeout: 15_000, maxBuffer: 256 * 1024 });
-  } catch {
-    // No previous update unit.
+  if (await installerUpdateIsRunning(unit.slice(0, -INSTALLER_UPDATE_UNIT_SUFFIX.length))) {
+    throw new Error("An installer update is already running.");
   }
   try {
     await execFileAsync("systemctl", ["reset-failed", unit], { timeout: 15_000, maxBuffer: 256 * 1024 });
@@ -266,8 +273,7 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
     `--property=StandardError=append:${plan.logFile}`,
     "--property=PrivateTmp=no",
     ...installerSystemdEnvironment(process.env, root),
-    plan.command,
-    ...args,
+    ...installerExitCommand(plan, args),
   ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
 
   const offset = { bytes: 0 };
@@ -300,7 +306,8 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
       await flushNewLogLines(plan.logFile, offset, log);
       const logText = await readFile(plan.logFile, "utf8").catch(() => "");
       if (code && code !== "0") throw new Error(`Installer update exited with status ${code}.`);
-      if (installerLogIndicatesFailure(logText)) {
+      const currentLog = logText.slice(Math.max(0, logText.lastIndexOf("[metis-update-job:")));
+      if (installerExitCode(currentLog) !== 0 && installerLogIndicatesFailure(currentLog)) {
         const last = logText.trim().split(/\r?\n/).filter(Boolean).at(-1) || "see installer log";
         throw new Error(`Installer update failed. ${last}`);
       }
@@ -315,32 +322,52 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
   throw new Error("Installer update timed out after 50 minutes.");
 }
 
-function runSpawnedInstaller(plan: InstallerUpdatePlan, args: string[], log: (message: string) => void) {
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(plan.command, args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+export function installerProcessIsRunning(text: string): boolean {
+  if (installerExitCode(text) !== undefined) return false;
+  const matches = [...text.matchAll(/^\[metis-update-pid:(\d+)\]\r?$/gm)];
+  const pid = Number(matches.at(-1)?.[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export function installerExitCode(text: string): number | undefined {
+  const matches = [...text.matchAll(/^\[metis-update-exit:(\d+)\]\r?$/gm)];
+  return matches.length ? Number(matches.at(-1)![1]) : undefined;
+}
+
+// Output must survive the app process that the installer replaces.
+export function installerExitCommand(plan: InstallerUpdatePlan, args: string[]): string[] {
+  if (plan.platform === "win32") {
+    const quote = (value: string) => "'" + value.replaceAll("'", "''") + "'";
+    const script = `[IO.File]::AppendAllText(${quote(plan.logFile)}, ("[metis-update-pid:" + $PID + "]" + [Environment]::NewLine)); & ${[plan.command, ...args].map(quote).join(" ")}; $updateExit = $LASTEXITCODE; [IO.File]::AppendAllText(${quote(plan.logFile)}, ([Environment]::NewLine + "[metis-update-exit:" + $updateExit + "]" + [Environment]::NewLine)); exit $updateExit`;
+    return [plan.command, "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+  }
+  return ["/bin/bash", "-c", 'printf "[metis-update-pid:%s]\\n" "$$"; "$@"; update_exit=$?; printf "\\n[metis-update-exit:%s]\\n" "$update_exit"; exit "$update_exit"', "--", plan.command, ...args];
+}
+
+export async function runSpawnedInstaller(plan: InstallerUpdatePlan, args: string[], log: (message: string) => void) {
+  const handle = await open(plan.logFile, "a", 0o600);
+  try {
+    const [command, ...wrappedArgs] = installerExitCommand(plan, args);
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, wrappedArgs, {
+        detached: true,
+        stdio: ["ignore", handle.fd, handle.fd],
+        env: process.env,
+        windowsHide: true,
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Installer update exited with status ${code ?? "unknown"}.`));
+      });
     });
-    const write = async (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      try {
-        await writeFile(plan.logFile, text, { encoding: "utf8", flag: "a" });
-      } catch {
-        // Keep streaming even if the log file is temporarily unwritable.
-      }
-      for (const line of text.split(/\r?\n/)) {
-        if (line.trim()) log(line);
-      }
-    };
-    child.stdout?.on("data", (chunk: Buffer) => { void write(chunk); });
-    child.stderr?.on("data", (chunk: Buffer) => { void write(chunk); });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Installer update exited with status ${code ?? "unknown"}.`));
-    });
-  });
+    log("Installer finished.");
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function runInstallerUpdate(

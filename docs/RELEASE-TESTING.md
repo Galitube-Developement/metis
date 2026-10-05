@@ -19,6 +19,23 @@ pnpm exec tsc --noEmit --pretty false
 - Ablehnung von Branchnamen statt SemVer-Tags
 - SHA256-Prüfsummenformat
 
+## Updater-Regressionen
+
+```bash
+pnpm exec tsx --test tests/updater-stability.test.ts tests/installer-update.test.ts tests/update-job.test.ts tests/installers.test.ts tests/installer-dirty-checkout.test.ts tests/update-history.test.ts
+```
+
+Die isolierten Tests prüfen Plattformwahl, Windows-Service-Namen, abgebrochene Builds,
+lange Logs, dauerhafte Exit-Codes, parallele Starts und das Weiterlaufen des Installers
+nach Beenden seines Elternprozesses. Ein fehlgeschlagener Build stellt den vorherigen
+Build-Slot und `tsconfig.json` wieder her. Installer-Builds beginnen standardmäßig mit
+einem leeren Cache; lokale Rebuilds können `METIS_REUSE_BUILD_CACHE=1` setzen.
+
+Diese Tests führen keine echten Service-Neustarts aus. Native Updates auf macOS und
+Windows sowie vollständige Docker-Upgrades müssen zusätzlich in separaten Testinstallationen
+geprüft werden. Bereits installierte Versionen erhalten die Updater-Korrekturen erst
+mit einem veröffentlichten Release; ein lokal geänderter Updater repariert sie nicht rückwirkend.
+
 ## Erstes echtes Release
 
 1. `package.json.version` und Tag müssen übereinstimmen.

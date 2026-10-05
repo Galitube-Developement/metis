@@ -153,6 +153,9 @@ export async function POST(req: Request) {
       message: "Installer update started. Metis will show the updating screen until the installer finishes and restarts the services.",
     }, { status: 202 });
   } catch (error) {
+    if (error instanceof Error && /(?:already running|update request is starting)/.test(error.message)) {
+      return Response.json({ status: "busy", error: error.message }, { status: 409 });
+    }
     const detail = error && typeof error === "object" && "stderr" in error
       ? String((error as { stderr?: unknown }).stderr || "")
       : "";
