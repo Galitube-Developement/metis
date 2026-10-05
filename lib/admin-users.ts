@@ -79,17 +79,25 @@ export function createManagedUser(input: {
     passwordHash: hashPassword(input.password),
     createdAt: new Date().toISOString(),
   };
-  try {
-    getDatabase().prepare(
-      "INSERT INTO users (id, username, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, ?)",
-    ).run(user.id, user.username, user.passwordHash, user.createdAt, isAdmin);
-  } catch {
-    throw new Error("Username is already taken.");
-  }
-  ensureAllModelAccess(user.id);
   const workspace = resolveManagedWorkspaceRoot(input.workspaceRoot || config.agentCwd);
   const osUsername = input.osUsername?.trim() || (existing === 0 ? inferOsUsernameForWorkspace(workspace) : undefined);
-  ensureUserAccess(user.id, workspace, osUsername || undefined);
+  const db = getDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    try {
+      db.prepare(
+        "INSERT INTO users (id, username, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, ?)",
+      ).run(user.id, user.username, user.passwordHash, user.createdAt, isAdmin);
+    } catch {
+      throw new Error("Username is already taken.");
+    }
+    ensureAllModelAccess(user.id);
+    ensureUserAccess(user.id, workspace, osUsername || undefined);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
   const created = userRow(user.id);
   if (!created) throw new Error("Could not create user.");
   return toRecord(created);

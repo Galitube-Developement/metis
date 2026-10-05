@@ -99,9 +99,12 @@ json_str() {
 }
 
 wait_for_health() {
-  local url="$1" max="${2:-30}" attempt
+  local url="$1" max="${2:-30}" attempt body
   for attempt in $(seq 1 "$max"); do
-    if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
+    body="$(curl --fail --silent --max-time 2 "$url" 2>/dev/null || true)"
+    if [[ "$url" == */api/status ]]; then
+      if [[ "$body" == *'"authenticated":'* && "$body" == *'"worker":'* && "$body" == *'"mcp":'* ]]; then return 0; fi
+    elif [[ "$body" == *'Universal MCP Gateway'* && "$body" == *'"endpoint":"/mcp"'* && "$body" == *'"ok":true'* ]]; then
       return 0
     fi
     sleep 1
@@ -131,14 +134,36 @@ port_in_use() {
   fi
 }
 
-pick_free_port() {
-  local p="$1"
-  if ! port_in_use "$p"; then printf '%s' "$p"; return; fi
-  local candidate
-  for candidate in 8798 8799 8800 8801 8802 8788 8789; do
-    if ! port_in_use "$candidate"; then printf '%s' "$candidate"; return; fi
+assert_available_ports() {
+  local web="$1" gateway="$2" p owners pid command process_name owned_ports
+  [[ "$web" != "$gateway" ]] || die "Web and MCP ports must be different."
+  for p in "$web" "$gateway"; do
+    [[ "$p" =~ ^[0-9]+$ && "$p" -ge 1 && "$p" -le 65535 ]] ||
+      die "Port must be a number between 1 and 65535: $p"
+    if command -v docker >/dev/null 2>&1; then
+      owned_ports="$(docker ps --filter "label=com.docker.compose.project.working_dir=$install_dir" --format '{{.Ports}}' 2>/dev/null || true)"
+      if [[ "$owned_ports" == *":$p->"* ]]; then
+        if (( ${force_native:-0} )); then die "This installation is running in Docker. Stop its Compose stack before migrating with --native."; fi
+        continue
+      fi
+    fi
+    if port_in_use "$p"; then
+      owners=""
+      if command -v ss >/dev/null 2>&1; then
+        owners="$(ss -ltnpH "sport = :$p" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
+      elif command -v lsof >/dev/null 2>&1; then
+        owners="$(lsof -nP -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null || true)"
+      fi
+      [[ -n "$owners" ]] || die "Port $p is occupied. Choose a free --port / --mcp-port. Run ss -ltnp to identify the conflicting process."
+      for pid in $owners; do
+        command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        if [[ "$command" != *"$install_dir/"* || ( "$command" != *server.mjs* && "$command" != *gateway-core.mjs* ) ]]; then
+          process_name="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+          die "Port $p is already occupied by PID $pid: ${process_name:-unknown}. Choose a free --port / --mcp-port or close the conflicting application (for example OpenWebUI)."
+        fi
+      done
+    fi
   done
-  printf '%s' "$p"
 }
 
 compose() {
@@ -536,29 +561,13 @@ upsert_env_key() {
 }
 
 apply_merged_runtime_ports() {
-  local dest="$1" value next
+  local dest="$1" value
   [[ -f "$dest" ]] || return 0
   value="$(read_env_key "$dest" PORT)"
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
-    port="$value"
-  fi
+  if [[ "$value" =~ ^[0-9]+$ ]]; then port="$value"; fi
   value="$(read_env_key "$dest" MCP_PORT)"
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
-    mcp_port="$value"
-  fi
-  if port_in_use "$mcp_port"; then
-    if curl --fail --silent --max-time 2 "http://127.0.0.1:${mcp_port}/health" >/dev/null 2>&1; then
-      return 0
-    fi
-    next="$(pick_free_port "$mcp_port")"
-    if [[ "$next" == "$mcp_port" ]]; then
-      return 0
-    fi
-    printf 'Preserved MCP port %s is in use; using %s instead.\n' "$mcp_port" "$next"
-    mcp_port="$next"
-    upsert_env_key "$dest" MCP_PORT "$mcp_port"
-    upsert_env_key "$dest" MCP_PUBLIC_URL "http://127.0.0.1:$mcp_port"
-  fi
+  if [[ "$value" =~ ^[0-9]+$ ]]; then mcp_port="$value"; fi
+  assert_available_ports "$port" "$mcp_port"
 }
 
 uninstall_detected_install() {
@@ -626,8 +635,7 @@ if [[ -n "$existing_service_state" ]]; then
   esac
 fi
 
-mcp_port="$(pick_free_port "$mcp_port")"
-[[ "$mcp_port" =~ ^[0-9]+$ && "$mcp_port" -ge 1 && "$mcp_port" -le 65535 ]] || die "MCP port must be a number between 1 and 65535."
+assert_available_ports "$port" "$mcp_port"
 
 version_at_least_22() {
   command -v "$1" >/dev/null 2>&1 || return 1
@@ -785,6 +793,7 @@ adopt_env_stash "$install_dir"
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
 merge_preserved_env "$install_dir/.env"
+upsert_env_key "$install_dir/.env" NODE_ENV "production"
 apply_merged_runtime_ports "$install_dir/.env"
 
 if (( use_docker )); then
@@ -820,7 +829,8 @@ ensure_native_build_tools
   cd "$install_dir"
   "$METIS_PNPM_HOME/pnpm" install --frozen-lockfile
   node scripts/sync-provider-clis.mjs
-  pnpm exec playwright install chromium
+  # Minimal Linux hosts also need the shared libraries used by Chromium.
+  pnpm exec playwright install --with-deps chromium
   current_build_slot="${NEXT_DIST_DIR:-}"
   if [[ "$current_build_slot" == ".next-a" ]]; then
     next_build_slot=".next-b"

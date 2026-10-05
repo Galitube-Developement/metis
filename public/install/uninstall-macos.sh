@@ -107,6 +107,12 @@ for suffix in app worker mcp; do
   run rm -f "$HOME/Library/LaunchAgents/$SERVICE-$suffix.plist"
 done
 fi
+# Remove only the application entry for this service and installation.
+app_bundle="$HOME/Applications/Metis AI ($SERVICE).app"
+if [[ -f "$app_bundle/Contents/MacOS/MetisHost" ]] &&
+   grep -Fq "$(printf 'ROOT=%q' "$INSTALL_DIR")" "$app_bundle/Contents/MacOS/MetisHost"; then
+  run rm -rf -- "$app_bundle"
+fi
 stash_nested_keep_data
 stash_keep_env
 if [[ "$KEEP_DATA" != true && -n "$DATA_DIR" && "$DATA_DIR" != "/" && "$DATA_DIR" != "$INSTALL_DIR" ]]; then

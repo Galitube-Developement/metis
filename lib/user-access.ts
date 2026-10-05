@@ -2,6 +2,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
+import { hostUserFromInfo, windowsOsUserListScript } from "@/lib/windows-os-users";
 import { getDatabase } from "@/lib/sqlite";
 import { config } from "@/lib/config";
 import {
@@ -61,13 +62,7 @@ export function lookupPosixUser(username: string): PosixIdentity | undefined {
 
 export function currentHostOsUser(): HostOsUser | undefined {
   try {
-    const current = os.userInfo();
-    return {
-      username: current.username,
-      uid: current.uid,
-      gid: current.gid,
-      home: current.homedir,
-    };
+    return hostUserFromInfo(os.userInfo(), hostPlatform());
   } catch {
     return undefined;
   }
@@ -80,10 +75,10 @@ function hostOsUserMatches(user: HostOsUser, username: string) {
 export function lookupHostOsUser(username: string): HostOsUser | undefined {
   const clean = username.trim();
   if (!clean) return undefined;
-  const listed = listHostOsUsers().find((user) => hostOsUserMatches(user, clean));
-  if (listed) return listed;
   const current = currentHostOsUser();
   if (current && hostOsUserMatches(current, clean)) return current;
+  const listed = listHostOsUsers().find((user) => hostOsUserMatches(user, clean));
+  if (listed) return listed;
   const platform = hostPlatform();
   if (platform === "linux") {
     const posix = lookupPosixUser(clean);
@@ -101,13 +96,13 @@ export function lookupHostOsUser(username: string): HostOsUser | undefined {
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Get-LocalUser -Name ${JSON.stringify(clean)} | ForEach-Object { $_.Name }`,
+    `Get-LocalUser -Name ${"'" + clean.replaceAll("'", "''") + "'"} | ForEach-Object { $_.Name }`,
   ]).trim().split("\n").map((line) => line.trim()).find(Boolean);
   return named ? { username: named, home: "" } : undefined;
 }
 
 function runHostCommand(command: string, args: string[]) {
- try { return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
+ try { return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 10_000 }); }
  catch { return ""; }
 }
 
@@ -121,13 +116,8 @@ function listMacOsUsers(): HostOsUser[] {
 }
 
 function listWindowsUsers(): HostOsUser[] {
- const script = "$profiles = @{}; Get-CimInstance Win32_UserProfile | ForEach-Object { if ($_.LocalPath) { $profiles[$_.SID] = $_.LocalPath } }; Get-LocalUser | ForEach-Object { Write-Output ($_.Name + [char]9 + ($profiles[$_.SID] ?? (Join-Path $env:SystemDrive (\"Users\\\" + $_.Name)))) }";
- const listed = runHostCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
- let users = listed.split("\n").map(parseWindowsUserLine).filter((user): user is HostOsUser => Boolean(user));
- if (users.length === 0) {
- const fallback = runHostCommand("wmic.exe", ["useraccount", "get", "name"]);
- users = fallback.split("\n").map((line) => ({ username: line.trim(), home: "" })).filter((user) => Boolean(user.username));
- }
+ const listed = runHostCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsOsUserListScript]);
+ const users = listed.split("\n").map(parseWindowsUserLine).filter((user): user is HostOsUser => Boolean(user));
  return users.sort((a, b) => a.username.localeCompare(b.username));
 }
 
@@ -196,7 +186,9 @@ export function getUserExecutionIdentity(userId?: string): UserExecutionIdentity
       workspaceRoot: access.workspaceRoot,
     };
   }
- if (hostPlatform() === "win32") return { username: access.osUsername, home: posix?.home || access.home, workspaceRoot: access.workspaceRoot };
+  if (hostPlatform() === "win32") {
+    return posix ? { username: posix.username, home: posix.home || access.home, workspaceRoot: access.workspaceRoot } : undefined;
+  }
  if (uid === undefined || gid === undefined || uid <= 0) return undefined;
  return {
     username: access.osUsername,
@@ -257,9 +249,13 @@ export function isHostAdmin(userId?: string | null) {
 }
 
 export function inferOsUsernameForWorkspace(workspaceRoot = config.agentCwd): string | undefined {
+  if (hostPlatform() === "win32") {
+    const installedBy = process.env.METIS_HOST_OS_USERNAME?.trim();
+    const installer = installedBy ? lookupHostOsUser(installedBy) : undefined;
+    return installer?.username || currentHostOsUser()?.username;
+  }
   const current = currentHostOsUser();
   if (!current?.username) return undefined;
-  if (hostPlatform() === "win32") return current.username;
   if (current.uid === 0) {
     if (config.allowRootAgents && isRootWorkspace(workspaceRoot, current.home || "/root")) {
       return current.username;
@@ -290,7 +286,7 @@ export function ensureUserAccess(
   if (osUsername && !identity) {
     throw new Error(`OS user ${osUsername} does not exist on this host.`);
   }
-  if (identity?.uid !== undefined) {
+  if (hostPlatform() !== "win32" && identity?.uid !== undefined) {
     assertExecutionUid(identity.uid, {
       allowRoot: config.allowRootAgents,
       workspaceRoot,
@@ -311,8 +307,8 @@ export function ensureUserAccess(
     userId,
     path.resolve(workspaceRoot),
     osUsername ?? null,
-    identity?.uid ?? null,
-    identity?.gid ?? null,
+    hostPlatform() === "win32" ? null : identity?.uid ?? null,
+    hostPlatform() === "win32" ? null : identity?.gid ?? null,
     new Date().toISOString(),
     new Date().toISOString(),
   );
@@ -337,7 +333,19 @@ export function provisionMissingAccountAccess(userId: string, username: string) 
   const access = getUserAccess(userId);
   const current = access.osUsername ? lookupHostOsUser(access.osUsername) : undefined;
   if (current && (hostPlatform() === "win32" || (current.uid !== undefined && current.uid > 0) || (config.allowRootAgents && isRootWorkspace(access.workspaceRoot, current.home)))) {
+    if (hostPlatform() === "win32" && (access.uid != null || access.gid != null)) {
+      ensureUserAccess(userId, access.workspaceRoot, current.username);
+    }
     return true;
+  }
+
+  if (hostPlatform() === "win32" && access.osUsername) return false;
+  if (hostPlatform() === "win32") {
+    const first = getDatabase().prepare("SELECT id FROM users ORDER BY created_at ASC, rowid ASC LIMIT 1").get() as { id: string } | undefined;
+    if (first?.id === userId) {
+      const defaultUser = inferOsUsernameForWorkspace(access.workspaceRoot);
+      if (defaultUser) { ensureUserAccess(userId, access.workspaceRoot, defaultUser); return true; }
+    }
   }
 
   if (config.allowRootAgents && isRootWorkspace(access.workspaceRoot)) {
@@ -350,7 +358,7 @@ export function provisionMissingAccountAccess(userId: string, username: string) 
     ensureUserAccess(userId, access.workspaceRoot, matching.username);
     return true;
   }
-  const inferred = inferOsUsernameForWorkspace(access.workspaceRoot);
+  const inferred = hostPlatform() === "win32" ? undefined : inferOsUsernameForWorkspace(access.workspaceRoot);
   if (inferred) {
     ensureUserAccess(userId, access.workspaceRoot, inferred);
     return true;

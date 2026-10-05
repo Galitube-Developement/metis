@@ -66,9 +66,12 @@ json_str() {
 }
 
 wait_for_health() {
-  local url="$1" max="${2:-30}" attempt
+  local url="$1" max="${2:-30}" attempt body
   for attempt in $(seq 1 "$max"); do
-    if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
+    body="$(curl --fail --silent --max-time 2 "$url" 2>/dev/null || true)"
+    if [[ "$url" == */api/status ]]; then
+      if [[ "$body" == *'"authenticated":'* && "$body" == *'"worker":'* && "$body" == *'"mcp":'* ]]; then return 0; fi
+    elif [[ "$body" == *'Universal MCP Gateway'* && "$body" == *'"endpoint":"/mcp"'* && "$body" == *'"ok":true'* ]]; then
       return 0
     fi
     sleep 1
@@ -106,6 +109,33 @@ pick_free_port() {
     if ! port_in_use "$candidate"; then printf '%s' "$candidate"; return; fi
   done
   printf '%s' "$p"
+}
+
+assert_available_ports() {
+  local web="$1" gateway="$2" p owners pid command process_name owned_ports
+  [[ "$web" != "$gateway" ]] || die "Web and MCP ports must be different."
+  for p in "$web" "$gateway"; do
+    [[ "$p" =~ ^[0-9]+$ && "$p" -ge 1 && "$p" -le 65535 ]] ||
+      die "Port must be a number between 1 and 65535: $p"
+    if command -v docker >/dev/null 2>&1; then
+      owned_ports="$(docker ps --filter "label=com.docker.compose.project.working_dir=$install_dir" --format '{{.Ports}}' 2>/dev/null || true)"
+      if [[ "$owned_ports" == *":$p->"* ]]; then
+        if (( ${force_native:-0} )); then die "This installation is running in Docker. Stop its Compose stack before migrating with --native."; fi
+        continue
+      fi
+    fi
+    if port_in_use "$p"; then
+      owners="$(lsof -nP -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null || true)"
+      [[ -n "$owners" ]] || die "Port $p is occupied. Choose a free --port / --mcp-port."
+      for pid in $owners; do
+        command="$(ps -p "$pid" -o command=)"
+        if [[ "$command" != *"$install_dir/"* || ( "$command" != *server.mjs* && "$command" != *gateway-core.mjs* ) ]]; then
+          process_name="$(ps -p "$pid" -o comm=)"
+          die "Port $p is already occupied by PID $pid: $process_name. Choose a free --port / --mcp-port or close the conflicting application (for example OpenWebUI)."
+        fi
+      done
+    fi
+  done
 }
 
 compose() {
@@ -153,7 +183,8 @@ Options:
   --public-url URL        URL shown to users
   --version TAG          Checkout a release tag such as v1.0.0 after fetch
   --commit SHA           Checkout a master commit SHA after fetch
-  --native                Force Node.js + launchd instead of Docker
+  --native                Node.js + launchd background host (default)
+  --docker                Install with Docker Compose
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
   --dry-run               Collect configuration and print the plan, then exit
@@ -173,6 +204,7 @@ mcp_port="8787"
 service_name="metis-ai"
 public_url=""
 force_native=0
+force_docker=0
 replace_existing=0
 REPLACE_DATA_STASH=""
 release_version=""
@@ -242,6 +274,7 @@ while [[ $# -gt 0 ]]; do
     --version) [[ $# -ge 2 ]] || die "--version requires a value"; release_version="$2"; shift 2 ;;
     --commit) [[ $# -ge 2 ]] || die "--commit requires a value"; commit_sha="$2"; shift 2 ;;
     --native) force_native=1; shift ;;
+    --docker) force_docker=1; shift ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
     --dry-run) dry_run=1; shift ;;
@@ -249,6 +282,10 @@ while [[ $# -gt 0 ]]; do
     *) die "Unknown option: $1 (use --help for usage)" ;;
   esac
 done
+
+if (( force_docker && force_native )); then
+  die "Use either --docker or --native, not both."
+fi
 
 read_tty_line() {
   local prompt="$1"
@@ -292,6 +329,7 @@ public_url="${public_url:-http://${public_host}:${port}}"
 
 [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || die "Web port must be a number between 1 and 65535."
 [[ "$mcp_port" =~ ^[0-9]+$ && "$mcp_port" -ge 1 && "$mcp_port" -le 65535 ]] || die "MCP port must be a number between 1 and 65535."
+[[ "$port" != "$mcp_port" ]] || die "Web and MCP ports must be different."
 [[ "$service_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "Service name may contain letters, numbers, underscores and hyphens."
 if [[ -n "$release_version" && "$release_version" != "latest" ]]; then
   [[ "$release_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
@@ -508,19 +546,9 @@ apply_merged_runtime_ports() {
   if [[ "$value" =~ ^[0-9]+$ ]]; then
     mcp_port="$value"
   fi
-  if port_in_use "$mcp_port"; then
-    if curl --fail --silent --max-time 2 "http://127.0.0.1:${mcp_port}/health" >/dev/null 2>&1; then
-      return 0
-    fi
-    next="$(pick_free_port "$mcp_port")"
-    if [[ "$next" == "$mcp_port" ]]; then
-      return 0
-    fi
-    printf 'Preserved MCP port %s is in use; using %s instead.\n' "$mcp_port" "$next"
-    mcp_port="$next"
-    upsert_env_key "$dest" MCP_PORT "$mcp_port"
-    upsert_env_key "$dest" MCP_PUBLIC_URL "http://127.0.0.1:$mcp_port"
-  fi
+  assert_available_ports "$port" "$mcp_port"
+  public_url="$(read_env_key "$dest" AI_CHAT_PUBLIC_URL)"
+
 }
 
 uninstall_detected_install() {
@@ -586,8 +614,16 @@ if [[ -n "$existing_service_state" ]]; then
   esac
 fi
 
-mcp_port="$(pick_free_port "$mcp_port")"
-[[ "$mcp_port" =~ ^[0-9]+$ && "$mcp_port" -ge 1 && "$mcp_port" -le 65535 ]] || die "MCP port must be a number between 1 and 65535."
+# Read existing ports before dependency installation, then validate the actual listeners.
+if [[ -f "$install_dir/.env" ]]; then
+  saved_port="$(read_env_key "$install_dir/.env" PORT)"
+  saved_mcp_port="$(read_env_key "$install_dir/.env" MCP_PORT)"
+  [[ -z "$saved_port" ]] || port="$saved_port"
+  [[ -z "$saved_mcp_port" ]] || mcp_port="$saved_mcp_port"
+fi
+assert_available_ports "$port" "$mcp_port"
+[[ -n "$public_url" ]] || public_url="http://${public_host}:$port"
+
 
 install_homebrew() {
   command -v brew >/dev/null 2>&1 && return 0
@@ -643,10 +679,19 @@ git -C "$install_dir" reset --hard "$update_ref"
 restore_stashed_data "$data_dir"
 
 use_docker=0
-if (( force_native == 0 )) && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
-    use_docker=1
+if (( force_native == 0 && force_docker == 0 )) && [[ -f "$install_dir/.metis-ai-install.json" ]]; then
+  previous_method="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("installMethod","native"))' "$install_dir/.metis-ai-install.json")"
+  if [[ "$previous_method" == docker ]]; then force_docker=1; fi
+fi
+if (( force_docker )); then
+  if [[ -f "$HOME/Library/LaunchAgents/${service_name}-app.plist" ]]; then
+    die "This is a native installation. Upgrade without --docker; migrate its runtime separately."
   fi
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
+    die "Docker is not running. Start Docker Desktop or omit --docker for native installation."
+  docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 ||
+    die "Docker Compose is required with --docker."
+  use_docker=1
 fi
 
 if (( use_docker == 0 )); then
@@ -713,6 +758,7 @@ adopt_env_stash "$install_dir"
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
 merge_preserved_env "$install_dir/.env"
+upsert_env_key "$install_dir/.env" NODE_ENV "production"
 apply_merged_runtime_ports "$install_dir/.env"
 
 if (( use_docker )); then
@@ -795,14 +841,66 @@ write_plist app "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/serve
 write_plist worker "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/worker.ts"
 write_plist mcp "$install_dir/lib/mcp-core/gateway-core.mjs"
 fi
+# Finder/Spotlight application entry. The application hosts no web view.
+app_bundle="$HOME/Applications/Metis AI ($service_name).app"
+mkdir -p "$app_bundle/Contents/MacOS"
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>'
+  printf '<key>CFBundleName</key><string>Metis AI</string>\n'
+  printf '<key>CFBundleIdentifier</key><string>ai.metis.host.%s</string>\n' "$(xml_escape "$service_name")"
+  printf '<key>CFBundleExecutable</key><string>MetisHost</string>\n'
+  printf '<key>CFBundlePackageType</key><string>APPL</string>\n'
+  printf '<key>LSUIElement</key><true/>\n'
+  printf '%s\n' '</dict></plist>'
+} > "$app_bundle/Contents/Info.plist"
+{
+  printf '#!/bin/bash\nset -euo pipefail\n'
+  printf 'ROOT=%q\nSERVICE=%q\n' "$install_dir" "$service_name"
+  cat <<'APP'
+set -a
+. "$ROOT/.env"
+set +a
+exec >>"$CHAT_DATA_DIR/host.log" 2>&1
+if [[ "${METIS_DOCKER:-0}" == 1 ]]; then
+  cd "$ROOT"
+  unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
+  docker compose --env-file .env up -d --remove-orphans
+  set -a; . "$ROOT/.env"; set +a
+else
+  for suffix in app worker mcp; do
+    label="$SERVICE-$suffix"
+    if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$label.plist"
+    fi
+    launchctl kickstart "gui/$(id -u)/$label"
+  done
+fi
+url="http://127.0.0.1:$PORT"
+for attempt in $(seq 1 60); do
+  body="$(curl --fail --silent --max-time 2 "$url/api/status" || true)"
+  if [[ "$body" == *'"authenticated":'* && "$body" == *'"worker":'* && "$body" == *'"mcp":'* ]]; then
+    open "$url"
+    exit 0
+  fi
+  sleep 1
+done
+osascript -e 'display alert "Metis AI could not start" message "Check the Metis service logs for startup errors or an occupied web/MCP port." as critical'
+exit 1
+APP
+} > "$app_bundle/Contents/MacOS/MetisHost"
+chmod 700 "$app_bundle/Contents/MacOS/MetisHost"
+if [[ -x /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister ]]; then
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app_bundle"
+fi
+
 health_tries=30
 if (( use_docker )); then health_tries=60; fi
 wait_for_health "http://127.0.0.1:$port/api/status" "$health_tries" ||
-  die "The application did not become healthy. Check launchctl, docker compose logs, or the service logs."
+  die "Metis did not become healthy on web port $port. Check $data_dir/${service_name}-app.error.log or docker compose logs for startup errors and port conflicts."
 wait_for_frontend_assets "http://127.0.0.1:$port" ||
   die "The application started, but its browser assets are not available. Check launchctl, docker compose logs, or the service logs."
 wait_for_health "http://127.0.0.1:$mcp_port/health" "$health_tries" ||
-  die "The MCP gateway did not become healthy on port $mcp_port."
+  die "Metis MCP gateway did not become healthy on port $mcp_port. Check $data_dir/${service_name}-mcp.error.log or docker compose logs for startup errors and port conflicts."
 
 install_method="native"
 if (( use_docker )); then install_method="docker"; fi
@@ -829,4 +927,5 @@ printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: 
 if (( use_docker )); then
   printf 'Apply: %s\n' "$install_dir/reload.sh"
 fi
+printf 'Application: %s (opens Metis in your browser)\n' "$app_bundle"
 printf 'Uninstall: %s --install-dir %q --keep-data\n' "$install_dir/uninstall-macos.sh" "$install_dir"
