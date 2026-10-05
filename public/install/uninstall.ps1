@@ -8,6 +8,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 if (-not $InstallDir) {
+  try {
+    $InstallDir = (Get-ItemProperty -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$ServiceName" -ErrorAction Stop).InstallLocation
+  } catch {}
+}
+if (-not $InstallDir) {
   $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
   foreach ($candidate in @($ServiceName, "MetisAI", "metis-ai")) {
     try {
@@ -43,6 +48,18 @@ function Invoke-Step([scriptblock]$Action, [string]$Description) {
 }
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $rootNorm = [IO.Path]::GetFullPath($InstallDir).TrimEnd("\")
+$hostExe = Join-Path $InstallDir "MetisHost.exe"
+if (Test-Path -LiteralPath $hostExe) {
+  Invoke-Step {
+    Start-Process -FilePath $hostExe -ArgumentList "--stop" -Wait
+    foreach ($proc in @(Get-Process MetisHost -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe })) {
+      if (-not $proc.WaitForExit(15000)) { throw "Metis host did not stop. Check host.log." }
+    }
+  } "Stop Metis background host"
+}
+Invoke-Step { Remove-ItemProperty -LiteralPath $runKey -Name "$($manifest.serviceName)-host" -ErrorAction SilentlyContinue } "Remove host startup entry"
+Invoke-Step { Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath("Programs")) $manifest.serviceName) -Recurse -Force -ErrorAction SilentlyContinue } "Remove Metis Start menu entry"
+Invoke-Step { Remove-Item -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($manifest.serviceName)" -Recurse -Force -ErrorAction SilentlyContinue } "Remove Metis application registration"
 if ($manifest.installMethod -eq "docker") {
   Invoke-Step { Push-Location $InstallDir; docker compose down; Pop-Location } "docker compose down"
 } else {

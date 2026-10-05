@@ -99,8 +99,8 @@ startet die Compose-Services mit `docker compose pull` und `up -d` neu.
 The versioned Docker release installer above is recommended for production.
 This legacy cross-platform bootstrap remains useful for development checkouts
 or native installations. On Linux it installs native systemd; pass `-- --docker`
-for Compose. On macOS and Windows it uses Docker when available; use `--native` /
-`-Native` to keep the Node.js + launchd/Task Scheduler flow. The one-liner
+for Compose. macOS and Windows also default to native background hosts; use
+`--docker` / `-Docker` to opt into Docker Compose. The one-liner
 downloads the platform installer to a temp file and executes that file — it does
 not run the installer from a pipe.
 
@@ -153,7 +153,7 @@ named arguments:
 
 ```powershell
 irm https://raw.githubusercontent.com/f1shyondrugs/metis/master/install/windows.ps1 -OutFile install.ps1
-.\install.ps1 -NonInteractive -PasswordFile .\metis-password.txt
+.\install.ps1 -NonInteractive
 ```
 
 During a normal interactive installation, every installer asks for the
@@ -164,6 +164,20 @@ All three installers also accept argument-only configuration for the install
 directory, data directory, agent workspace, ports, bind address, service name
 and public URL. Use `--help` on Linux/macOS or `-Help`
 on Windows for the complete list.
+
+Windows registers **Metis AI** in the Start menu and Installed Apps. A windowless
+host starts at sign-in, supervises the web app, worker and MCP gateway, and writes
+logs to the data directory. The Start menu entry opens the interface in your
+default browser. macOS installs a Finder/Spotlight app under `~/Applications`;
+launchd runs the native services in the background. Create your account in the
+browser; installer password arguments remain optional for automation.
+
+Both desktop installers check the effective web/MCP ports before installing
+dependencies or building, and again after restoring an existing configuration.
+A conflict reports the port and owning process; use `-Port` / `-McpPort` on
+Windows or `--port` / `--mcp-port` on macOS to choose free ports. Existing
+configuration is preserved on upgrade, so change its `.env` ports when needed.
+An unrelated HTTP 200 response is not accepted as Metis health.
 
 #### Non-interactive options
 
@@ -182,8 +196,8 @@ macOS use Bash options; Windows uses PowerShell named parameters.
 | Service/task name | `--service-name NAME` | `--service-name NAME` | `-ServiceName NAME` | `metis-ai` / `MetisAI` |
 | Public URL | `--public-url URL` | `--public-url URL` | `-PublicUrl URL` | `http://127.0.0.1:PORT` |
 | No prompts | `--non-interactive` | `--non-interactive` | `-NonInteractive` | off |
-| Native (no Docker) | default | `--native` | `-Native` | Linux default; macOS/Windows off when Docker is available |
-| Docker Compose | `--docker` | auto if Docker | auto if Docker | Linux opt-in |
+| Native (no Docker) | default | `--native` | `-Native` | default on every platform |
+| Docker Compose | `--docker` | `--docker` | `-Docker` | opt-in |
 | Dry run | `--dry-run` | `--dry-run` | `-DryRun` | off |
 | Skip runtime installation | — | — | `-SkipRuntimeInstall` | off |
 | Show help | `--help` or `-h` | `--help` or `-h` | `-Help` | — |

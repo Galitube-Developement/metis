@@ -57,16 +57,18 @@ test("installer sources do not contain this deployment's machine path", () => {
   }
 });
 
-test("macos and windows installers default to Docker and keep a native fallback", () => {
+test("macos and windows installers default to native and offer explicit Docker", () => {
   const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
   const publicMacos = readFileSync(path.join(installerDir, "macos.sh"), "utf8");
   for (const source of [macos, publicMacos]) {
     assert.match(source, /--native/);
     assert.match(source, /docker compose/);
-    assert.match(source, /force_native == 0 \)\) && command -v docker/);
+    assert.match(source, /if \(\( force_docker \)\)/);
+    assert.doesNotMatch(source, /force_native == 0 \)\) && command -v docker/);
   }
   const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
   assert.match(windows, /-Native/);
+  assert.match(windows, /\$useDocker = \[bool\]\$Docker/);
   assert.match(windows, /docker compose/);
   assert.equal(existsSync(path.join(root, "Dockerfile")), true);
   assert.equal(existsSync(path.join(root, "docker-compose.yml")), true);
@@ -435,12 +437,14 @@ test("windows installer installs pnpm into the install directory instead of Prog
   assert.doesNotMatch(windows, /corepack prepare pnpm/);
 });
 
-test("windows services start with an absolute node path and short cmd wrappers", () => {
+test("windows services use a registered GUI host instead of console startup wrappers", () => {
   const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
   const uninstall = readFileSync(path.join(root, "install", "uninstall.ps1"), "utf8");
   assert.match(windows, /METIS_NODE_BIN=/);
   assert.match(windows, /\$env:METIS_NODE_BIN/);
-  assert.match(windows, /run-\$suffix\.cmd/);
+  assert.match(windows, /target:winexe/);
+  assert.match(windows, /MetisHost\.exe/);
+  assert.doesNotMatch(windows, /run-\$suffix\.cmd/);
   assert.match(windows, /HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run/);
   assert.match(windows, /Start-Process/);
   assert.match(windows, /for \(\$attempt = 0; \$attempt -lt 45;/);
@@ -472,9 +476,9 @@ test("installers merge a previous .env on replace and upgrade", () => {
     assert.ok(writeAt >= 0 && mergeAt > writeAt, "merge must run after writing the new .env template");
     const applyAt = source.lastIndexOf('apply_merged_runtime_ports "$install_dir/.env"');
     assert.ok(applyAt > mergeAt, "health-check ports must be re-read after env merge");
-    const pickAt = source.lastIndexOf('mcp_port="$(pick_free_port "$mcp_port")"');
+    const pickAt = source.lastIndexOf(source.includes("assert_available_ports()") ? 'assert_available_ports "$port" "$mcp_port"' : 'mcp_port="$(pick_free_port "$mcp_port")"');
     const stopAt = source.indexOf("uninstall_detected_install");
-    assert.ok(pickAt > stopAt, "MCP port must be chosen after stopping a replaced install");
+    assert.ok(pickAt > stopAt, "MCP port must be checked after handling a replaced install");
   }
   assert.match(windows, /Save-ExistingEnv/);
   assert.match(windows, /Merge-PreservedEnv/);
