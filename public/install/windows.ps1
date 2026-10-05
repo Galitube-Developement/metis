@@ -248,7 +248,7 @@ function Merge-PreservedEnv([string]$Dest) {
   foreach ($key in @(
     'AI_CHAT_ROOT', 'AI_CHAT_INSTALL_DIR', 'METIS_NODE_BIN', 'METIS_NODE_HOME',
     'CHAT_DATA_DIR', 'METIS_DATA_DIR', 'AGENT_CWD', 'METIS_WORKSPACE',
-    'AI_CHAT_MCP_STATE_DIR', 'METIS_DOCKER', 'AI_CHAT_SERVICE_NAME'
+    'AI_CHAT_MCP_STATE_DIR', 'METIS_DOCKER', 'AI_CHAT_SERVICE_NAME', 'MCP_SDK_ROOT'
   )) { $structural[$key] = $true }
   $oldLines = [ordered]@{}
   foreach ($line in Get-Content -LiteralPath $script:ReplaceEnvStash) {
@@ -306,12 +306,44 @@ function Test-PathInside([string]$Inner, [string]$Outer) {
   return ($innerFull -eq $outerFull) -or $innerFull.StartsWith($outerFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-InstallProcess($Process, [string[]]$Roots) {
+  if ($Process.Name -notin @("node.exe", "esbuild.exe")) { return $false }
+  foreach ($root in $Roots) {
+    if (-not $root) { continue }
+    $prefix = $root.TrimEnd('\') + '\'
+    if ($Process.Name -eq "node.exe" -and $Process.CommandLine -and
+        $Process.CommandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    if ($Process.Name -eq "esbuild.exe" -and $Process.ExecutablePath -and
+        $Process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  }
+  return $false
+}
+
+function Stop-ScriptHost([string]$Dir) {
+  $scriptHost = Join-Path $Dir "windows-script-host.mjs"
+  if (-not (Test-Path -LiteralPath $scriptHost)) { return }
+  $node = (Get-Command node -ErrorAction Stop).Source
+  & $node $scriptHost --stop
+  if ($LASTEXITCODE -ne 0) { throw "Metis script host did not stop. Check host.log." }
+}
+
 function Uninstall-DetectedInstall([string]$Dir) {
   if (-not $Dir -or $Dir -eq [IO.Path]::GetPathRoot($Dir) -or $Dir -eq $HOME) {
     throw "Refusing to uninstall an unsafe install directory: $Dir"
   }
   Write-Host "Uninstalling existing Metis AI at $Dir (data kept)."
   $data = Get-ExistingDataDir $Dir
+  Stop-ScriptHost $Dir
+  $hostExe = Join-Path $Dir "MetisHost.exe"
+  $hostProcesses = @(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) })
+  if ($hostProcesses.Count) {
+    Start-Process -FilePath $hostExe -ArgumentList "--stop" -Wait
+    Start-Sleep -Seconds 1
+    $runningHost = @(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) })
+    foreach ($proc in $runningHost) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
+  }
   $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
   foreach ($suffix in @("app", "worker", "mcp")) {
     $task = "$serviceName-$suffix"
@@ -319,8 +351,16 @@ function Uninstall-DetectedInstall([string]$Dir) {
     cmd.exe /c "schtasks /Delete /TN `"$task`" /F >nul 2>&1" | Out-Null
   }
   $rootNorm = [IO.Path]::GetFullPath($Dir).TrimEnd('\')
+  $rootAliases = @($Dir, $rootNorm)
+  $oldManifestPath = Join-Path $Dir ".metis-ai-install.json"
+  if (Test-Path -LiteralPath $oldManifestPath) {
+    $oldManifest = Get-Content -LiteralPath $oldManifestPath -Raw | ConvertFrom-Json
+    if ($oldManifest.installDir -and [IO.Path]::GetFullPath([string]$oldManifest.installDir).TrimEnd('\') -eq $rootNorm) {
+      $rootAliases += [string]$oldManifest.installDir
+    }
+  }
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq "node.exe" -and $_.CommandLine -and $_.CommandLine.IndexOf($rootNorm, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+    Where-Object { Test-InstallProcess $_ $rootAliases } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Save-ExistingEnv $Dir
   if ($data -and (Test-Path -LiteralPath $data) -and (Test-PathInside $data $Dir)) {
@@ -529,7 +569,10 @@ METIS_AI_BOOTSTRAP_OPTIONAL=1
 } else {
   $hostOsUsername = (& $nodeBin -p "require('node:os').userInfo().username").Trim()
   if ($LASTEXITCODE -ne 0 -or -not $hostOsUsername) { throw "Could not resolve the Windows installation account." }
-  $dockerEnv = "METIS_NODE_BIN=$nodeBin" + [Environment]::NewLine + "METIS_HOST_OS_USERNAME=$hostOsUsername"
+  $mcpSdkRoot = Join-Path $InstallDir "node_modules\@modelcontextprotocol\sdk"
+  $dockerEnv = "METIS_NODE_BIN=$nodeBin" + [Environment]::NewLine +
+    "METIS_HOST_OS_USERNAME=$hostOsUsername" + [Environment]::NewLine +
+    "MCP_SDK_ROOT=$mcpSdkRoot"
 }
 $envLines = @"
 APP_NAME=Metis AI
@@ -658,7 +701,7 @@ $csc = Join-Path $env:SystemRoot "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path -LiteralPath $csc)) {
   $csc = Join-Path $env:SystemRoot "Microsoft.NET\Framework\v4.0.30319\csc.exe"
 }
-if (-not (Test-Path -LiteralPath $csc)) { throw "The Windows .NET Framework compiler is missing." }
+
 $hostSource = Join-Path $InstallDir "MetisHost.cs"
 @'
 // Compiled by the installer with the Windows .NET Framework compiler (/target:winexe).
@@ -674,7 +717,7 @@ using System.Threading;
 using System.Windows.Forms;
 
 internal static class MetisHost {
-    static string root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+    static string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
     static string logDir;
     static readonly object logLock = new object();
     static void Log(string name, string line) {
@@ -794,12 +837,22 @@ internal static class MetisHost {
     }
 }
 '@ | Set-Content -LiteralPath $hostSource -Encoding UTF8
-& $csc /nologo /target:winexe /reference:System.Windows.Forms.dll "/out:$hostNew" $hostSource
-if ($LASTEXITCODE -ne 0) { throw "Metis host compilation failed; the existing host was not stopped." }
-if (Test-Path -LiteralPath $hostExe) {
+$nativeHostReady = $false
+if (Test-Path -LiteralPath $csc) {
+  try {
+    & $csc /nologo /target:winexe /reference:System.Windows.Forms.dll "/out:$hostNew" $hostSource
+    $nativeHostReady = ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hostNew))
+  } catch { Write-Host "Native host compilation unavailable: $($_.Exception.Message)" }
+}
+Stop-ScriptHost $InstallDir
+$running = @(Get-CimInstance Win32_Process -Filter "Name='MetisHost.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq [IO.Path]::GetFullPath($hostExe) })
+if ($running.Count) {
   Start-Process -FilePath $hostExe -ArgumentList "--stop" -Wait
-  $running = @(Get-Process MetisHost -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe })
-  foreach ($proc in $running) { if (-not $proc.WaitForExit(15000)) { throw "Existing Metis host did not stop. Check host.log." } }
+  foreach ($proc in $running) {
+    $process = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
+    if ($process -and -not $process.WaitForExit(15000)) { throw "Existing Metis host did not stop. Check host.log." }
+  }
 }
 # Migrate only legacy runners/processes belonging to this installation.
 $rootNorm = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\') + '\'
@@ -813,19 +866,301 @@ foreach ($proc in $legacy) {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
 }
-Move-Item -LiteralPath $hostNew -Destination $hostExe -Force
+if ($nativeHostReady) { Move-Item -LiteralPath $hostNew -Destination $hostExe -Force }
+@'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
+
+const installRoot = realpathSync.native(dirname(fileURLToPath(import.meta.url)));
+const envPath = join(installRoot, ".env");
+const args = process.argv.slice(2);
+const allowed = new Set(["--open", "--stop"]);
+if (args.some((arg) => !allowed.has(arg))) {
+  console.error("Usage: windows-script-host.mjs [--open|--stop]");
+  process.exitCode = 2;
+  process.exit();
+}
+const wantsOpen = args.includes("--open");
+const wantsStop = args.includes("--stop");
+let stopping = false;
+
+function parseEnv(text) {
+  const result = {};
+  for (const raw of text.split(/\r?\n/u)) {
+    const line = raw.replace(/^\uFEFF/u, "").trim();
+    if (!line || line.startsWith("#")) continue;
+    const at = line.indexOf("=");
+    if (at <= 0) continue;
+    let value = line.slice(at + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    result[line.slice(0, at).trim()] = value;
+  }
+  return result;
+}
+const config = existsSync(envPath) ? parseEnv(readFileSync(envPath, "utf8")) : {};
+for (const [key, value] of Object.entries(config)) process.env[key] = value;
+process.env.NODE_ENV = "production";
+
+const dataDir = resolve(config.CHAT_DATA_DIR || config.METIS_DATA_DIR || join(installRoot, "data"));
+mkdirSync(dataDir, { recursive: true });
+const paths = {
+  lock: join(dataDir, ".windows-script-host.lock"),
+  stop: join(dataDir, ".windows-script-host.stop"),
+  hostLog: join(dataDir, "host.log"),
+};
+const token = randomBytes(24).toString("hex");
+
+function log(line) {
+  appendFileSync(paths.hostLog, new Date().toISOString() + " " + line + "\n");
+}
+function windowsHidden(options = {}) {
+  return { windowsHide: true, stdio: options.stdio || "ignore", cwd: installRoot, ...options };
+}
+function runHidden(command, commandArgs, options = {}) {
+  return spawnSync(command, commandArgs, { ...windowsHidden(options), encoding: "utf8", timeout: options.timeout });
+}
+function processExists(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const result = runHidden("tasklist.exe", ["/FI", "PID eq " + pid, "/FO", "CSV", "/NH"], { stdio: ["ignore", "pipe", "ignore"] });
+  return result.status === 0 && new RegExp('"[^"]+","\\s*' + pid + '","', "u").test(result.stdout || "");
+}
+function atomicWrite(file, value) {
+  const temp = file + "." + process.pid + "." + Date.now() + ".tmp";
+  writeFileSync(temp, value, { encoding: "utf8", mode: 0o600 });
+  renameSync(temp, file);
+}
+function readLock() {
+  try { return JSON.parse(readFileSync(paths.lock, "utf8")); } catch { return null; }
+}
+function staleLock() {
+  const current = readLock();
+  if (!current) {
+    try { return Date.now() - statSync(paths.lock).mtimeMs > 15000; } catch { return false; }
+  }
+  return !processExists(Number(current.pid));
+}
+function acquireLock() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const fd = openSync(paths.lock, "wx", 0o600);
+      try { writeFileSync(fd, JSON.stringify({ pid: process.pid, root: installRoot, token, heartbeat: Date.now() }) + "\n"); } finally { closeSync(fd); }
+      return true;
+    } catch (error) {
+      if (error.code !== "EEXIST" || !staleLock()) return false;
+      try { renameSync(paths.lock, paths.lock + ".stale." + Date.now()); } catch {}
+    }
+  }
+  return false;
+}
+function releaseLock() {
+  const current = readLock();
+  if (current?.pid === process.pid && current.token === token) rmSync(paths.lock, { force: true });
+}
+function requestStop() {
+  const current = readLock();
+  if (!current || current.root !== installRoot || !processExists(Number(current.pid))) return;
+  atomicWrite(paths.stop, JSON.stringify({ root: installRoot, pid: current.pid, token: current.token, requestedAt: Date.now() }) + "\n");
+  for (let i = 0; i < 75; i += 1) {
+    if (!existsSync(paths.lock)) return;
+    const latest = readLock();
+    if (!latest || latest.root !== installRoot) return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+  throw new Error("Metis background host did not stop within 15 seconds.");
+}
+function removeOwnStop() { try { rmSync(paths.stop, { force: true }); } catch {} }
+function appendChildLog(name, chunk) {
+  if (chunk) appendFileSync(join(dataDir, name + ".log"), chunk);
+}
+function childCommand(name) {
+  const node = config.METIS_NODE_BIN || "node.exe";
+  const rootPath = (value) => isAbsolute(value) ? value : join(installRoot, value);
+  if (name === "app") return { command: node, args: ["--import", "tsx", rootPath("server.mjs")] };
+  if (name === "worker") return { command: node, args: ["--import", "tsx", rootPath("worker.ts")] };
+  return { command: node, args: [rootPath("lib/mcp-core/gateway-core.mjs")] };
+}
+function startChild(name) {
+  const command = childCommand(name);
+  const child = spawn(command.command, command.args, {
+    cwd: installRoot, env: { ...process.env, NODE_ENV: "production" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => appendChildLog(name, chunk));
+  child.stderr.on("data", (chunk) => appendChildLog(name, chunk));
+  child.on("error", (error) => log(name + " spawn error: " + error.message));
+  return child;
+}
+function stopChild(child, name) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  log("stopping " + name + " tree pid=" + child.pid);
+  runHidden("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { timeout: 10000 });
+}
+function healthyUrl() { return config.AI_CHAT_PUBLIC_URL || "http://127.0.0.1:" + (config.PORT || "3100"); }
+async function isHealthy() {
+  try {
+    const response = await fetch("http://127.0.0.1:" + (config.PORT || "3100") + "/api/status", { signal: AbortSignal.timeout(3000) });
+    const status = await response.json();
+    return response.ok && typeof status.authenticated === "boolean" && status.worker?.ok === true && status.mcp?.ok === true;
+  } catch { return false; }
+}
+async function openBrowser() {
+  const url = healthyUrl();
+  for (let i = 0; i < 60; i += 1) {
+    if (stopping) return;
+    if (await isHealthy()) {
+      runHidden("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+        "Start-Process -FilePath '" + url.replaceAll("'", "''") + "'"], { timeout: 5000 });
+      return;
+    }
+    await new Promise((resolveSleep) => setTimeout(resolveSleep, 1000));
+  }
+  throw new Error("Metis did not become ready at " + url + ". Check " + dataDir + " for startup errors.");
+}
+function showError(error) {
+  log(error.stack || String(error));
+  if (!wantsOpen) return;
+  const message = String(error.message || error).replaceAll("'", "''");
+  runHidden("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+    "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('" + message + "','Metis AI','OK','Error') | Out-Null"], { timeout: 10000 });
+}
+function dockerEnabled() { return config.METIS_DOCKER === "1" || config.METIS_DOCKER === "true"; }
+function dockerStart() {
+  const result = runHidden("docker.exe", ["compose", "--env-file", envPath, "up", "-d", "--remove-orphans"],
+    { stdio: ["ignore", "pipe", "pipe"], timeout: 120000 });
+  appendChildLog("host", result.stdout || "");
+  appendChildLog("host", result.stderr || "");
+  if (result.status !== 0) throw new Error("Docker Compose failed. Check host.log.");
+  log("docker compose started; stop leaves the compose stack running.");
+}
+
+async function main() {
+  if (wantsStop) { requestStop(); return; }
+  if (!acquireLock()) {
+    if (wantsOpen) await openBrowser();
+    return;
+  }
+  removeOwnStop();
+  const children = [];
+  const docker = dockerEnabled();
+  try {
+    if (config.PORT && config.MCP_PORT && config.PORT === config.MCP_PORT) throw new Error("PORT and MCP_PORT must be different.");
+    if (!docker) {
+      for (const portName of ["PORT", "MCP_PORT"]) {
+        const port = Number(config[portName] || (portName === "PORT" ? 3100 : 8787));
+        const probe = runHidden("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+          "$l=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Any," + port + "); try{$l.Start();$l.Stop();exit 0}catch{exit 1}"], { timeout: 5000 });
+        if (probe.status !== 0) throw new Error("Port " + port + " (" + portName + ") is occupied or unavailable.");
+      }
+      for (const name of ["app", "worker", "mcp"]) children.push({ name, child: startChild(name) });
+    } else dockerStart();
+    let openPromise;
+    if (wantsOpen) { openPromise = openBrowser().catch(showError); }
+    while (true) {
+      const stopRequest = readLock();
+      let command = null;
+      try { command = JSON.parse(readFileSync(paths.stop, "utf8")); } catch {}
+      if (command && command.root === installRoot && command.token === token && stopRequest?.token === token) break;
+      for (const entry of children) {
+        if (entry.child.exitCode !== null) {
+          log(entry.name + " exited code=" + entry.child.exitCode + "; restarting");
+          entry.child = startChild(entry.name);
+        }
+      }
+      atomicWrite(paths.lock, JSON.stringify({ pid: process.pid, root: installRoot, token, heartbeat: Date.now() }) + "\n");
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, 500));
+    }
+
+  } finally {
+    stopping = true;
+    for (const entry of children) stopChild(entry.child, entry.name);
+    removeOwnStop();
+    releaseLock();
+  }
+}
+main().catch((error) => { showError(error); process.exitCode = 1; });
+'@ | Set-Content -LiteralPath (Join-Path $InstallDir 'windows-script-host.mjs') -Encoding UTF8
+@'
+Option Explicit
+Dim fso, shell, root, envPath, nodeBin, arg, args, i, command
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set shell = CreateObject("WScript.Shell")
+root = fso.GetParentFolderName(WScript.ScriptFullName)
+envPath = fso.BuildPath(root, ".env")
+nodeBin = ""
+If fso.FileExists(envPath) Then
+  Dim stream, content, lines, line, p, key, value
+  Set stream = CreateObject("ADODB.Stream")
+  stream.Type = 2
+  stream.Charset = "utf-8"
+  stream.Open
+  stream.LoadFromFile envPath
+  content = stream.ReadText
+  stream.Close
+  lines = Split(Replace(content, vbCr, ""), vbLf)
+  For Each line In lines
+    line = Trim(line)
+    If Left(line, 1) <> "#" Then
+      p = InStr(line, "=")
+      If p > 1 Then
+        key = Trim(Left(line, p - 1))
+        value = Trim(Mid(line, p + 1))
+        If key = "METIS_NODE_BIN" Then
+          If Len(value) >= 2 And Left(value, 1) = Chr(34) And Right(value, 1) = Chr(34) Then value = Mid(value, 2, Len(value) - 2)
+          nodeBin = value
+        End If
+      End If
+    End If
+  Next
+End If
+If Len(nodeBin) = 0 Then
+  nodeBin = shell.ExpandEnvironmentStrings("%ProgramFiles%\nodejs\node.exe")
+  If Not fso.FileExists(nodeBin) Then nodeBin = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\nodejs\node.exe")
+  If Not fso.FileExists(nodeBin) Then nodeBin = "node.exe"
+End If
+args = ""
+For i = 0 To WScript.Arguments.Count - 1
+  arg = WScript.Arguments(i)
+  If arg <> "--open" And arg <> "--stop" Then
+    WScript.Echo "Usage: install\windows-launcher.vbs [--open|--stop]"
+    WScript.Quit 2
+  End If
+  args = args & " " & Quote(arg)
+Next
+command = Quote(nodeBin) & " " & Quote(fso.BuildPath(root, "windows-script-host.mjs")) & args
+shell.CurrentDirectory = root
+shell.Run command, 0, False
+
+Function Quote(value)
+  Quote = Chr(34) & Replace(value, Chr(34), Chr(34) & Chr(34)) & Chr(34)
+End Function
+'@ | Set-Content -LiteralPath (Join-Path $InstallDir 'windows-launcher.vbs') -Encoding Unicode
+$hostTarget = $hostExe
+$hostArguments = ""
+$hostKind = "native"
+try {
+  if (-not $nativeHostReady) { throw "Native host is unavailable." }
+  Start-Process -FilePath $hostExe -ErrorAction Stop
+} catch {
+  Write-Host "The native host is blocked or unavailable. Using the Windows script host without changing security policies."
+  $hostTarget = Join-Path $env:SystemRoot "System32\wscript.exe"
+  $hostArguments = '"' + (Join-Path $InstallDir "windows-launcher.vbs") + '"'
+  $hostKind = "script"
+  Start-Process -FilePath $hostTarget -ArgumentList $hostArguments -ErrorAction Stop
+}
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 New-Item -Path $runKey -Force | Out-Null
 foreach ($suffix in @("app", "worker", "mcp")) {
   Remove-ItemProperty -LiteralPath $runKey -Name "$serviceName-$suffix" -ErrorAction SilentlyContinue
 }
-Set-ItemProperty -LiteralPath $runKey -Name "$serviceName-host" -Value "`"$hostExe`""
+Set-ItemProperty -LiteralPath $runKey -Name "$serviceName-host" -Value ("`"" + $hostTarget + "`" " + $hostArguments)
 $menuDir = Join-Path ([Environment]::GetFolderPath("Programs")) $serviceName
 New-Item -ItemType Directory -Force -Path $menuDir | Out-Null
 $shell = New-Object -ComObject WScript.Shell
 $link = $shell.CreateShortcut((Join-Path $menuDir "Metis AI.lnk"))
-$link.TargetPath = $hostExe
-$link.Arguments = "--open"
+$link.TargetPath = $hostTarget
+$link.Arguments = ($hostArguments + " --open").Trim()
 $link.WorkingDirectory = $InstallDir
 $link.Description = "Start Metis AI in the background and open it in your browser"
 $link.Save()
@@ -844,20 +1179,34 @@ $manifest = @{
   serviceName = $serviceName
   host = $aiChatHost
   os = "windows"
+  hostKind = $hostKind
   installMethod = $(if ($useDocker) { "docker" } else { "native" })
   createdAt = [DateTime]::UtcNow.ToString("o")
 } | ConvertTo-Json -Compress
 Set-Content -LiteralPath (Join-Path $InstallDir ".metis-ai-install.json") -Value $manifest -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $InstallDir "install/uninstall.ps1") -Destination (Join-Path $InstallDir "uninstall.ps1") -Force
-Start-Process -FilePath $hostExe
 
 for ($attempt = 0; $attempt -lt 45; $attempt++) {
   try {
     $status = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/status" -TimeoutSec 2
     if ($null -eq $status.authenticated -or -not $status.worker -or -not $status.mcp) { throw "The response is not a Metis status response." }
+    if (-not $status.worker.ok -or -not $status.mcp.ok) { throw "Metis worker or MCP runtime is not ready." }
     break
   } catch {
     if ($attempt -eq 44) { throw "Metis did not become healthy on web port $port. Check $dataDir/app.log and $dataDir/host.log for startup errors or a port conflict." }
+    Start-Sleep -Seconds 1
+  }
+}
+for ($attempt = 0; $attempt -lt 30; $attempt++) {
+  try {
+    $html = (Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 5).Content
+    $asset = [regex]::Match($html, '/_next/static/[^\s"<>]+\.js').Value
+    if (-not $asset) { throw "No built browser JavaScript asset found." }
+    $response = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:$port" + $asset) -TimeoutSec 5
+    if ($response.StatusCode -ne 200) { throw "Browser JavaScript asset is not available." }
+    break
+  } catch {
+    if ($attempt -eq 29) { throw "Metis started, but its browser files are unavailable. Check $dataDir/app.log." }
     Start-Sleep -Seconds 1
   }
 }

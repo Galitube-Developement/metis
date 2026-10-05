@@ -11,7 +11,7 @@ using System.Threading;
 using System.Windows.Forms;
 
 internal static class MetisHost {
-    static string root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+    static string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
     static string logDir;
     static readonly object logLock = new object();
     static void Log(string name, string line) {
