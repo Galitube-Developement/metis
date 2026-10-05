@@ -9,12 +9,15 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   startTransition,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useSearchParams } from "next/navigation";
+import { scheduleUiBackgroundTask, shouldApplySnapshotVersion } from "@/lib/ui-work-scheduling";
+import { createMessageDerivationCache } from "@/lib/message-derivation-cache";
 import dynamic from "next/dynamic";
 import { AgentCursor } from "@/components/agent-cursor";
 import {
@@ -163,6 +166,7 @@ import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transc
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
+  BoundedChatSnapshotCache,
   clearClientChatSnapshots,
   deleteClientChatSnapshot,
   pruneMemoryChatCache,
@@ -173,6 +177,7 @@ import {
 import { CHAT_LIST_POLL_ACTIVE_MS, CHAT_LIST_POLL_IDLE_MS } from "@/lib/chat-list-poll";
 import { createStreamTextBatcher } from "@/lib/stream-ui-batch";
 import { browserFrameVisible, browserViewportPhase } from "@/lib/browser-viewport-phase";
+import { replaceBrowserFrameUrl } from "@/lib/browser-frame-url";
 import {
   installGlobalClientTelemetry,
   reportClientError,
@@ -1078,6 +1083,10 @@ function ErrorMessageCard({ message }: { message: string }) {
     </section>
   );
 }
+
+const deriveAssistantView = createMessageDerivationCache<Msg>();
+const deriveMessageSources = createMessageDerivationCache<Msg>();
+const deriveMessageTokens = createMessageDerivationCache<Msg>();
 
 function extractMessageSources(message: Msg): SourceLink[] {
   const sources = new Map<string, SourceLink>();
@@ -2398,10 +2407,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeChatIdRef = useRef<string | null>(null);
   const activeBrowserTabIdRef = useRef("browser-1");
-  const chatCacheRef = useRef<Map<string, ChatSnapshot>>(new Map());
+  const chatCacheRef = useRef<Map<string, ChatSnapshot>>(
+    new BoundedChatSnapshotCache(() => activeChatIdRef.current ? [activeChatIdRef.current] : []),
+  );
   const chatPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const loadedChatIdsRef = useRef<Set<string>>(new Set());
   const serverSnapshotVersionRef = useRef<Map<string, string>>(new Map());
+  const chatRefreshInFlightRef = useRef<Set<string>>(new Set());
   const pendingFilesRef = useRef<PendingFile[]>([]);
   const notifiedQuestionRef = useRef<string | null>(null);
   const pendingQuestionIdRef = useRef<string | null>(null);
@@ -2453,10 +2465,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setRunningChatIds((current) => current.filter((chatId) => chatId !== id));
   }, []);
 
-  const acceptServerSnapshot = useCallback((id: string, updatedAt?: string) => {
+  const acceptServerSnapshot = useCallback((id: string, updatedAt?: string, skipUnchanged = false) => {
     if (!updatedAt) return true;
     const previous = serverSnapshotVersionRef.current.get(id);
-    if (previous && updatedAt < previous) return false;
+    if (!shouldApplySnapshotVersion(previous, updatedAt, skipUnchanged)) return false;
     serverSnapshotVersionRef.current.set(id, updatedAt);
     return true;
   }, []);
@@ -3027,13 +3039,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ? workspaces.find((item) => item.id === activeWorkspaceId && item.type === workspaceTab) ??
         workspaces.find((item) => item.type === workspaceTab)
       : workspaces.find((item) => item.id === activeWorkspaceId)) ?? null;
-  const toolOutputs = messages.flatMap((message) =>
+  const toolOutputs = useMemo(() => messages.flatMap((message) =>
     (message.parts ?? partsFromFlat(message))
       .filter((part): part is ToolMsgPart => part.type === "tool")
       .filter((part) => part.kind === "shell" || part.kind === "read" || part.kind === "edit"),
-  );
-  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
-  const subagentOutputs = dedupeChatBarSubagents(
+  ), [messages]);
+  const latestAssistantMessage = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
+  const subagentOutputs = useMemo(() => dedupeChatBarSubagents(
     messages.flatMap((message) =>
       (message.parts ?? partsFromFlat(message))
         .filter((part): part is ToolMsgPart => part.type === "tool")
@@ -3044,7 +3056,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           sourceMessageIsLatestAssistant: message.id === latestAssistantMessage?.id,
         })),
     ),
-  );
+  ), [messages, latestAssistantMessage?.id]);
   const isStaleHistoricalSubagent = (tool: Pick<ToolPart, "sourceMessageCreatedAt" | "sourceMessageIsLatestAssistant">) => {
     const createdAt = Date.parse(tool.sourceMessageCreatedAt || "");
     return !tool.sourceMessageIsLatestAssistant && Number.isFinite(createdAt) && Date.now() - createdAt > 15 * 60_000;
@@ -3220,26 +3232,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function showBrowserStreamFrame(blob: Blob) {
-    const nextUrl = URL.createObjectURL(blob);
-    const previousUrl = browserStreamObjectUrlRef.current;
-    browserStreamObjectUrlRef.current = nextUrl;
-    const image = browserScreenshotRef.current;
-    if (!image) {
-      if (previousUrl) URL.revokeObjectURL(previousUrl);
-      URL.revokeObjectURL(nextUrl);
-      return;
-    }
-    const releasePrevious = () => {
-      if (previousUrl && previousUrl !== browserStreamObjectUrlRef.current) {
-        URL.revokeObjectURL(previousUrl);
-      }
-      image.onload = null;
-      image.onerror = null;
-    };
-    image.onload = releasePrevious;
-    image.onerror = releasePrevious;
-    image.src = nextUrl;
-    markBrowserFrameVisible();
+    browserStreamObjectUrlRef.current = replaceBrowserFrameUrl(
+      browserStreamObjectUrlRef.current, blob, browserScreenshotRef.current,
+    );
+    if (browserStreamObjectUrlRef.current) markBrowserFrameVisible();
   }
   showBrowserStreamFrameRef.current = showBrowserStreamFrame;
 
@@ -5121,7 +5117,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const refreshActiveChatFromServer = useCallback(async (chatId: string) => {
       // Durable checkpoints are the same path a reload uses. Keep applying them
       // on the sending device too; mergeMessages preserves in-flight tokens.
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden" || chatRefreshInFlightRef.current.has(chatId)) return;
+      chatRefreshInFlightRef.current.add(chatId);
       try {
         const res = await fetchReadWithRetry(
           `/api/chats/${chatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=0`,
@@ -5129,7 +5126,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         if (!res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
-        if (!acceptServerSnapshot(chatId, data.chat.updatedAt)) return;
+        if (!acceptServerSnapshot(chatId, data.chat.updatedAt, true)) return;
         const liveRun = runtimeRef.current.has(chatId);
         if (data.chat.modelId && !liveRun) {
           setModelId(data.chat.modelId);
@@ -5200,6 +5197,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
       } catch {
         /* EventSource replay or the disconnected fallback will retry. */
+      } finally {
+        chatRefreshInFlightRef.current.delete(chatId);
       }
   }, [acceptServerSnapshot, modelParamsByModel, setBusySynced]);
 
@@ -5582,6 +5581,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => {
     if (!activeChatId || activeChatIncognito) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
+    return scheduleUiBackgroundTask(() => {
     const cachedMessages = messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
       ...m,
       streaming: false,
@@ -5638,6 +5638,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       chatCacheRef.current,
       [activeChatId, ...chats.slice(0, 3).map((chat) => chat.id)],
     );
+    });
   }, [
     activeChatId,
     activeChatIncognito,
@@ -5674,11 +5675,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => {
     if (!activeChatId || activeChatIncognito) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
-    const timer = window.setTimeout(() => {
+    return scheduleUiBackgroundTask(() => {
       const snapshot = chatCacheRef.current.get(activeChatId);
       if (snapshot) void writeClientChatSnapshot(chatCacheScope, activeChatId, snapshot);
-    }, 900);
-    return () => window.clearTimeout(timer);
+    }, 1500);
   }, [
     activeChatId,
     activeChatIncognito,
@@ -8229,15 +8229,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // Its input count can be millions of tokens even though the newly selected
   // model has a much smaller context window.
   const latestUsage = selectedRunUsage;
-  const estimatedContextTokens = messages.reduce(
+  const estimatedContextTokens = useMemo(() => messages.reduce(
     (total, message) =>
-      total + estimateContextTokens({
+      total + deriveMessageTokens(message, [message.role, message.content, message.tools], () => estimateContextTokens({
         role: message.role,
         content: message.content,
         tools: message.tools || [],
-      }),
+      })),
     0,
-  );
+  ), [messages]);
   const contextUsed = lastMeasuredInputTokens({
     messages: messages
       .filter((message) =>
@@ -8405,7 +8405,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const canSend = Boolean(input.trim() || pendingFiles.length);
   const transcriptPinned = !showScrollDown;
-  const transcriptMessages = visibleTranscriptMessages(messages, transcriptPinned);
+  const transcriptMessages = useMemo(() => visibleTranscriptMessages(messages, transcriptPinned), [messages, transcriptPinned]);
   const hiddenTranscriptCount = hiddenTranscriptMessageCount(messages.length, transcriptMessages.length);
   const hasConnectedProvider = Boolean(
     status?.cursorSdkConfigured ||
@@ -10498,7 +10498,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 {transcriptMessages.map((m) => {
                   const canRevert = m.role === "user";
                   const sourceLinks = m.role === "assistant" && !m.streaming
-                    ? extractMessageSources(m)
+                    ? deriveMessageSources(m, [m.content], () => extractMessageSources(m))
                     : [];
                   return (
                   <article
@@ -10714,6 +10714,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           </div>
                         ) : null}
                         {(() => {
+                          const { viewBlocks, imageBlocks, responseImages, lastBlockIndex, fileLinks } = deriveAssistantView(
+                            m, [m.content, m.parts, m.tools, m.attachments, m.thinking, m.thinkingDone, m.thinkingDurationMs, activeChatId], () => {
                           const messageParts = m.parts && m.parts.length > 0
                           ? m.parts
                           : partsFromFlat(m);
@@ -10749,6 +10751,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                 href.includes(encodeURIComponent(attachment.storedName)),
                             ),
                           );
+                          return { viewBlocks, imageBlocks, responseImages, lastBlockIndex, fileLinks };
+                          });
                           return (
                             <>
                         {viewBlocks.map((block, bi, blocks) => {

@@ -11,6 +11,7 @@ import { autoSkillActivationPrompt } from "@/lib/skill-routing";
 import { METIS_SHARED_AGENT_CONTROL, toolContractPrompt } from "@/lib/agent-control";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { formatChatGoal } from "@/lib/chat-goal";
+import { chatMetadataPrompt } from "@/lib/chat-metadata-prompt";
 import { modeById } from "@/lib/modes";
 import { retrieveRelevantFacts } from "@/lib/context-layers";
 import { buildAttachmentPrompt } from "@/lib/uploads";
@@ -142,6 +143,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     metisAgentIdentity(),
     `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
     formatChatGoal(chat.sessionState, ownerId, chat.id, incognito),
+    chatMetadataPrompt(chat, incognito),
     skillsCatalogPrompt(skillSettings),
     alwaysOnSkillsPrompt(skillSettings),
     autoSkillActivationPrompt(job.message, skillSettings, {

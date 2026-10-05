@@ -22,28 +22,43 @@ command -v "$PNPM_BIN" >/dev/null 2>&1 || {
 # generated paths out of the source tree so the inactive slot can never make a
 # later typecheck fail with stale generated route types.
 tsconfig_backup="$(mktemp)"
+next_env_backup="$(mktemp)"
 cp tsconfig.json "$tsconfig_backup"
+next_env_existed=0
+if [[ -f next-env.d.ts ]]; then
+  next_env_existed=1
+  cp next-env.d.ts "$next_env_backup"
+fi
 restore_tsconfig() {
   cp "$tsconfig_backup" tsconfig.json
-  rm -f "$tsconfig_backup"
+  if [[ "$next_env_existed" == "1" ]]; then
+    cp "$next_env_backup" next-env.d.ts
+  else
+    rm -f next-env.d.ts
+  fi
+  rm -f "$tsconfig_backup" "$next_env_backup"
 }
 trap restore_tsconfig EXIT INT TERM
 
-# Keep webpack/SWC cache between inactive-slot rebuilds. Deleting the whole
-# slot forced every deploy to recompile and reminify the entire 10k-line UI.
+# Upgrades can change Next/pnpm paths. Use a clean cache by default so cached
+# absolute module paths cannot break an existing installation.
+# Local rebuilds may explicitly opt in to cache reuse.
 rollback_dir="${BUILD_DIR}.rollback"
 rm -rf -- "$rollback_dir"
 if [[ -d "$BUILD_DIR" ]]; then
   mv -- "$BUILD_DIR" "$rollback_dir"
 fi
 mkdir -p "$BUILD_DIR"
-if [[ -d "$rollback_dir/cache" ]]; then
+if [[ "${METIS_REUSE_BUILD_CACHE:-0}" == "1" && -d "$rollback_dir/cache" ]]; then
   mv -- "$rollback_dir/cache" "$BUILD_DIR/cache"
 fi
+build_succeeded=0
 restore_build_slot() {
-  if [[ ! -s "$BUILD_DIR/BUILD_ID" && -d "$rollback_dir" ]]; then
+  if [[ "$build_succeeded" != "1" ]]; then
     rm -rf -- "$BUILD_DIR"
-    mv -- "$rollback_dir" "$BUILD_DIR"
+    if [[ -d "$rollback_dir" ]]; then
+      mv -- "$rollback_dir" "$BUILD_DIR"
+    fi
   fi
   rm -rf -- "$rollback_dir"
 }
@@ -60,6 +75,7 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
   exit 1
 }
 
+build_succeeded=1
 rm -rf -- "$rollback_dir"
 restore_tsconfig
 trap - EXIT INT TERM

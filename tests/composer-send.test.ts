@@ -264,6 +264,23 @@ test("shouldAutoDrainQueue waits for sendInFlight and the drain lock", () => {
   );
 });
 
+test("unchanged live-sync queues preserve state identity and do not restart autosave", () => {
+  const empty: Array<{ id: string; text: string }> = [];
+  assert.equal(mergeQueuedFollowUps(empty, []), empty);
+  const local = [{ id: "q-1", text: "Keep this", files: ["local attachment"] }];
+  let state = local;
+  let autosaves = 0;
+  for (let index = 0; index < 1000; index++) {
+    const next = mergeQueuedFollowUps(state, [{ id: "q-1", text: "Keep this", files: [] }]);
+    if (next !== state) autosaves++;
+    state = next;
+  }
+  assert.equal(state, local);
+  assert.equal(autosaves, 0);
+  assert.notEqual(mergeQueuedFollowUps(local, [{ id: "q-2", text: "New", files: [] }]), local);
+  assert.notEqual(mergeQueuedFollowUps(local, [], { consumedIds: ["q-1"] }), local);
+});
+
 test("mergeQueuedFollowUps keeps local follow-ups when a stale snapshot is empty", () => {
   const local = [{ id: "q-1", text: "later" }];
   assert.deepEqual(
