@@ -17,6 +17,7 @@ param(
   [switch]$NonInteractive,
   [switch]$SkipRuntimeInstall,
   [switch]$Native,
+  [switch]$Docker,
   [switch]$ReplaceExisting,
   [switch]$DryRun,
   [switch]$Help,
@@ -30,14 +31,14 @@ if ($Help) {
   @"
 Usage:
   windows.ps1                         Guided installation
-  windows.ps1 -NonInteractive -Password P
+  windows.ps1 -NonInteractive
 
 This script must be invoked with powershell -File. Do not pipe it to iex;
 use install.ps1 for the one-line installer.
 
 Options: -InstallDir, -DataDir, -AgentCwd, -Port, -Host, -McpPort,
          -Username, -Password, -PasswordFile, -ServiceName, -PublicUrl, -Version, -Commit
-         -NonInteractive, -SkipRuntimeInstall, -Native, -ReplaceExisting, -DryRun
+         -NonInteractive, -SkipRuntimeInstall, -Native, -Docker, -ReplaceExisting, -DryRun
          uninstall [-Yes] [-KeepData] [-InstallDir DIR]
 "@ | Write-Host
   exit 0
@@ -110,26 +111,14 @@ $agentCwd = if ($AgentCwd) { $AgentCwd } else { $HOME }
 if (-not $NonInteractive) {
   $InstallDir = Ask "Installation directory" $InstallDir
   $dataDir = if ($DataDir) { $DataDir } else { Join-Path $InstallDir "data" }
-  $dataDir = Ask "Data directory" $dataDir
-  $agentCwd = Ask "Agent workspace directory" $agentCwd
-  $port = Ask "Web application port" $port
-  $hostMode = (Ask "Host web application on local network? (y/N)" "n").Trim().ToLowerInvariant()
-  $aiChatHost = if (@("y", "yes", "1", "true") -contains $hostMode) { "0.0.0.0" } else { "127.0.0.1" }
-  $mcpPort = Ask "MCP gateway port" $mcpPort
-  $username = Ask "Initial username" $username
-  $passwordSecure = Read-Host "Initial password" -AsSecureString
-  $passwordAgain = Read-Host "Confirm password" -AsSecureString
-  $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure))
-  $passwordAgainPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordAgain))
-  if ($passwordPlain.Length -lt 8 -or $passwordPlain -cne $passwordAgainPlain) { throw "Passwords must match and contain at least 8 characters." }
-  $serviceName = Ask "Task prefix" $serviceName
+  $aiChatHost = if ($BindHost) { $BindHost } else { "127.0.0.1" }
 } else {
   $aiChatHost = if ($BindHost) { $BindHost } else { "127.0.0.1" }
-  $passwordPlain = $Password
-  if ([string]::IsNullOrEmpty($passwordPlain) -or $passwordPlain.Length -lt 8) {
-    throw "-Password is required and must contain at least 8 characters with -NonInteractive."
-  }
 }
+$passwordPlain = $Password
+if ($Password -and $Password.Length -lt 8) { throw "Password must contain at least 8 characters." }
+if ($Docker -and $Native) { throw "Use either -Docker or -Native, not both." }
+# Account creation takes place in the browser, as on Linux.
 
 $publicHost = if ($aiChatHost -eq "0.0.0.0") { Get-DefaultPublicHost } else { "127.0.0.1" }
 $publicUrl = if ($PublicUrl) { $PublicUrl } else { "http://$publicHost`:$port" }
@@ -142,14 +131,19 @@ if (-not [int]::TryParse($port, [ref]$portNumber) -or $portNumber -lt 1 -or $por
 if (-not [int]::TryParse($mcpPort, [ref]$mcpPortNumber) -or $mcpPortNumber -lt 1 -or $mcpPortNumber -gt 65535) {
   throw "MCP port must be a number between 1 and 65535."
 }
+if ($port -eq $mcpPort) { throw "Web and MCP ports must be different." }
 if ($serviceName -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') {
   throw "Service name may contain letters, numbers, underscores and hyphens."
 }
 
 $existingServiceDir = ""
+$appKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$serviceName"
+try {
+  $existingServiceDir = (Get-ItemProperty -LiteralPath $appKey -ErrorAction Stop).InstallLocation
+} catch {}
 try {
   $existingRun = (Get-ItemProperty -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "$serviceName-app" -ErrorAction Stop)."$serviceName-app"
-  if ($existingRun) {
+  if ($existingRun -and -not $existingServiceDir) {
     $cmdPath = [string]$existingRun.Trim().Trim('"')
     if (Test-Path -LiteralPath $cmdPath) { $existingServiceDir = Split-Path -Parent $cmdPath }
   }
@@ -169,6 +163,49 @@ if ($DryRun) {
   Write-Host "  native:        $Native"
   if ($existingServiceDir) { Write-Host "  existing:      $serviceName-app at $existingServiceDir" } else { Write-Host "  existing:      none" }
   exit 0
+}
+
+function Test-OwnedDockerPort([int]$Number) {
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+  try {
+    $ownedPorts = & docker ps --filter "label=com.docker.compose.project.working_dir=$InstallDir" --format "{{.Ports}}" 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return [bool](@($ownedPorts | Where-Object { $_ -match ":$Number->" }).Count)
+  } catch { return $false }
+}
+
+function Assert-AvailablePorts([string]$WebPort, [string]$GatewayPort) {
+  if ($WebPort -eq $GatewayPort) { throw "Web and MCP ports must be different." }
+  foreach ($entry in @(@{ Name = "Web"; Port = $WebPort }, @{ Name = "MCP"; Port = $GatewayPort })) {
+    $number = 0
+    if (-not [int]::TryParse($entry.Port, [ref]$number) -or $number -lt 1 -or $number -gt 65535) {
+      throw "$($entry.Name) port must be between 1 and 65535."
+    }
+    if (Test-OwnedDockerPort $number) { continue }
+    $owners = @(Get-NetTCPConnection -State Listen -LocalPort $number -ErrorAction SilentlyContinue)
+    foreach ($owner in $owners) {
+      $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($owner.OwningProcess)" -ErrorAction SilentlyContinue
+      $owned = $proc -and $proc.CommandLine -and
+        $proc.CommandLine.IndexOf([IO.Path]::GetFullPath($InstallDir) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        $proc.CommandLine -match 'server\.mjs|gateway-core\.mjs|MetisHost\.exe'
+      # Legacy node children may use relative paths; verify their PowerShell parent.
+      if (-not $owned -and $proc) {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.ParentProcessId)" -ErrorAction SilentlyContinue
+        $owned = $parent -and $parent.CommandLine -and
+          $parent.CommandLine.IndexOf([IO.Path]::GetFullPath($InstallDir) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+          $parent.CommandLine -match 'run-service\.ps1'
+      }
+      if (-not $owned) {
+        throw "$($entry.Name) port $number is already occupied by $($proc.Name) (PID $($owner.OwningProcess)). Metis has not been started. Choose a free -Port / -McpPort or close the conflicting application (for example OpenWebUI)."
+      }
+    }
+    if ($owners.Count -eq 0) {
+      $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $number)
+      $listener.Server.ExclusiveAddressUse = $true
+      try { $listener.Start() } catch { throw "$($entry.Name) port $number cannot be bound. Choose a free -Port / -McpPort. $($_.Exception.Message)" }
+      finally { $listener.Stop() }
+    }
+  }
 }
 
 $script:ReplaceDataStash = $null
@@ -356,16 +393,37 @@ if ($existingServiceDir) {
   }
 }
 
-$useDocker = $false
-if (-not $Native) {
-  $docker = Get-Command docker -ErrorAction SilentlyContinue
-  if ($docker) {
-    try {
-      & docker info | Out-Null
-      & docker compose version | Out-Null
-      if ($LASTEXITCODE -eq 0) { $useDocker = $true }
-    } catch { $useDocker = $false }
+# Check effective preserved ports before dependency installation or building.
+$preflightEnv = Join-Path $InstallDir ".env"
+if (Test-Path -LiteralPath $preflightEnv) {
+  foreach ($line in Get-Content -LiteralPath $preflightEnv) {
+    if ($line -match '^PORT=(.+)$') { $port = $Matches[1].Trim().Trim('"') }
+    if ($line -match '^MCP_PORT=(.+)$') { $mcpPort = $Matches[1].Trim().Trim('"') }
   }
+}
+if ($Native -and ((Test-OwnedDockerPort ([int]$port)) -or (Test-OwnedDockerPort ([int]$mcpPort)))) {
+  throw "This installation is running in Docker. Keep its current mode for upgrade, or stop its Compose stack before migrating with -Native."
+}
+if ($Docker -and $existingServiceDir) {
+  $oldManifest = Join-Path $InstallDir ".metis-ai-install.json"
+  if ((Test-Path -LiteralPath $oldManifest) -and (Get-Content -LiteralPath $oldManifest -Raw | ConvertFrom-Json).installMethod -eq "native") {
+    throw "This is a native installation. Upgrade without -Docker; migrate its runtime separately."
+  }
+}
+Assert-AvailablePorts $port $mcpPort
+$publicUrl = if ($PublicUrl) { $PublicUrl } else { "http://$publicHost`:$port" }
+
+$useDocker = [bool]$Docker
+$previousManifest = Join-Path $InstallDir ".metis-ai-install.json"
+if (-not $Native -and -not $Docker -and (Test-Path -LiteralPath $previousManifest)) {
+  $useDocker = (Get-Content -LiteralPath $previousManifest -Raw | ConvertFrom-Json).installMethod -eq "docker"
+}
+if ($useDocker) {
+  Require-Command docker
+  & docker info | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Docker is not running. Start Docker Desktop or omit -Docker for native installation." }
+  & docker compose version | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Docker Compose is required with -Docker." }
 }
 
 if (-not $SkipRuntimeInstall) {
@@ -469,7 +527,9 @@ METIS_AI_BOOTSTRAP_PASSWORD=$passwordPlain
 METIS_AI_BOOTSTRAP_OPTIONAL=1
 "@
 } else {
-  $dockerEnv = "METIS_NODE_BIN=$nodeBin"
+  $hostOsUsername = (& $nodeBin -p "require('node:os').userInfo().username").Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $hostOsUsername) { throw "Could not resolve the Windows installation account." }
+  $dockerEnv = "METIS_NODE_BIN=$nodeBin" + [Environment]::NewLine + "METIS_HOST_OS_USERNAME=$hostOsUsername"
 }
 $envLines = @"
 APP_NAME=Metis AI
@@ -515,7 +575,10 @@ foreach ($line in Get-Content -LiteralPath $mergedEnv) {
   $v = $line.Substring($k.Length + 1).Trim().Trim('"')
   if ($k -eq 'PORT' -and $v -match '^[0-9]+$') { $port = $v }
   if ($k -eq 'MCP_PORT' -and $v -match '^[0-9]+$') { $mcpPort = $v }
+  if ($k -eq 'AI_CHAT_PUBLIC_URL') { $publicUrl = $v }
 }
+
+Assert-AvailablePorts $port $mcpPort
 
 if ($useDocker) {
   $reloadPs1 = @"
@@ -547,10 +610,25 @@ try {
   $env:METIS_AI_BOOTSTRAP_USERNAME = $username
   $env:METIS_AI_BOOTSTRAP_PASSWORD = $passwordPlain
   $env:METIS_AI_BOOTSTRAP_OPTIONAL = "1"
-  & $pnpmCommand exec tsx scripts/bootstrap-user.ts
-  if ($LASTEXITCODE -ne 0) { throw "User bootstrap failed." }
-  & $pnpmCommand build
-  if ($LASTEXITCODE -ne 0) { throw "Production build failed; existing services were not restarted." }
+  if ($passwordPlain) {
+    & $pnpmCommand exec tsx scripts/bootstrap-user.ts
+    if ($LASTEXITCODE -ne 0) { throw "User bootstrap failed." }
+  }
+  $previousDistDir = $env:NEXT_DIST_DIR
+  $activeDistDir = ""
+  foreach ($line in Get-Content -LiteralPath $mergedEnv) {
+    if ($line -match '^NEXT_DIST_DIR=(.+)$') { $activeDistDir = $Matches[1].Trim().Trim('"') }
+  }
+  $nextDistDir = if ($activeDistDir -eq ".next-a") { ".next-b" } else { ".next-a" }
+  $env:NEXT_DIST_DIR = $nextDistDir
+  try {
+    & $pnpmCommand build
+    if ($LASTEXITCODE -ne 0) { throw "Production build failed; existing services were not restarted." }
+  } finally {
+    if ($null -ne $previousDistDir) { $env:NEXT_DIST_DIR = $previousDistDir } else { Remove-Item Env:NEXT_DIST_DIR -ErrorAction SilentlyContinue }
+  }
+  $runtimeEnv = @(Get-Content -LiteralPath $mergedEnv | Where-Object { $_ -notmatch '^NEXT_DIST_DIR=' })
+  [IO.File]::WriteAllText($mergedEnv, ($runtimeEnv + "NEXT_DIST_DIR=$nextDistDir") -join [Environment]::NewLine, $utf8NoBom)
 } finally {
   if ($null -ne $previousNodeEnv) { $env:NODE_ENV = $previousNodeEnv }
   Pop-Location
@@ -572,47 +650,193 @@ if (-not `$node -or -not (Test-Path -LiteralPath `$node)) { `$node = (Get-Comman
 & `$node @args
 "@ | Set-Content -LiteralPath $runner -Encoding ascii
 
+}
+# GUI host and hidden child processes never allocate a console.
+$hostExe = Join-Path $InstallDir "MetisHost.exe"
+$hostNew = Join-Path $InstallDir "MetisHost.new.exe"
+$csc = Join-Path $env:SystemRoot "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if (-not (Test-Path -LiteralPath $csc)) {
+  $csc = Join-Path $env:SystemRoot "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+}
+if (-not (Test-Path -LiteralPath $csc)) { throw "The Windows .NET Framework compiler is missing." }
+$hostSource = Join-Path $InstallDir "MetisHost.cs"
+@'
+// Compiled by the installer with the Windows .NET Framework compiler (/target:winexe).
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+
+internal static class MetisHost {
+    static string root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+    static string logDir;
+    static readonly object logLock = new object();
+    static void Log(string name, string line) {
+        if (line == null) return;
+        lock (logLock) File.AppendAllText(Path.Combine(logDir, name + ".log"),
+            DateTime.UtcNow.ToString("o") + " " + line + Environment.NewLine);
+    }
+    static Process Start(string exe, string args, string name) {
+        var p = new Process();
+        p.StartInfo = new ProcessStartInfo(exe, args) {
+            WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        p.OutputDataReceived += (s, e) => Log(name, e.Data);
+        p.ErrorDataReceived += (s, e) => Log(name, e.Data);
+        p.Start(); p.BeginOutputReadLine(); p.BeginErrorReadLine(); return p;
+    }
+    static string Env(string key, string fallback) {
+        return Environment.GetEnvironmentVariable(key) ?? fallback;
+    }
+    static void CheckPort(string key, string fallback) {
+        int port = int.Parse(Env(key, fallback));
+        var listener = new TcpListener(IPAddress.Any, port);
+        listener.Server.ExclusiveAddressUse = true;
+        try { listener.Start(); }
+        catch (SocketException) { throw new Exception("Port " + port + " (" + key +
+            ") is occupied or unavailable. Close the conflicting application or change " + key + " in " + Path.Combine(root, ".env")); }
+        finally { listener.Stop(); }
+    }
+    static void OpenBrowser() {
+        string url = "http://127.0.0.1:" + Env("PORT", "3100");
+        for (int i = 0; i < 60; i++) {
+            try {
+                var request = (HttpWebRequest)WebRequest.Create(url + "/api/status");
+                request.Timeout = 2000; request.AllowAutoRedirect = false;
+                using (var response = request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream())) {
+                    string body = reader.ReadToEnd();
+                    if (body.Contains("\"authenticated\"") && body.Contains("\"worker\"") && body.Contains("\"mcp\"")) {
+                        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); return;
+                    }
+                }
+            } catch (WebException) {}
+            Thread.Sleep(1000);
+        }
+        MessageBox.Show("Metis did not become ready at " + url + ". Check " + logDir +
+            " for startup errors and port conflicts.", "Metis AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+    [STAThread]
+    static void Main(string[] args) {
+        bool open = Array.IndexOf(args, "--open") >= 0;
+        bool stop = Array.IndexOf(args, "--stop") >= 0;
+        try {
+            foreach (string line in File.ReadAllLines(Path.Combine(root, ".env"))) {
+                int pos = line.IndexOf('=');
+                if (pos > 0 && !line.TrimStart().StartsWith("#"))
+                    Environment.SetEnvironmentVariable(line.Substring(0, pos).Trim().Trim('\uFEFF'),
+                        line.Substring(pos + 1).Trim().Trim('"'));
+            }
+            Environment.SetEnvironmentVariable("NODE_ENV", "production");
+            logDir = Env("CHAT_DATA_DIR", Path.Combine(root, "data"));
+            Directory.CreateDirectory(logDir);
+            string id;
+            using (var hash = SHA256.Create()) id = BitConverter.ToString(hash.ComputeHash(
+                Encoding.UTF8.GetBytes(root.ToLowerInvariant()))).Replace("-", "");
+            using (var stopEvent = new EventWaitHandle(false, EventResetMode.ManualReset, "Local\\MetisStop-" + id)) {
+                if (stop) { stopEvent.Set(); return; }
+                bool created;
+                using (var mutex = new Mutex(true, "Local\\MetisHost-" + id, out created)) {
+                    if (!created) { if (open) OpenBrowser(); return; }
+                    stopEvent.Reset();
+                    var children = new List<Process>();
+                    try {
+                        if (Env("PORT", "3100") == Env("MCP_PORT", "8787"))
+                            throw new Exception("PORT and MCP_PORT must be different.");
+                        bool docker = Env("METIS_DOCKER", "0") == "1";
+                        if (!docker) { CheckPort("PORT", "3100"); CheckPort("MCP_PORT", "8787"); }
+                        string node = Env("METIS_NODE_BIN", "node.exe");
+                        string tsx = "--import tsx ";
+                        string[] commands = {
+                            tsx + "\"" + Path.Combine(root, "server.mjs") + "\"",
+                            tsx + "\"" + Path.Combine(root, "worker.ts") + "\"",
+                            "\"" + Path.Combine(root, "lib/mcp-core/gateway-core.mjs") + "\""
+                        };
+                        string[] names = { "app", "worker", "mcp" };
+                        if (docker) {
+                            using (var compose = Start("docker.exe", "compose --env-file .env up -d --remove-orphans", "host")) {
+                                compose.WaitForExit();
+                                if (compose.ExitCode != 0) throw new Exception("Docker Compose failed. Check host.log.");
+                            }
+                        } else {
+                            for (int i = 0; i < commands.Length; i++) children.Add(Start(node, commands[i], names[i]));
+                        }
+                        if (open) new Thread(OpenBrowser) { IsBackground = true }.Start();
+                        while (!stopEvent.WaitOne(2000)) {
+                            for (int i = 0; i < children.Count; i++) {
+                                if (!children[i].HasExited) continue;
+                                Log("host", names[i] + " exited; restarting.");
+                                children[i].Dispose(); children[i] = Start(node, commands[i], names[i]);
+                            }
+                        }
+                    } finally {
+                        foreach (var child in children) {
+                            try { if (!child.HasExited) child.Kill(); child.WaitForExit(); } catch (InvalidOperationException) {}
+                            child.Dispose();
+                        }
+                        mutex.ReleaseMutex();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            if (logDir != null) Log("host", e.ToString());
+            if (open) MessageBox.Show(e.Message, "Metis AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Environment.ExitCode = 1;
+        }
+    }
+}
+'@ | Set-Content -LiteralPath $hostSource -Encoding UTF8
+& $csc /nologo /target:winexe /reference:System.Windows.Forms.dll "/out:$hostNew" $hostSource
+if ($LASTEXITCODE -ne 0) { throw "Metis host compilation failed; the existing host was not stopped." }
+if (Test-Path -LiteralPath $hostExe) {
+  Start-Process -FilePath $hostExe -ArgumentList "--stop" -Wait
+  $running = @(Get-Process MetisHost -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe })
+  foreach ($proc in $running) { if (-not $proc.WaitForExit(15000)) { throw "Existing Metis host did not stop. Check host.log." } }
+}
+# Migrate only legacy runners/processes belonging to this installation.
+$rootNorm = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\') + '\'
+$legacy = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.CommandLine -and $_.CommandLine.IndexOf($rootNorm, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+  $_.CommandLine -match 'run-service\.ps1|server\.mjs|worker\.ts|gateway-core\.mjs'
+})
+foreach ($proc in $legacy) {
+  Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.ProcessId)" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq "node.exe" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+}
+Move-Item -LiteralPath $hostNew -Destination $hostExe -Force
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 New-Item -Path $runKey -Force | Out-Null
-$powershellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 foreach ($suffix in @("app", "worker", "mcp")) {
-  $taskName = "$serviceName-$suffix"
-  $targetArgs = switch ($suffix) {
-    "app" { @("node_modules/tsx/dist/cli.mjs", "server.mjs") }
-    "worker" { @("node_modules/tsx/dist/cli.mjs", "worker.ts") }
-    default { @("lib/mcp-core/gateway-core.mjs") }
-  }
-  $cmdPath = Join-Path $InstallDir "run-$suffix.cmd"
-  $cmdArgs = ($targetArgs | ForEach-Object { "`"$_`"" }) -join " "
-  @(
-    "@echo off",
-    "cd /d `"%~dp0`"",
-    "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0run-service.ps1`" $cmdArgs"
-  ) -join "`r`n" | Set-Content -LiteralPath $cmdPath -Encoding ascii
-  Set-ItemProperty -Path $runKey -Name $taskName -Value "`"$cmdPath`""
-  Start-Process -FilePath $powershellExe -WorkingDirectory $InstallDir -WindowStyle Hidden -ArgumentList (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runner) + $targetArgs)
+  Remove-ItemProperty -LiteralPath $runKey -Name "$serviceName-$suffix" -ErrorAction SilentlyContinue
 }
-}
-
-for ($attempt = 0; $attempt -lt 45; $attempt++) {
-  try {
-    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/status" -TimeoutSec 2 | Out-Null
-    break
-  } catch {
-    if ($attempt -eq 44) { throw "The application did not become healthy." }
-    Start-Sleep -Seconds 1
-  }
-}
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
-  try {
-    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$mcpPort/health" -TimeoutSec 2 | Out-Null
-    break
-  } catch {
-    if ($attempt -eq 19) { throw "The MCP gateway did not become healthy on port $mcpPort." }
-    Start-Sleep -Seconds 1
-  }
-}
-
+Set-ItemProperty -LiteralPath $runKey -Name "$serviceName-host" -Value "`"$hostExe`""
+$menuDir = Join-Path ([Environment]::GetFolderPath("Programs")) $serviceName
+New-Item -ItemType Directory -Force -Path $menuDir | Out-Null
+$shell = New-Object -ComObject WScript.Shell
+$link = $shell.CreateShortcut((Join-Path $menuDir "Metis AI.lnk"))
+$link.TargetPath = $hostExe
+$link.Arguments = "--open"
+$link.WorkingDirectory = $InstallDir
+$link.Description = "Start Metis AI in the background and open it in your browser"
+$link.Save()
+New-Item -Path $appKey -Force | Out-Null
+Set-ItemProperty -Path $appKey -Name DisplayName -Value "Metis AI"
+Set-ItemProperty -Path $appKey -Name Publisher -Value "Metis AI"
+Set-ItemProperty -Path $appKey -Name InstallLocation -Value $InstallDir
+Set-ItemProperty -Path $appKey -Name DisplayIcon -Value $hostExe
+$uninstallCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'uninstall.ps1')`" -InstallDir `"$InstallDir`""
+Set-ItemProperty -Path $appKey -Name UninstallString -Value $uninstallCommand
+Remove-Item Env:METIS_AI_BOOTSTRAP_USERNAME,Env:METIS_AI_BOOTSTRAP_PASSWORD,Env:METIS_AI_BOOTSTRAP_OPTIONAL -ErrorAction SilentlyContinue
 $manifest = @{
   installDir = $InstallDir
   dataDir = $dataDir
@@ -625,11 +849,36 @@ $manifest = @{
 } | ConvertTo-Json -Compress
 Set-Content -LiteralPath (Join-Path $InstallDir ".metis-ai-install.json") -Value $manifest -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $InstallDir "install/uninstall.ps1") -Destination (Join-Path $InstallDir "uninstall.ps1") -Force
+Start-Process -FilePath $hostExe
+
+for ($attempt = 0; $attempt -lt 45; $attempt++) {
+  try {
+    $status = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/status" -TimeoutSec 2
+    if ($null -eq $status.authenticated -or -not $status.worker -or -not $status.mcp) { throw "The response is not a Metis status response." }
+    break
+  } catch {
+    if ($attempt -eq 44) { throw "Metis did not become healthy on web port $port. Check $dataDir/app.log and $dataDir/host.log for startup errors or a port conflict." }
+    Start-Sleep -Seconds 1
+  }
+}
+for ($attempt = 0; $attempt -lt 20; $attempt++) {
+  try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$mcpPort/health" -TimeoutSec 2
+    if (-not $health.ok -or $health.name -notlike '*Universal MCP Gateway' -or $health.endpoint -ne '/mcp') { throw "The response is not a Metis MCP gateway." }
+    break
+  } catch {
+    if ($attempt -eq 19) { throw "Metis MCP gateway did not become healthy on port $mcpPort. Check $dataDir/mcp.log and $dataDir/host.log; another application may have taken this port." }
+    Start-Sleep -Seconds 1
+  }
+}
+
+
 if ($aiChatHost -eq "0.0.0.0") {
   Write-Host "Warning: the web application is reachable on the local network. Use strong credentials and a firewall or trusted TLS reverse proxy."
 }
 Write-Host "`nMetis AI installed successfully."
-Write-Host "Open: $publicUrl"
+Write-Host "Open: $publicUrl (or Metis AI in the Start menu)"
+Write-Host "Host: background app, starts automatically at sign-in. Logs: $dataDir"
 Write-Host "You can change this. Add: $(Join-Path $InstallDir '.env')"
 if ($useDocker) {
   Write-Host "Apply: $(Join-Path $InstallDir 'reload.ps1')"
