@@ -241,10 +241,11 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
             }}
           >
             <EditableMarkdown
+              noteId={note.id}
               value={note.content}
               onChange={(content) => scheduleUpdate(note, { content })}
               interactiveTasks
-              placeholder="Write a note…"
+              placeholder="Write, paste images, or drop files…"
               aria-label="Note content"
               className="min-h-0 bg-transparent p-0 text-black [&_.markdown-body]:text-black [&_.markdown-body_*]:text-black"
             />

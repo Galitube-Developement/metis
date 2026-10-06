@@ -1022,11 +1022,12 @@ export function NotesVoid({
               })}
             </div>
             <EditableMarkdown
+              noteId={note.id}
               value={note.content}
               onChange={(value) => scheduleUpdate(note, { content: value })}
               interactiveTasks
               className="min-h-0 flex-1 cursor-text bg-transparent text-xs text-black [&_.markdown-body]:text-black [&_.markdown-body_p]:my-1 [&_.markdown-body_ul]:my-1 [&_.markdown-body_ol]:my-1"
-              placeholder={note.kind === "project" ? "Project notes…" : "Write a note…"}
+              placeholder="Write, paste images, or drop files…"
               aria-label="Note content"
               onPointerDown={(event) => {
                 setFrontNoteId(note.id);
