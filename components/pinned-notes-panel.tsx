@@ -195,6 +195,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
         return (
         <article
           key={note.id}
+          data-note-drop-target={note.id}
           className="sticky-note pointer-events-auto flex max-h-56 min-h-32 flex-col animate-in overflow-hidden rounded-md border border-black/10 shadow-lg fade-in-0 zoom-in-95 slide-in-from-top-2 duration-300"
           style={{
             position: "absolute",

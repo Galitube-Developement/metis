@@ -100,6 +100,7 @@ import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
+import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
@@ -10109,7 +10110,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   return (
-    <div
+    <ChatFileDropZone
+      enabled={!notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+      onFiles={addPendingFiles}
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -12557,6 +12560,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ChatFileDropZone>
   );
 }
