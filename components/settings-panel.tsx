@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Bell,
   Brain,
+  BookOpen,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -65,6 +66,8 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { MemoryItem } from "@/components/memories-panel";
+import { MicrophoneSettings } from "@/components/microphone-settings";
+import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
 import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SkillsSettings } from "@/components/skills-settings";
@@ -374,6 +377,7 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
     { id: "settings-token-compression", label: "Token compression" },
     { id: "settings-notifications", label: "Notifications" },
     { id: "settings-voice-input", label: "Voice input" },
+    { id: "settings-dictionary", label: "Dictionary" },
     { id: "settings-browser", label: "Browser" },
     { id: "settings-browser-storage", label: "Browser storage" },
     { id: "settings-session", label: "Session" },
@@ -431,7 +435,8 @@ type SettingsPaneId =
   | "modes"
   | "mcp"
   | "memories"
-  | "agent-rules";
+  | "agent-rules"
+  | "dictionary";
 
 const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "tab">>> = {
   "settings-browser-storage": "browser-storage",
@@ -442,6 +447,7 @@ const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "
   "settings-mcp": "mcp",
   "settings-memories": "memories",
   "settings-agent-rules": "agent-rules",
+  "settings-dictionary": "dictionary",
 };
 
 function SettingsTile({
@@ -2440,6 +2446,10 @@ export function SettingsPanel({
                 </ul>
               </section>
  </SettingsFeaturePane>
+ ) : settingsPane === "dictionary" ? (
+   <SettingsFeaturePane backLabel="General" title="Dictionary" description="Manage words and phrases for voice transcription." slot="voice-dictionary" onBack={() => setSettingsPane("tab")}>
+     <VoiceDictionarySettings />
+   </SettingsFeaturePane>
  ) : settingsPane === "agent-rules" ? (
    <SettingsFeaturePane
      backLabel="Agent"
@@ -2679,6 +2689,7 @@ export function SettingsPanel({
                     Choose how speech is transcribed before it is inserted into the composer.
                   </p>
                 </div>
+                <MicrophoneSettings browserTranscription={voiceProvider === "browser"} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1 text-xs text-muted-foreground">
                     Provider
@@ -2781,6 +2792,7 @@ export function SettingsPanel({
                   Maximum recording length (seconds)
                   <Input type="number" min={1} max={3600} value={voiceMaxDurationSeconds} disabled={!voiceInputEnabled} onChange={(event) => onVoiceInputSettingsChange({ maxDurationSeconds: Math.max(1, Math.min(3600, Number(event.target.value) || 300)) })} />
                 </label>
+                <SettingsTile id="settings-dictionary" title="Dictionary" meta="Add words and preferred spellings" icon={BookOpen} onOpen={() => setSettingsPane("dictionary")} />
               </section>
 
               <section className="flex flex-col gap-4">

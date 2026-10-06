@@ -1996,7 +1996,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     attachment: MsgAttachment;
     chatId?: string;
   } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     if (workspaceOpen) {
@@ -5737,17 +5736,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }, 400);
   }
 
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const minPx = 36; // match send button size-9
-    el.style.height = "auto";
-    el.style.overflowY = "hidden";
-    const nextHeight = Math.min(Math.max(el.scrollHeight, minPx), 180);
-    el.style.height = `${nextHeight}px`;
-    el.style.overflowY = nextHeight >= 180 ? "auto" : "hidden";
-  }, [input]);
-
   useEffect(() => {
     const el = composerContainerRef.current;
     if (!el) return;
@@ -6388,31 +6376,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (!imageFiles.length) return;
     e.preventDefault();
     addPendingFiles(imageFiles);
-  }
-
-  function onComposerDragOver(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (busy) return;
-    setDragOver(true);
-  }
-
-  function onComposerDragLeave(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    const related = e.relatedTarget as Node | null;
-    if (related && e.currentTarget.contains(related)) return;
-    setDragOver(false);
-  }
-
-  function onComposerDrop(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (busy) return;
-    if (e.dataTransfer?.files?.length) {
-      addPendingFiles(e.dataTransfer.files);
-    }
   }
 
   async function submitQuestionAnswers() {
@@ -8847,12 +8810,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       <div className="flex flex-col gap-1">
       <form
         onSubmit={(e) => void send(e)}
-        onDragOver={onComposerDragOver}
-        onDragLeave={onComposerDragLeave}
-        onDrop={onComposerDrop}
         className={cn(
           "relative flex w-full flex-col justify-center gap-1.5 rounded-[1.25rem] bg-muted/20 p-1.5 ring-1 ring-inset ring-border/30 transition-[background-color,box-shadow] focus-within:bg-muted/25 focus-within:ring-border/45",
-          dragOver && "bg-muted/40 ring-foreground/30",
         )}
       >
         {slashQuery !== null ? (
@@ -9436,7 +9395,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           aria-hidden="true"
           className="absolute left-0 z-10 h-9 w-auto max-w-[5rem] object-contain"
         />
-        <span lang="grc" className="metis-wordmark relative z-20 text-foreground/90">Μῆτις</span>
+        <span role="img" aria-label="Metis" className="metis-wordmark relative z-20 shrink-0 text-foreground/90" />
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/hand-right.png"
@@ -10171,7 +10130,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         {/* Messages / empty */}
         <div
           key={paneKey}
-          className="relative flex min-h-0 flex-1 flex-col"
+          className={cn(
+            "relative flex min-h-0 flex-1 flex-col",
+            isEmpty && !notesOpen && !automationsOpen && !projectHomeId && !loadingChatId &&
+              (queuedMessages.length ? "justify-end pb-10 sm:pb-8" : "justify-center pb-[10svh] sm:pb-8"),
+          )}
         >
         {!notesOpen && !automationsOpen && !projectHomeId && activeChatId ? <NotesVoid chatId={activeChatId} pinnedOnly compact projectId={chats.find((chat) => chat.id === activeChatId)?.projectId || draftProjectId} /> : null}
         {projectHomeId && !notesOpen && !automationsOpen ? (
@@ -10212,8 +10175,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ) : isEmpty ? (
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col items-center px-4",
-              queuedMessages.length ? "justify-end pb-10 sm:pb-8" : "justify-center pb-[10svh] sm:pb-8",
+              "flex shrink-0 flex-col items-center px-4",
             )}
           >
             <h2 className={cn(
@@ -10227,16 +10189,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 Incognito mode is active. This chat is temporary and won&apos;t use or save your personal context.
               </p>
             ) : null}
-            <div
-              ref={composerContainerRef}
-              className={cn(
-                "w-full max-w-2xl max-sm:px-0",
-                composerFocused && "max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:px-3",
-              )}
-              style={composerFocused ? { bottom: mobileKeyboardInset } : undefined}
-            >
-              {composer}
-            </div>
           </div>
         ) : (
           <>
@@ -10957,18 +10909,42 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </div>
             </div>
 
-            {/* Floating composer */}
+            {selectionAction ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="secondary"
+                aria-label="Reference selected text"
+                title="Reference selected text"
+                onClick={() => {
+                  setReferenceText(selectionAction.text);
+                  setSelectionAction(null);
+                  window.getSelection()?.removeAllRanges();
+                  textareaRef.current?.focus();
+                }}
+                style={{ position: "fixed", left: selectionAction.x, top: selectionAction.y, zIndex: 60 }}
+                className="size-8 rounded-full border border-primary/30 bg-background shadow-lg"
+              >
+                <Reply className="size-3.5" />
+              </Button>
+            ) : null}
+          </>
+        )}
+        {/* One composer instance: incoming messages must not remount the editor. */}
+        {!notesOpen && !automationsOpen && !projectHomeId && !loadingChatId ? (
             <div
+              key="chat-composer"
               ref={composerContainerRef}
               className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-background via-background/95 to-transparent pt-5",
-                composerFocused && "max-md:fixed max-md:z-30",
+                "pointer-events-none z-20 w-full",
+                isEmpty ? "relative mx-auto max-w-2xl px-4" : "absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/95 to-transparent pt-5",
+                composerFocused && "max-md:fixed max-md:inset-x-0 max-md:z-30",
               )}
               style={composerFocused ? { bottom: mobileKeyboardInset } : undefined}
             >
-              <div className="pointer-events-none pt-2 sm:pt-3" style={{ paddingBottom: "max(0.25rem, env(safe-area-inset-bottom))" }}>
-                <div className="pointer-events-auto relative mx-auto w-full max-w-2xl px-3 sm:px-6">
-                  {showScrollDown || hasCurrentAttention ? (
+              <div className={cn("pointer-events-none", !isEmpty && "pt-2 sm:pt-3")} style={{ paddingBottom: "max(0.25rem, env(safe-area-inset-bottom))" }}>
+                <div className={cn("pointer-events-auto relative mx-auto w-full max-w-2xl", !isEmpty && "px-3 sm:px-6")}>
+                  {!isEmpty && (showScrollDown || hasCurrentAttention) ? (
                     <Button
                       type="button"
                       size="icon"
@@ -11054,27 +11030,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 </div>
               </div>
             </div>
-            {selectionAction ? (
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="secondary"
-                aria-label="Reference selected text"
-                title="Reference selected text"
-                onClick={() => {
-                  setReferenceText(selectionAction.text);
-                  setSelectionAction(null);
-                  window.getSelection()?.removeAllRanges();
-                  textareaRef.current?.focus();
-                }}
-                style={{ position: "fixed", left: selectionAction.x, top: selectionAction.y, zIndex: 60 }}
-                className="size-8 rounded-full border border-primary/30 bg-background shadow-lg"
-              >
-                <Reply className="size-3.5" />
-              </Button>
-            ) : null}
-          </>
-        )}
+        ) : null}
         </div>
       </div>
 

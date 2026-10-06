@@ -1,10 +1,7 @@
 import {
-  createMemory,
   getChat,
-  listMemories,
   normalizeChatKeywords,
   updateChat,
-  updateMemory,
 } from "@/lib/db-store";
 import { createNote, listNotes, updateNote } from "@/lib/shared-context";
 
@@ -129,39 +126,6 @@ function similarity(a: string, b: string) {
   return overlap / Math.max(left.size, right.size);
 }
 
-function upsertDurable(ownerId: string | undefined, candidate: KnowledgeCandidate) {
-  const memories = listMemories(ownerId);
-  const exact = memories.find((memory) => normalized(memory.content) === normalized(candidate.content));
-  if (exact) return exact;
-  // Reconcile against any matching memory so a changed device, setup, or
-  // preference replaces stale manual and automatically captured entries alike.
-  const matching = memories
-    .map((memory) => ({ memory, score: similarity(memory.content, candidate.content) }))
-    .filter((entry) => entry.score >= 0.78)
-    .sort((a, b) => b.score - a.score)[0];
-  if (matching) {
-    return updateMemory(matching.memory.id, {
-      content: candidate.content,
-      tags: normalizeChatKeywords([...(matching.memory.tags || []), ...candidate.tags]),
-    }, ownerId);
-  }
-  const namespace = PREFERENCE.test(candidate.content)
-    ? "preferences"
-    : /\b(laptop|notebook|pc|computer|device|streaming)\b/i.test(candidate.content)
-      ? "device"
-      : /\b(server|vps|debian|linux|windows|hosting|domain)\b/i.test(candidate.content)
-        ? "infrastructure"
-        : "profile";
-  return createMemory(candidate.content, candidate.tags, ownerId, {
-    namespace,
-    topic: candidate.key,
-    confidence: EXPLICIT_REMEMBER.test(candidate.content) ? 0.98 : 0.84,
-    importance: PREFERENCE.test(candidate.content) ? 0.9 : 0.8,
-    confirmed: EXPLICIT_REMEMBER.test(candidate.content),
-    source: "conversation",
-  });
-}
-
 function upsertTaskFact(ownerId: string | undefined, chatId: string, candidate: KnowledgeCandidate, messageId?: string) {
   const facts = listNotes({ ownerId, chatId, scope: "chat" }).filter((note) => note.kind === "learned_fact");
   const exact = facts.find((fact) => normalized(fact.content) === normalized(candidate.content));
@@ -207,7 +171,7 @@ export function deriveChatKeywords(message: string, limit = 6) {
 
 /**
  * Deterministic, token-free knowledge capture for real user turns.
- * - durable: explicit remember requests and clear stable profile/preferences
+ * - durable: never auto-persisted; explicit memory tools own global memory writes
  * - task: chat-scoped learned fact for project/app requirements
  * - ephemeral/questions/secrets/code/ordinary prompts: never persisted as memory
  * External repo/browser/tool output is deliberately not copied into memory;
@@ -225,16 +189,14 @@ export function captureKnowledgeFromUserTurn(input: {
   if (!chat || chat.incognito) return { durable: 0, task: 0, keywords: 0 };
 
   const candidates = extractKnowledgeCandidates(input.message);
-  let durable = 0;
   let task = 0;
   for (const candidate of candidates) {
-    if (candidate.kind === "durable") {
-      upsertDurable(input.ownerId ?? chat.ownerId, candidate);
-      durable += 1;
-    } else {
-      upsertTaskFact(input.ownerId ?? chat.ownerId, chat.id, candidate, input.messageId);
-      task += 1;
-    }
+    // User-turn heuristics must never create or overwrite global memories,
+    // including explicit remember requests. The agent handles those via the
+    // visible add_memory/edit_memory tools instead.
+    if (candidate.kind !== "task") continue;
+    upsertTaskFact(input.ownerId ?? chat.ownerId, chat.id, candidate, input.messageId);
+    task += 1;
   }
 
   const keywords = deriveChatKeywords(input.message);
@@ -243,5 +205,5 @@ export function captureKnowledgeFromUserTurn(input: {
       keywords: normalizeChatKeywords([...(chat.keywords || []), ...keywords]),
     }, input.ownerId ?? chat.ownerId);
   }
-  return { durable, task, keywords: keywords.length };
+  return { durable: 0, task, keywords: keywords.length };
 }

@@ -1,5 +1,6 @@
 import { getCompletedUpload } from "@/lib/file-upload-store";
 import { randomUUID } from "node:crypto";
+import { normalizeVoiceDictionary } from "@/lib/voice-dictionary";
 import { getDatabase, isSqliteForeignKeyError, parseData, transaction, withSqliteRetry } from "@/lib/sqlite";
 import type {
   NoteActivity,
@@ -482,6 +483,7 @@ export function normalizeVoiceSettings(settings?: Partial<VoiceInputSettings>): 
       ? { connectionId: settings.connectionId.trim().slice(0, 120) }
       : {}),
     ...(settings?.language?.trim() ? { language: settings.language.trim().slice(0, 20) } : {}),
+    dictionary: normalizeVoiceDictionary(settings?.dictionary),
     autoInsertDraft: settings?.autoInsertDraft !== false,
     deleteAudioAfterTranscription: settings?.deleteAudioAfterTranscription !== false,
   };

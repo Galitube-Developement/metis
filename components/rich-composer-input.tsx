@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useLayoutEffect,
+  useCallback,
   useRef,
   type ClipboardEvent,
   type FocusEvent,
@@ -39,10 +40,12 @@ export function composerPlainText(element: HTMLElement | null | undefined, place
 }
 
 function fitComposerHeight(element: HTMLTextAreaElement) {
+  const scrollTop = element.scrollTop;
   element.style.height = "auto";
   const fullHeight = element.scrollHeight;
   element.style.height = Math.min(MAX_COMPOSER_HEIGHT, Math.max(MIN_COMPOSER_HEIGHT, fullHeight)) + "px";
   element.style.overflowY = fullHeight > MAX_COMPOSER_HEIGHT ? "auto" : "hidden";
+  element.scrollTop = scrollTop;
 }
 
 export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInputProps>(
@@ -65,6 +68,13 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
     const editorRef = useRef<HTMLTextAreaElement>(null);
     const lastSyncNonceRef = useRef(syncNonce ?? 0);
     const liveValue = stripComposerPlaceholderLeak(value, placeholder);
+    const initialValueRef = useRef(liveValue);
+    const attachEditor = useCallback((node: HTMLTextAreaElement | null) => {
+      editorRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+      if (node) fitComposerHeight(node);
+    }, [ref]);
 
     useLayoutEffect(() => {
       const element = editorRef.current;
@@ -86,12 +96,8 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
 
     return (
       <textarea
-        ref={(node) => {
-          editorRef.current = node;
-          if (typeof ref === "function") ref(node);
-          else if (ref) ref.current = node;
-        }}
-        defaultValue={liveValue}
+        ref={attachEditor}
+        defaultValue={initialValueRef.current}
         placeholder={placeholder}
         disabled={disabled}
         rows={1}

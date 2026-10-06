@@ -408,8 +408,8 @@ export const ToolCallChip = memo(function ToolCallChip({
         <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-400/10 text-violet-300"><Brain className="size-3.5" /></span>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-300/75">Memory</p>
-          <p className="mt-0.5 font-medium text-foreground/85">{memoryCard.title}</p>
-          <p className="mt-1 max-h-24 overflow-hidden whitespace-pre-wrap leading-4 text-muted-foreground/75">{memoryCard.body}</p>
+          <p className="mt-0.5 font-medium text-foreground/85">{running ? "Updating memory…" : status === "failed" || status === "error" ? "Memory failed" : memoryCard.title}</p>
+          <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-foreground/75">{memoryCard.body}</p>
         </div>
       </div>
     );

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Mic, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { openSelectedMicrophone } from "@/lib/local-microphone";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type VoiceInputProps = {
@@ -304,7 +305,7 @@ export function VoiceInput({
         const tokenBody = await tokenResponse.json().catch(() => ({}));
         const token = tokenBody.client_secret?.value;
         if (!tokenResponse.ok || typeof token !== "string") throw new Error(tokenBody.error || "Could not start realtime voice.");
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await openSelectedMicrophone();
         streamRef.current = stream;
         startVisualizer(stream);
         const peer = new RTCPeerConnection();
@@ -357,7 +358,7 @@ export function VoiceInput({
     setState("permission");
     setError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await openSelectedMicrophone();
       streamRef.current = stream;
       chunksRef.current = [];
       const recorder = new MediaRecorder(stream);
@@ -453,7 +454,7 @@ export function VoiceInput({
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-64 flex-col items-start">
-              <span>Richte zuerst den API-Key für Voice ein, bevor du die Voice-Funktion nutzt.</span>
+              <span>Set up your Voice API key before using the voice feature.</span>
               <button type="button" className="font-medium text-primary-foreground underline underline-offset-2" onClick={onOpenSettings}>
                 Open voice settings
               </button>

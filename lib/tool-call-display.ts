@@ -987,44 +987,48 @@ export function toolGroupLabel(tools: Array<{ name?: string; kind?: string }>): 
 
 
 export function memoryCardFromPayload(
- name: string,
- input?: unknown,
- result?: unknown,
+  name: string,
+  input?: unknown,
+  result?: unknown,
 ): { title: string; body: string } {
- const inner = innerToolName(name, input, result).toLowerCase();
- const record = unwrapToolRecord(result) || unwrapToolRecord(input) || {};
- const list = Array.isArray(record.memories)
- ? record.memories
- : Array.isArray(record.items)
- ? record.items
- : [];
- const contents = list.flatMap((item) => {
- if (typeof item === "string" && item.trim()) return [item.trim()];
- const entry = asRecord(item);
- const content = nonEmptyString(entry?.content) || nonEmptyString(entry?.text);
- return content ? [content] : [];
- });
- const memory = asRecord(record.memory);
- const single =
- nonEmptyString(record.content)
- || nonEmptyString(record.text)
- || nonEmptyString(memory?.content)
- || nonEmptyString(memory?.text);
- const isList = /list/.test(inner);
- const title = isList
- ? (contents.length === 1 ? "Memory" : "Memories")
- : /(delete|remove)/.test(inner)
- ? "Deleted memory"
- : /(edit|update)/.test(inner)
- ? "Updated memory"
- : /(add|create|remember)/.test(inner)
- ? "Saved memory"
- : "Memory";
- if (isList && !contents.length && !single) return { title, body: "No memories" };
- const body = contents.length
- ? (contents.length === 1 ? contents[0] : contents.map((item) => `• ${item}`).join("\n"))
- : single || nonEmptyString(record.error) || "Memory updated";
- return { title, body };
+  const inner = innerToolName(name, input, result).toLowerCase();
+  const resultRecord = unwrapToolRecord(result) || {};
+  const structured = unwrapToolRecord(resultRecord.structuredContent);
+  const record = structured ? { ...resultRecord, ...structured } : resultRecord;
+  const inputRecord = unwrapToolRecord(input) || {};
+  const contentFrom = (entry: Record<string, unknown>): string | undefined => {
+    const memory = asRecord(entry.memory);
+    return nonEmptyString(memory?.content)
+      || nonEmptyString(memory?.text)
+      || nonEmptyString(entry.content)
+      || nonEmptyString(entry.text);
+  };
+  const list = Array.isArray(record.memories)
+    ? record.memories
+    : Array.isArray(record.items) ? record.items : [];
+  const contents = list.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) return [item.trim()];
+    const content = contentFrom(asRecord(item) || {});
+    return content ? [content] : [];
+  });
+  const isList = /list/.test(inner);
+  const isDelete = /(delete|remove)/.test(inner);
+  const title = isList
+    ? (contents.length === 1 ? "Memory" : "Memories")
+    : isDelete ? "Deleted memory"
+    : /(edit|update)/.test(inner) ? "Updated memory"
+    : /(add|create|remember)/.test(inner) ? "Saved memory"
+    : "Memory";
+  // Mutation acknowledgements can contain only an ID/success flag. In that
+  // case show the submitted content, while preferring the actual stored text.
+  const single = contentFrom(record) || (!isList ? contentFrom(inputRecord) : undefined);
+  const error = nonEmptyString(record.error);
+  if (error) return { title: "Memory failed", body: error };
+  if (isList && !contents.length && !single) return { title, body: "No memories" };
+  const body = contents.length
+    ? (contents.length === 1 ? contents[0] : contents.map((item) => `• ${item}`).join("\n"))
+    : single || (isDelete ? "Memory deleted" : "Memory content unavailable");
+  return { title, body };
 }
 
 export function formatThoughtDuration(ms?: number): string | null {

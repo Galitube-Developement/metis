@@ -4,6 +4,17 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.10 — 2026-10-06
+
+- Add scratchpad notes with movable, resizable text, image and file cards, plus paste and full-area drag-and-drop support.
+- Support uploads up to 1 GiB with progress, estimated remaining time, retry and cancellation; continue uploads while switching chats or workspaces.
+- Share file embeds across chat, notes, plans and canvas: playable video and audio, images, PDFs, text and JSON previews, editable workspace content and removable attachments.
+- Stream media with range requests for playback and seeking, and move note attachments into the top toolbar.
+- Keep the composer mounted while the first message appears to preserve the caret and scroll position.
+- Add device-local microphone selection and a per-account transcription dictionary.
+- Keep automatically captured task context scoped to chats; save global memories only through explicit memory actions, and improve memory tool feedback.
+- Refresh the Metis wordmark and favicon.
+
 ## v1.0.9 — 2026-09-21
 
 - Stabilize voice recording by keeping waveform callbacks consistent across renders.
