@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, linkSync, copyFileSync, statSync, createReadStream, openSync, closeSync } from "node:fs";
 import { open, rm } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { fileResponse } from "@/lib/file-response";
 import { config } from "@/lib/config";
 import { chatUploadDir, isImageMime, sanitizeFileName, type StoredAttachment } from "@/lib/uploads";
 import { MAX_FILE_BYTES, MAX_ATTACHMENTS, MAX_TOTAL_BYTES, UPLOAD_CHUNK_BYTES, type UploadedFile } from "@/lib/upload-limits";
@@ -114,13 +114,9 @@ export function materializeUploads(chatId: string, ids: string[], ownerId: strin
     return { ...upload, storedName };
   });
 }
-export function uploadedFileResponse(ownerId: string, id: string) {
+export function uploadedFileResponse(ownerId: string, id: string, req?: Request) {
   const upload = getCompletedUpload(ownerId, id);
-  const stream = createReadStream(path.join(directory(ownerId, id), "file"));
-  return new Response(Readable.toWeb(stream) as ReadableStream, { headers: {
-    "Content-Type": upload.kind === "image" ? upload.mimeType : "application/octet-stream",
-    "Content-Length": String(upload.size),
-    "Content-Disposition": `${upload.kind === "image" ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
-    "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff",
-  } });
+  return fileResponse(path.join(directory(ownerId, id), "file"), upload, req);
 }
+
+export function completedUploadPath(ownerId:string,id:string) { getCompletedUpload(ownerId,id); return path.join(directory(ownerId,id),"file"); }

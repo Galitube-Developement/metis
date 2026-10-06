@@ -33,7 +33,7 @@ test("editable markdown writes in one styled surface and keeps an optional previ
   assert.match(editor, /markdownStyling/);
   assert.match(editor, /className="editable-markdown-editor"/);
   assert.match(editor, /setPreview/);
-  assert.match(editor, /<Markdown content=\{previewDraft\}/);
+  assert.match(editor, /<Markdown content=\{embedFileLinks\(previewDraft\)\}/);
   assert.doesNotMatch(editor, /<textarea/);
 });
 

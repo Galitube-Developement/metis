@@ -100,6 +100,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { FileEmbed } from "@/components/file-embed";
+import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
@@ -479,51 +481,6 @@ type PersistedQueuedMessage = {
 const MAX_PENDING_FILES = MAX_ATTACHMENTS;
 const MAX_PENDING_FILE_BYTES = MAX_FILE_BYTES;
 const MAX_PENDING_TOTAL_BYTES = MAX_TOTAL_BYTES;
-function isTextAttachment(mimeType: string, name: string): boolean {
-  return (
-    mimeType.startsWith("text/") ||
-    /(?:json|javascript|typescript|python|csv|markdown|xml|yaml|toml)/i.test(mimeType) ||
-    /\.(json|js|jsx|ts|tsx|py|csv|md|markdown|xml|ya?ml|toml|txt|css|html|go|rs|java|c|cpp|h)$/i.test(name)
-  );
-}
-
-function isOfficeAttachment(mimeType: string, name: string): boolean {
-  return (
-    /wordprocessingml|spreadsheetml|presentationml|msword|ms-excel|ms-powerpoint/i.test(mimeType) ||
-    /\.(docx?|xlsx?|pptx?)$/i.test(name)
-  );
-}
-
-function mimeTypeFromFileName(name: string) {
-  const extension = String(name ?? "").split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
-  return ({
-    gif: "image/gif",
-    jpeg: "image/jpeg",
-    jpg: "image/jpeg",
-    mp3: "audio/mpeg",
-    mp4: "video/mp4",
-    pdf: "application/pdf",
-    png: "image/png",
-    svg: "image/svg+xml",
-    wav: "audio/wav",
-    webm: "video/webm",
-    json: "application/json",
-    md: "text/markdown",
-    txt: "text/plain",
-    csv: "text/csv",
-    html: "text/html",
-    js: "text/javascript",
-    ts: "text/typescript",
-    py: "text/x-python",
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    xls: "application/vnd.ms-excel",
-    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ppt: "application/vnd.ms-powerpoint",
-    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  } as Record<string, string>)[extension || ""] || "application/octet-stream";
-}
-
 function detectedFileLinks(content: string) {
   const links = new Set<string>();
   const pattern = /(?:https?:\/\/[^\s<>()]+)?\/api\/(?:uploads\/[^)\s<>()]+|share\/attachment\?[^)\s<>()]+)/gi;
@@ -1680,205 +1637,19 @@ function AttachmentViewer({
   active: { attachment: MsgAttachment; chatId?: string } | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [text, setText] = useState<string | null>(null);
-  const [textError, setTextError] = useState<string | null>(null);
   const attachment = active?.attachment;
-  const fileUrl =
-    attachment?.storedName && active?.chatId
-      ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}`
-      : attachment?.previewUrl;
-  const textFile = Boolean(attachment && isTextAttachment(attachment.mimeType, attachment.name));
-  const officeFile = Boolean(attachment && isOfficeAttachment(attachment.mimeType, attachment.name));
-  const pdfFile = attachment?.mimeType === "application/pdf";
-  const officePreviewAvailable = officeFile && Boolean(attachment?.storedName && active?.chatId);
-  const url = officePreviewAvailable && fileUrl ? `${fileUrl}/preview` : fileUrl;
-
-  useEffect(() => {
-    let cancelled = false;
-    setText(null);
-    setTextError(null);
-    if (!attachment || !url || (!textFile && !officePreviewAvailable)) return;
-    fetch(url)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return readTextFilePreview(response);
-      })
-      .then((value) => {
-        if (!cancelled) setText(value);
-      })
-      .catch((error) => {
-        if (!cancelled) setTextError(error instanceof Error ? error.message : "Could not load file");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [attachment, officePreviewAvailable, textFile, url]);
-
-  return (
-    <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[100dvh] max-h-none w-screen max-w-none rounded-none p-4 sm:h-auto sm:max-h-[90vh] sm:max-w-5xl sm:rounded-xl sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle>
-          {attachment ? (
-            <div className="flex items-center justify-between gap-3 text-left text-xs text-muted-foreground">
-              <span>
-                {attachment.mimeType}{attachment.size ? ` · ${(attachment.size / 1024 / 1024).toFixed(2)} MB` : ""}
-              </span>
-              {fileUrl ? (
-                <a
-                  href={fileUrl}
-                  download={attachment.name}
-                  className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-foreground hover:bg-muted"
-                >
-                  Download
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-        </DialogHeader>
-        <div className="min-h-0 flex-1 max-h-[calc(100dvh-7rem)] overflow-auto sm:max-h-[78vh]">
-          {!attachment || !url ? (
-            <p className="text-sm text-muted-foreground">Preview unavailable.</p>
-          ) : pdfFile ? (
-            <p className="text-sm text-muted-foreground">PDF previews are not available.</p>
-          ) : attachment.mimeType.startsWith("image/") ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={url} alt={attachment.name} className="mx-auto max-h-[70vh] max-w-full object-contain" />
-          ) : attachment.mimeType.startsWith("video/") ? (
-            <video src={url} controls className="mx-auto max-h-[70vh] max-w-full" />
-          ) : attachment.mimeType.startsWith("audio/") ? (
-            <audio src={url} controls className="w-full" />
-          ) : textFile || officePreviewAvailable ? (
-            textError ? (
-              <p className="text-sm text-destructive">Could not load text file: {textError}</p>
-            ) : text === null ? (
-              <p className="text-sm text-muted-foreground">Loading file…</p>
-            ) : (
-              <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-4 text-sm">{text}</pre>
-            )
-          ) : (
-            <div className="flex flex-col items-center gap-3 py-10 text-center">
-              <AttachmentIcon mimeType={attachment.mimeType} className="size-10 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{attachment.mimeType}</p>
-              <a
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                download={attachment.name}
-                className="rounded-lg border border-border/60 px-3 py-2 text-sm hover:bg-muted"
-              >
-                Download / open file
-              </a>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  const url = attachment?.storedName && active?.chatId ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}` : attachment?.previewUrl;
+  return <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
+    <DialogContent className="max-h-[90dvh] max-w-5xl overflow-auto p-4">
+      <DialogHeader><DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle></DialogHeader>
+      {attachment && url ? <FileEmbed file={{...attachment,url}} className="max-h-[75dvh] min-h-64"/> : <p>Preview unavailable.</p>}
+    </DialogContent>
+  </Dialog>;
 }
-
-function FileShareEmbed({
-  href,
-  onOpen,
-}: {
-  href: string;
-  onOpen: (attachment: MsgAttachment) => void;
-}) {
-  const rawName = href.includes("?")
-    ? new URL(href, window.location.origin).searchParams.get("name") || "Shared file"
-    : href.split("/").pop() || "Shared file";
-  let name = rawName;
-  try {
-    name = decodeURIComponent(rawName);
-  } catch {
-    // Keep the raw URL segment when it is not valid encoded text.
-  }
-  const mimeType = mimeTypeFromFileName(name);
-  const attachment: MsgAttachment = {
-    id: `shared-${href}`,
-    name,
-    mimeType,
-    kind: mimeType.startsWith("image/") ? "image" : "file",
-    previewUrl: href,
-  };
-  const textFile = isTextAttachment(mimeType, name);
-  const officeFile = isOfficeAttachment(mimeType, name);
-  const previewUrl = officeFile && href.startsWith("/api/uploads/")
-    ? `${href}/preview`
-    : href;
-  const [text, setText] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!textFile && !officeFile) return;
-    let cancelled = false;
-    fetch(previewUrl)
-      .then((response) => response.ok ? readTextFilePreview(response) : "")
-      .then((value) => {
-        if (!cancelled) setText(value);
-      })
-      .catch(() => {
-        if (!cancelled) setText("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [officeFile, previewUrl, textFile]);
-
-  return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-border/60 bg-card/50">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpen(attachment)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onOpen(attachment);
-          }
-        }}
-        className="block w-full text-left"
-        title={`Open ${name}`}
-      >
-        {mimeType.startsWith("image/") ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={href} alt={name} className="max-h-72 w-full object-contain bg-black/10" />
-        ) : mimeType.startsWith("video/") ? (
-          <video src={href} controls className="max-h-72 w-full bg-black/10" />
-        ) : mimeType.startsWith("audio/") ? (
-          <audio src={href} controls className="w-full p-3" />
-        ) : mimeType === "application/pdf" ? (
-          <div className="flex items-center gap-3 bg-muted/30 p-4">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-              <AttachmentIcon mimeType={mimeType} className="size-5 text-muted-foreground" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">PDF file</span>
-              <span className="block text-xs text-muted-foreground">PDF previews are not available.</span>
-            </span>
-          </div>
-        ) : textFile || officeFile ? (
-          <pre className="max-h-48 overflow-hidden whitespace-pre-wrap break-words bg-muted/30 p-3 text-xs text-muted-foreground">
-            {text === null ? "Loading preview…" : text.slice(0, 4_000) || "Preview unavailable."}
-          </pre>
-        ) : (
-          <div className="flex items-center gap-2 p-3 text-sm">
-            <AttachmentIcon mimeType={mimeType} className="size-5 text-muted-foreground" />
-            <span className="truncate">{name}</span>
-          </div>
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-3 border-t border-border/50 px-3 py-2">
-        <span className="truncate text-xs text-muted-foreground">{name}</span>
-        <a
-          href={href}
-          download={name}
-          className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-[11px] hover:bg-muted"
-        >
-          Download
-        </a>
-      </div>
-    </div>
-  );
+function FileShareEmbed({href}: {href:string;onOpen:(attachment:MsgAttachment)=>void}) {
+  let name = href.includes("?") ? new URL(href,"http://localhost").searchParams.get("name") || "Shared file" : href.split("/").pop() || "Shared file";
+  try {name=decodeURIComponent(name);} catch {}
+  return <FileEmbed file={{url:href,name,mimeType:mimeTypeFromFileName(name)}} className="mt-3 max-h-96 rounded-lg border border-border/40"/>;
 }
 
 function paintVoiceWaveform(root: HTMLDivElement | null, level: number) {
@@ -8637,6 +8408,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     workspaceSaveTimersRef.current.set(workspaceId, timer);
   }
 
+  useEffect(() => {
+    const complete = (event: Event) => {
+      const detail = (event as CustomEvent<{chatId:string;workspace:WorkspaceItem}>).detail;
+      if(!detail || activeChatIdRef.current !== detail.chatId)return;
+      setWorkspaces(current => current.map(item => item.id === detail.workspace.id ? mergeIncomingWorkspace(detail.workspace,item,workspaceDraftChangesRef.current.get(item.id)) : item));
+    };
+    window.addEventListener("metis:workspace-upload-complete",complete);
+    return () => window.removeEventListener("metis:workspace-upload-complete",complete);
+  }, []);
+
   function updateWorkspaceDraft(
     workspaceId: string,
     patch: WorkspaceDraftPatch,
@@ -10597,30 +10378,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                   att.storedName && activeChatId
                                     ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                     : att.previewUrl;
-                                return (
-                                  <button
-                                    key={att.id}
-                                    type="button"
-                                    title={att.name}
-                                    onClick={() => setActiveAttachment({ attachment: att, chatId: activeChatId ?? undefined })}
-                                    className="flex w-52 shrink-0 items-center gap-2 rounded-xl border border-border/40 bg-background/40 p-2 text-left text-xs text-foreground/90 hover:bg-background/70"
-                                  >
-                                    {att.kind === "image" && href ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={href} alt={att.name} className="size-12 shrink-0 rounded-lg object-cover" />
-                                    ) : (
-                                      <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-                                        <AttachmentIcon mimeType={att.mimeType} className="size-5 text-muted-foreground" />
-                                      </span>
-                                    )}
-                                    <span className="min-w-0">
-                                      <span className="block truncate font-medium">{att.name}</span>
-                                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                        {att.size === undefined ? "Size unavailable" : formatMetricBytes(att.size)}
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
+                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-80 max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
                               })}
                             </div>
                           ) : null}
@@ -10687,38 +10445,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               const href = att.storedName && activeChatId
                                 ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                 : att.previewUrl;
-                              return (
-                                <div key={att.id} className="flex max-w-full items-center gap-2 rounded-xl border border-border/50 bg-card/60 p-2">
-                                  <button
-                                    type="button"
-                                    title={`Preview ${att.name}`}
-                                    onClick={() => setActiveAttachment({ attachment: att, chatId: activeChatId ?? undefined })}
-                                    className="flex min-w-0 items-center gap-2 text-left hover:text-primary"
-                                  >
-                                    {att.kind === "image" && href ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={href} alt={att.name} className="size-10 shrink-0 rounded-lg object-cover" />
-                                    ) : (
-                                      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-                                        <AttachmentIcon mimeType={att.mimeType} className="size-5 text-muted-foreground" />
-                                      </span>
-                                    )}
-                                    <span className="min-w-0">
-                                      <span className="block max-w-56 truncate text-xs font-medium">{att.name}</span>
-                                      <span className="block text-[11px] text-muted-foreground">{formatMetricBytes(att.size)}</span>
-                                    </span>
-                                  </button>
-                                  {href ? (
-                                    <a
-                                      href={href}
-                                      download={att.name}
-                                      className="rounded-md border border-border/60 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    >
-                                      Download
-                                    </a>
-                                  ) : null}
-                                </div>
-                              );
+                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-80 max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
                             })}
                           </div>
                         ) : null}
@@ -11963,6 +11690,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                   <EditableMarkdown
                     key={activeWorkspace.id}
+                    workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
                     onChange={(nextContent) => {
@@ -12044,6 +11772,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                   <EditableMarkdown
                     key={activeWorkspace.id}
+                    workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
                     onChange={(nextContent) => {

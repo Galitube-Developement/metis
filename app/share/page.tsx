@@ -3,6 +3,7 @@
 import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import { AudioLines, ChevronDown, ClipboardList, FileText, Image as ImageIcon, Link2, LockKeyhole, LogIn, MessageSquareShare, Palette, Video } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import { FileEmbed } from "@/components/file-embed";
 import { Markdown } from "@/components/markdown";
 import { ToolCallGroup, type ToolCallData } from "@/components/tool-call-chip";
 import { Button } from "@/components/ui/button";
@@ -119,6 +120,7 @@ function SharedAttachmentCard({
     let cancelled = false;
     let objectUrl: string | null = null;
     if (!attachment.storedName) return;
+    if(!password) { setUrl(`/api/share/attachment?id=${encodeURIComponent(shareId)}&name=${encodeURIComponent(attachment.storedName)}`); return; }
     const request = password
       ? fetch("/api/share/attachment", {
           method: "POST",
@@ -542,29 +544,7 @@ function ShareView() {
             <DialogTitle className="truncate pr-8">{selectedAttachment?.attachment.name || "Attachment"}</DialogTitle>
           </DialogHeader>
           <div className="flex min-h-0 max-h-[calc(100dvh-7rem)] items-center justify-center overflow-auto sm:max-h-[78vh]">
-            {selectedAttachment?.attachment.mimeType.startsWith("image/") ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={selectedAttachment.url} alt={selectedAttachment.attachment.name} className="max-h-[78vh] max-w-full object-contain" />
-            ) : selectedAttachment?.attachment.mimeType.startsWith("video/") ? (
-              <video src={selectedAttachment.url} controls className="max-h-[78vh] max-w-full" />
-            ) : selectedAttachment?.attachment.mimeType.startsWith("audio/") ? (
-              <audio src={selectedAttachment.url} controls className="w-full" />
-            ) : selectedAttachment?.attachment.mimeType === "application/pdf" ? (
-              <div className="flex flex-col items-center gap-3 text-center">
-                <p className="text-sm text-muted-foreground">PDF previews are not available.</p>
-                <a
-                  href={selectedAttachment.url}
-                  download={selectedAttachment.attachment.name}
-                  className="rounded-lg border border-border/60 px-4 py-2 text-sm hover:bg-muted"
-                >
-                  Download {selectedAttachment.attachment.name}
-                </a>
-              </div>
-            ) : selectedAttachment ? (
-              <a href={selectedAttachment.url} download={selectedAttachment.attachment.name} className="rounded-lg border border-border/60 px-4 py-2 text-sm hover:bg-muted">
-                Download {selectedAttachment.attachment.name}
-              </a>
-            ) : null}
+            {selectedAttachment ? <FileEmbed file={{...selectedAttachment.attachment,url:selectedAttachment.url}} className="min-h-64 w-full"/> : null}
           </div>
         </DialogContent>
       </Dialog>
