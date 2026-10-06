@@ -263,6 +263,7 @@ export type VoiceInputSettings = {
   endpoint?: string;
   connectionId?: string;
   language?: string;
+  dictionary?: string[];
   autoInsertDraft: boolean;
   deleteAudioAfterTranscription: boolean;
 };

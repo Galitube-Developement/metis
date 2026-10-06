@@ -18,7 +18,7 @@ const cssSource = readFileSync(
 test("composer uses an uncontrolled textarea with an HTML placeholder", () => {
   assert.match(source, /<textarea/);
   assert.match(source, /placeholder=\{placeholder\}/);
-  assert.match(source, /defaultValue=\{liveValue\}/);
+  assert.match(source, /defaultValue=\{initialValueRef\.current\}/);
   assert.match(source, /shouldSyncComposerDom\(element\.value, liveValue, focused, nonceChanged\)/);
   assert.match(source, /if \(!nonceChanged && focused\) return;/);
   assert.match(source, /element\.setSelectionRange\(cursor, cursor\)/);
@@ -59,4 +59,12 @@ test("composer stays typable after a programmatic send clear", () => {
   );
   assert.match(changeHandler, /shouldCommitComposerParentState/);
   assert.doesNotMatch(changeHandler, /startTransition/);
+});
+
+// Empty-to-message transitions used to recreate the editor while a follow-up was typed.
+test("composer has one stable mount across empty and populated chat views", () => {
+  assert.equal((shellSource.match(/\{composer\}/g) || []).length, 1);
+  assert.match(shellSource, /key="chat-composer"/);
+  assert.doesNotMatch(shellSource, /const minPx = 36; \/\/ match send button/);
+  assert.match(source, /element\.scrollTop = scrollTop/);
 });

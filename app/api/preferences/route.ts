@@ -146,7 +146,7 @@ export async function PATCH(req: Request) {
       : undefined;
   const voiceInput =
     body.voiceInput && typeof body.voiceInput === "object" && !Array.isArray(body.voiceInput)
-      ? normalizeVoiceSettings(body.voiceInput as GlobalModelSettings["voiceInput"])
+      ? normalizeVoiceSettings({ ...current.voiceInput, ...(body.voiceInput as GlobalModelSettings["voiceInput"]) })
       : undefined;
   const featureFlags =
     body.featureFlags && typeof body.featureFlags === "object" && !Array.isArray(body.featureFlags)

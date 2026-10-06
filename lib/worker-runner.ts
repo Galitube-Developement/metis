@@ -567,8 +567,8 @@ export async function runQueuedJob(job: AgentJob) {
     return;
   }
   // Knowledge capture is infrastructure, not a model behavior. Ordinary
-  // requests are ignored; clear preferences and first-person profile facts may
-  // become durable memories. Internal child, automation and resume prompts
+  // requests never create global memories; only chat-scoped task facts and
+  // search keywords are captured. Internal child, automation and resume prompts
   // are not user knowledge.
   if (!job.automationId && !job.parentJobId && !job.subagentFollowUp && !job.resumePrompt && !job.incognito && !chat.incognito) {
     try {
