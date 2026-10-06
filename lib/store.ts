@@ -134,7 +134,7 @@ export type NoteSize = {
   height: number;
 };
 
-export type NoteKind = "note" | "project" | "learned_fact";
+export type NoteKind = "note" | "project" | "learned_fact" | "image" | "file";
 
 export type NoteTodo = {
   id: string;
@@ -150,6 +150,7 @@ export type SharedNote = {
   workspaceId?: string;
   scope: NoteScope;
   kind?: NoteKind;
+  asset?: import("@/lib/upload-limits").UploadedFile;
   title: string;
   content: string;
   todos?: NoteTodo[];

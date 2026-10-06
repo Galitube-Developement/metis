@@ -15,6 +15,10 @@ import {
   startTransition,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { startUpload, waitForUpload, cancelUpload } from "@/lib/background-uploads";
+import { UploadProgress, UploadTray } from "@/components/upload-progress";
+import { readTextFilePreview } from "@/lib/text-file-preview";
+import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
 import { useSearchParams } from "next/navigation";
 import { scheduleUiBackgroundTask, shouldApplySnapshotVersion } from "@/lib/ui-work-scheduling";
 import { createMessageDerivationCache } from "@/lib/message-derivation-cache";
@@ -451,6 +455,7 @@ type SourceLink = {
 
 type PendingFile = {
   id: string;
+  uploadTaskId?: string;
   file: File;
   previewUrl?: string;
 };
@@ -471,12 +476,9 @@ type PersistedQueuedMessage = {
   references?: ReferenceItem[];
 };
 
-const MAX_PENDING_FILES = 10;
-const MAX_PENDING_FILE_BYTES = 50 * 1024 * 1024;
-const MAX_PENDING_TOTAL_BYTES = 500 * 1024 * 1024;
-const FILE_ACCEPT =
-  "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.webm,.mp4,.mov,.m4v,.mp3,.wav,.ogg,.m4a,.txt,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.css,.html,.xml,.yaml,.yml,.toml,.zip";
-
+const MAX_PENDING_FILES = MAX_ATTACHMENTS;
+const MAX_PENDING_FILE_BYTES = MAX_FILE_BYTES;
+const MAX_PENDING_TOTAL_BYTES = MAX_TOTAL_BYTES;
 function isTextAttachment(mimeType: string, name: string): boolean {
   return (
     mimeType.startsWith("text/") ||
@@ -538,17 +540,6 @@ function AttachmentIcon({ mimeType, className }: { mimeType: string; className?:
   if (mimeType.startsWith("audio/")) return <AudioLines className={className} />;
   if (isTextAttachment(mimeType, "")) return <FileText className={className} />;
   return <FileIcon className={className} />;
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
 }
 
 function truncateFileName(name: string, max = 22): string {
@@ -1710,7 +1701,7 @@ function AttachmentViewer({
     fetch(url)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
+        return readTextFilePreview(response);
       })
       .then((value) => {
         if (!cancelled) setText(value);
@@ -1821,7 +1812,7 @@ function FileShareEmbed({
     if (!textFile && !officeFile) return;
     let cancelled = false;
     fetch(previewUrl)
-      .then((response) => response.ok ? response.text() : "")
+      .then((response) => response.ok ? readTextFilePreview(response) : "")
       .then((value) => {
         if (!cancelled) setText(value);
       })
@@ -2227,7 +2218,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [questionCustomActive, setQuestionCustomActive] = useState<boolean[]>([]);
   const [answeringQuestion, setAnsweringQuestion] = useState(false);
   const [paneKey, setPaneKey] = useState(0);
-  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [pendingFiles, setVisiblePendingFiles] = useState<PendingFile[]>([]);
+  const pendingByChatRef = useRef(new Map<string, PendingFile[]>());
   const [restoredAttachments, setRestoredAttachments] = useState<MsgAttachment[]>([]);
   const [activeAttachment, setActiveAttachment] = useState<{
     attachment: MsgAttachment;
@@ -2604,7 +2596,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     return () => {
-      for (const p of pendingFilesRef.current) {
+      for (const p of [...pendingByChatRef.current.values()].flat()) {
         if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
       }
     };
@@ -6138,6 +6130,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       const stillOnDraft = !activeChatIdRef.current;
       if (stillOnDraft) {
+        const files = pendingByChatRef.current.get("__draft__");
+        if (files) { pendingByChatRef.current.set(data.chat.id, files); pendingByChatRef.current.delete("__draft__"); }
         setActiveChatId(data.chat.id);
         activeChatIdRef.current = data.chat.id;
         setActiveChatIncognito(Boolean(data.chat.incognito));
@@ -6532,6 +6526,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
+  function setPendingFiles(next: PendingFile[] | ((previous: PendingFile[]) => PendingFile[])) {
+    const key = activeChatIdRef.current || "__draft__";
+    const previous = pendingByChatRef.current.get(key) || [];
+    const files = typeof next === "function" ? next(previous) : next;
+    pendingByChatRef.current.set(key, files);
+    pendingFilesRef.current = files;
+    setVisiblePendingFiles(files);
+  }
+  useEffect(() => {
+    const files = pendingByChatRef.current.get(activeChatId || "__draft__") || [];
+    pendingFilesRef.current = files;
+    setVisiblePendingFiles(files);
+  }, [activeChatId]);
+
   function addPendingFiles(files: FileList | File[]) {
     const list = Array.from(files).filter((f) => f.size > 0);
     if (!list.length) return;
@@ -6547,7 +6555,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       const sizeValid = list.filter((file) => file.size <= MAX_PENDING_FILE_BYTES);
       if (sizeValid.length < list.length) {
-        toast.error("Each file must be 50 MB or smaller");
+        toast.error("Each file must be 1 GB or smaller");
       }
       const currentTotal = prev.reduce((total, pending) => total + pending.file.size, 0);
       let remainingBytes = MAX_PENDING_TOTAL_BYTES - currentTotal;
@@ -6558,11 +6566,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         remainingBytes -= file.size;
       }
       if (nextFiles.length < Math.min(sizeValid.length, room)) {
-        toast.error("Attachments may not exceed 500 MB total");
+        toast.error("Attachments may not exceed 10 GB total");
       }
       const next = nextFiles.map((file) => {
         return {
           id: `pf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          uploadTaskId: startUpload(file, { label: chatTitle || "New chat" }),
           file,
           previewUrl: URL.createObjectURL(file),
         };
@@ -6576,17 +6585,23 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setPendingFiles((prev) => {
       const target = prev.find((p) => p.id === id);
       if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      if (target?.uploadTaskId) cancelUpload(target.uploadTaskId);
       return prev.filter((p) => p.id !== id);
     });
   }
 
-  function clearPendingFiles() {
-    setPendingFiles((prev) => {
-      for (const pending of prev) {
-        if (pending.previewUrl) URL.revokeObjectURL(pending.previewUrl);
-      }
-      return [];
-    });
+  function clearPendingFiles(key = activeChatIdRef.current || "__draft__", sentFiles?: PendingFile[]) {
+    const previous = pendingByChatRef.current.get(key) || [];
+    const sentIds = sentFiles ? new Set(sentFiles.map((file) => file.id)) : undefined;
+    for (const pending of previous) {
+      if ((!sentIds || sentIds.has(pending.id)) && pending.previewUrl) URL.revokeObjectURL(pending.previewUrl);
+    }
+    const remaining = sentIds ? previous.filter((file) => !sentIds.has(file.id)) : [];
+    pendingByChatRef.current.set(key, remaining);
+    if ((activeChatIdRef.current || "__draft__") === key) {
+      pendingFilesRef.current = remaining;
+      setVisiblePendingFiles(remaining);
+    }
   }
 
   function onComposerPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
@@ -7236,6 +7251,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
+    const uploadOriginKey = activeChatIdRef.current || "__draft__";
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
     const isOverride = textOverride !== undefined && !asComposerSubmission;
@@ -7280,7 +7296,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
 
-    if (!isOverride) {
+    if (!isOverride) clearPendingFiles(pendingByChatRef.current.has(chatId) ? chatId : uploadOriginKey, filesToSend);
+    if (!isOverride && activeChatIdRef.current === chatId) {
       setInputGuarded("", "submitted");
       draftInputRef.current = "";
       setComposerSyncNonce((current) => current + 1);
@@ -7292,7 +7309,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       setReferenceText("");
       setReferences([]);
-      clearPendingFiles();
       setRestoredAttachments([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -7357,18 +7373,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     let submissionAccepted = false;
 
     try {
-      let attachmentsPayload:
-        | Array<{ name: string; mimeType: string; data: string }>
-        | undefined;
-      if (filesToSend.length) {
-        attachmentsPayload = await Promise.all(
-          filesToSend.map(async (p) => ({
-            name: p.file.name,
-            mimeType: p.file.type || "application/octet-stream",
-            data: await fileToBase64(p.file),
-          })),
-        );
-      }
+      const uploadIds = await Promise.all(filesToSend.map(async (pending) => {
+        const taskId = pending.uploadTaskId || startUpload(pending.file, { label: chatTitle || "Chat" });
+        return (await waitForUpload(taskId)).id;
+      }));
 
       let res = await fetch("/api/chat", {
         method: "POST",
@@ -7387,8 +7395,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           agentId: agentId || undefined,
           modelId,
           modelParams,
-          ...(attachmentsPayload?.length
-            ? { attachments: attachmentsPayload }
+          ...(uploadIds.length
+            ? { uploadIds }
             : {}),
           ...(storedAttachmentsToSend.length
             ? { storedAttachments: storedAttachmentsToSend }
@@ -9164,7 +9172,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept={FILE_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const selectedFiles = e.target.files;
@@ -9214,9 +9221,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     <AttachmentIcon mimeType={p.file.type} className="size-4 text-muted-foreground" />
                   </div>
                 )}
-                <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
-                  {p.file.name}
-                </span>
+                <div className="min-w-0 flex-1"><span className="block truncate text-xs text-foreground/90">{p.file.name}</span><UploadProgress taskId={p.uploadTaskId} /></div>
                 <button
                   type="button"
                   aria-label={`Remove ${p.file.name}`}
@@ -10117,6 +10122,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      <UploadTray />
       <UpdateStatusProbe
         isHostAdmin={Boolean(status?.isHostAdmin)}
         onUpdateAvailableChange={setSettingsUpdateAvailable}

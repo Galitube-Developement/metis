@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+const root=mkdtempSync(path.join(os.tmpdir(),"metis-chat-upload-"));
+process.env.CHAT_DATA_DIR=root; process.env.CHAT_DB_PATH=path.join(root,"chat.sqlite");process.env.AGENT_CWD=root;
+test.after(()=>rmSync(root,{recursive:true,force:true}));
+test("chat submission references finished uploads without Base64 and binds the attachment to its owned destination",async()=>{
+ const {getDatabase}=await import("../lib/sqlite");
+ const {createChat,getChat}=await import("../lib/db-store");
+ const {createUpload,appendUpload,completeUpload}=await import("../lib/file-upload-store");
+ const {POST}=await import("../app/api/chat/route");
+ const owner=randomUUID(),foreign=randomUUID(),token=randomUUID(),db=getDatabase();
+ for(const id of [owner,foreign])db.prepare("INSERT INTO users(id,username,password_hash,created_at)VALUES(?,?,?,?)").run(id,id,"unused",new Date().toISOString());
+ db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at)VALUES(?,?,?)").run(createHash("sha256").update(token).digest("hex"),owner,"2099-01-01T00:00:00.000Z");
+ const first=createChat("A",undefined,owner),second=createChat("B",undefined,owner);
+ const upload=createUpload(owner,{name:"image.png",mimeType:"image/png",size:4});
+ const submit=(ids:string[])=>POST(new Request("http://test/api/chat",{method:"POST",headers:{cookie:"ai_chat_auth="+token,"Content-Type":"application/json"},body:JSON.stringify({chatId:first.id,uploadIds:ids})}));
+ assert.equal((await submit([upload.id])).status,400);
+ await appendUpload(owner,upload.id,0,new ReadableStream({start(controller){controller.enqueue(new Uint8Array([137,80,78,71]));controller.close();}}));
+ completeUpload(owner,upload.id);
+ const response=await submit([upload.id]);
+ assert.equal(response.status,202);
+ const message=getChat(first.id,owner)!.messages.at(-1)!;
+ assert.equal(message.attachments?.[0].id,upload.id);
+ assert.equal(message.attachments?.[0].size,4);
+ assert.equal(getChat(second.id,owner)!.messages.length,0);
+ const other=createUpload(foreign,{name:"other.bin",mimeType:"application/octet-stream",size:1});
+ await appendUpload(foreign,other.id,0,new ReadableStream({start(controller){controller.enqueue(new Uint8Array([1]));controller.close();}}));completeUpload(foreign,other.id);
+ // A queued run prevents new submission; Send now validates uploads before changing it.
+ const invalid=await POST(new Request("http://test/api/chat",{method:"POST",headers:{cookie:"ai_chat_auth="+token,"Content-Type":"application/json"},body:JSON.stringify({chatId:first.id,message:"foreign",sendQueuedNow:true,uploadIds:[other.id]})}));
+ assert.equal(invalid.status,400);
+ assert.equal(getChat(first.id,owner)!.messages.length,1);
+});

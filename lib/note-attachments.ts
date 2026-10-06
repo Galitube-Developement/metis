@@ -10,7 +10,7 @@ export function validateNoteFiles(files: readonly Pick<File, "name" | "size">[])
   let total = 0;
   for (const file of files) {
     if (!file.size) throw new Error(`File is empty: ${file.name}`);
-    if (file.size > MAX_FILE_BYTES) throw new Error(`File exceeds 50 MB: ${file.name}`);
+    if (file.size > Math.min(MAX_FILE_BYTES, 50 * 1024 * 1024)) throw new Error(`File exceeds 50 MB: ${file.name}`);
     total += file.size;
   }
   if (total > MAX_TOTAL_BYTES) throw new Error("Files exceed the total size limit.");

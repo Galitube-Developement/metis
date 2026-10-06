@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, LayoutGrid, Maximize2, Palette, Pin, PinOff, Plus, RefreshCw, Search, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Paperclip, ExternalLink, LayoutGrid, Maximize2, Palette, Pin, PinOff, Plus, RefreshCw, Search, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { SharedNote, NoteTodo } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,10 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NotePinDialog } from "@/components/note-pin-dialog";
 import { NoteProjectMenu, type NoteProjectOption } from "@/components/note-project-menu";
 import { pinchDistance, pinchMidpoint, viewAfterZoom } from "@/lib/notes-gestures";
+import { registerFileDrop } from "@/lib/file-drop";
+import { startUpload } from "@/lib/background-uploads";
+import { MAX_FILE_BYTES, MAX_ATTACHMENTS } from "@/lib/upload-limits";
+import { NoteMedia } from "@/components/note-media";
 import { cn } from "@/lib/utils";
 
 type View = { x: number; y: number; zoom: number };
@@ -66,13 +70,15 @@ export function NotesVoid({
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<NoteProjectOption[]>([]);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const [mediaDrag, setMediaDrag] = useState(false);
   const todoInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimers = useRef(new Map<string, number>());
   const loadAbortRef = useRef<AbortController | null>(null);
   const hasInitializedViewRef = useRef(false);
  const notesRef = useRef<SharedNote[]>([]);
- const localDraftsRef = useRef(new Map<string, { title?: string; content?: string }>());
+ const localDraftsRef = useRef(new Map<string, Partial<Pick<SharedNote, "title" | "content" | "position" | "size">>>());
  const dirtyNoteIdsRef = useRef(new Set<string>());
  const consumedFocusNoteIdRef = useRef<string | null>(null);
   const viewRef = useRef(view);
@@ -86,7 +92,7 @@ export function NotesVoid({
  const local = currentById.get(serverNote.id);
  const draft = localDraftsRef.current.get(serverNote.id);
  return draft && local
- ? { ...serverNote, ...(draft.title !== undefined ? { title: draft.title } : {}), ...(draft.content !== undefined ? { content: draft.content } : {}) }
+ ? { ...serverNote, ...draft }
  : serverNote;
  });
  const serverIds = new Set(serverNotes.map((note) => note.id));
@@ -240,20 +246,22 @@ export function NotesVoid({
   const mergeServerNote = useCallback((serverNote: SharedNote, local?: SharedNote) => {
  const draft = localDraftsRef.current.get(serverNote.id);
  return draft && local
- ? { ...serverNote, ...(draft.title !== undefined ? { title: draft.title } : {}), ...(draft.content !== undefined ? { content: draft.content } : {}) }
+ ? { ...serverNote, ...draft }
  : serverNote;
  }, []);
 
  const update = useCallback(async (note: SharedNote, patch: Omit<Partial<SharedNote>, "projectId"> & { projectId?: string | null }) => {
  setStatus("saving");
  try {
+ let version = note.version;
+ for (let attempt = 0; attempt < 3; attempt++) {
  const response = await fetch(`/api/notes/${encodeURIComponent(note.id)}`, {
  method: "PATCH",
  headers: {
  "Content-Type": "application/json",
  "Idempotency-Key": requestKey(),
  },
- body: JSON.stringify({ ...patch, version: note.version }),
+ body: JSON.stringify({ ...patch, version }),
  });
  const body = await response.json().catch(() => ({}));
  if (!response.ok) {
@@ -263,6 +271,7 @@ export function NotesVoid({
  const merged = mergeServerNote(serverNote, current);
  notesRef.current = notesRef.current.map((item) => item.id === note.id ? merged : item);
  setNotes(notesRef.current);
+ if (attempt < 2 && patch.title === undefined && patch.content === undefined) { version = serverNote.version; continue; }
  }
  throw new Error(body.error || "Could not save note.");
  }
@@ -271,7 +280,9 @@ export function NotesVoid({
  if (draft) {
  if (patch.title !== undefined && draft.title === patch.title) delete draft.title;
  if (patch.content !== undefined && draft.content === patch.content) delete draft.content;
- if (draft.title === undefined && draft.content === undefined) {
+ if (patch.position && JSON.stringify(draft.position) === JSON.stringify(patch.position)) delete draft.position;
+ if (patch.size && JSON.stringify(draft.size) === JSON.stringify(patch.size)) delete draft.size;
+ if (Object.keys(draft).length === 0) {
  localDraftsRef.current.delete(note.id);
  dirtyNoteIdsRef.current.delete(note.id);
  }
@@ -282,6 +293,8 @@ export function NotesVoid({
  setNotes(notesRef.current);
  setStatus("saved");
  setError("");
+ return;
+ }
  } catch (cause) {
  setStatus("error");
  setError(cause instanceof Error ? cause.message : "Could not save note.");
@@ -290,10 +303,12 @@ export function NotesVoid({
 
  const scheduleUpdate = useCallback((note: SharedNote, patch: Partial<SharedNote>) => {
  const current = notesRef.current.find((item) => item.id === note.id) || note;
- if (patch.title !== undefined || patch.content !== undefined) {
+ if (patch.title !== undefined || patch.content !== undefined || patch.position || patch.size) {
  const draft = localDraftsRef.current.get(note.id) || {};
  if (patch.title !== undefined) draft.title = patch.title;
  if (patch.content !== undefined) draft.content = patch.content;
+ if (patch.position) draft.position = patch.position;
+ if (patch.size) draft.size = patch.size;
  localDraftsRef.current.set(note.id, draft);
  dirtyNoteIdsRef.current.add(note.id);
  }
@@ -304,7 +319,7 @@ export function NotesVoid({
  if (existing) window.clearTimeout(existing);
  const timer = window.setTimeout(() => {
  const latest = notesRef.current.find((item) => item.id === note.id) || { ...current, ...patch };
- void update(latest, patch);
+ void update(latest, { ...localDraftsRef.current.get(note.id), ...patch });
  saveTimers.current.delete(note.id);
  }, 500);
  saveTimers.current.set(note.id, timer);
@@ -591,9 +606,53 @@ export function NotesVoid({
     };
   }, [zoomAt]);
 
+  const addMedia = useCallback((files: File[], dropPoint?: { x: number; y: number }) => {
+    const currentView = viewRef.current;
+    const position = dropPoint || { x: (80 - currentView.x) / currentView.zoom, y: (80 - currentView.y) / currentView.zoom };
+    const destinationProjectId = projectId;
+    const destinationChatId = pinnedOnly ? chatId : undefined;
+    for (const [index, file] of files.slice(0, MAX_ATTACHMENTS).entries()) {
+      if (!file.size || file.size > MAX_FILE_BYTES) { setError("Each file must be 1 GB or smaller."); continue; }
+      startUpload(file, { label: "Scratchpad", onComplete: async (asset) => {
+        const response = await fetch("/api/notes", {
+          method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "media-" + asset.id },
+          body: JSON.stringify({ kind: asset.kind, title: asset.name, uploadId: asset.id, color: "#e2e8f0",
+            ...(destinationProjectId ? { projectId: destinationProjectId } : {}),
+            ...(destinationChatId ? { chatId: destinationChatId, scope: "chat" } : { scope: "global" }),
+            position: { x: position.x + index * 32, y: position.y + index * 32 },
+            size: { width: asset.kind === "image" ? 360 : 240, height: asset.kind === "image" ? 280 : 180 },
+          }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Could not add media.");
+        window.dispatchEvent(new Event("metis:notes-changed"));
+      } });
+    }
+  }, [chatId, pinnedOnly, projectId]);
+  const addMediaRef = useRef(addMedia);
+  addMediaRef.current = addMedia;
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    return registerFileDrop(surface, {
+      containsTarget: (target) => target instanceof Node && surface.contains(target),
+      onActive: setMediaDrag,
+      onFiles: (files, event) => {
+        const bounds = surface.getBoundingClientRect(), view = viewRef.current;
+        addMediaRef.current(Array.from(files), { x: (event.clientX - bounds.left - view.x) / view.zoom, y: (event.clientY - bounds.top - view.y) / view.zoom });
+      },
+      resetTarget: window,
+    });
+  }, []);
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    window.addEventListener("metis:notes-changed", refresh);
+    return () => window.removeEventListener("metis:notes-changed", refresh);
+  }, [load]);
+
   return (
     <div className={cn(
-      "flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/40 bg-muted/10",
+      "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/40 bg-muted/10",
       compact && "pointer-events-none absolute inset-0 z-10 rounded-none border-0 bg-transparent",
     )}>
       {!compact ? <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/40 px-2 py-1.5">
@@ -602,10 +661,12 @@ export function NotesVoid({
           <Input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" className="h-7 pl-7 text-xs" />
         </div>
         <span className={cn("text-[10px]", status === "error" || status === "offline" ? "text-destructive" : "text-muted-foreground")}>
-          {status === "loading" ? "Loading…" : status === "saving" ? "Saving…" : status === "offline" ? "Offline" : status === "error" ? "Error" : status === "saved" ? "Saved" : `${visibleNotes.length} notes`}
+          {status === "loading" ? "Loading…" : status === "saving" ? "Saving…" : status === "offline" ? "Offline" : status === "error" ? "Error" : status === "saved" ? "Saved" : `${visibleNotes.length} items`}
         </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {!compact ? <Button type="button" size="xs" onClick={() => void create()}><Plus className="size-3.5" />New note</Button> : null}
+          <Button type="button" size="xs" variant="ghost" onClick={() => mediaInputRef.current?.click()}><Paperclip className="size-3.5" />Add files</Button>
+          <input ref={mediaInputRef} type="file" multiple hidden aria-label="Add scratchpad files" onChange={(event) => { addMedia(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ""; }} />
           <Button type="button" size="xs" variant="ghost" title="Arrange notes in a tidy, consistent layout" aria-label="Arrange notes in a tidy, consistent layout" onClick={() => arrangeNotes()}><LayoutGrid className="size-3.5" />Arrange</Button>
           <Button type="button" size="icon-xs" variant="ghost" title="Fit all notes" aria-label="Fit all notes" onClick={() => fitAll()}><Maximize2 className="size-3.5" /></Button>
           <Button type="button" size="icon-xs" variant="ghost" title="Zoom out" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, zoom: Math.max(0.2, current.zoom - 0.1) }))}><ZoomOut className="size-3.5" /></Button>
@@ -658,6 +719,11 @@ export function NotesVoid({
       {error && !compact ? <div className="flex shrink-0 items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"><span className="truncate">{error}</span><Button type="button" size="xs" variant="ghost" onClick={() => void load()}>Retry</Button></div> : null}
       <div
         ref={surfaceRef}
+        data-scratchpad-surface
+        data-note-drop-target="scratchpad"
+        tabIndex={0}
+        aria-label="Scratchpad: drop or paste images and files"
+        onPasteCapture={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); event.stopPropagation(); addMedia(files); } }}
         className={cn(
           "relative min-h-0 flex-1 touch-none overflow-hidden",
         )}
@@ -747,6 +813,7 @@ export function NotesVoid({
           document.body.style.removeProperty("cursor");
         }}
       >
+        {mediaDrag && <div className="pointer-events-none absolute inset-0 z-[100] flex items-center justify-center border-2 border-dashed border-primary bg-background/90"><div className="text-center"><Paperclip className="mx-auto mb-2 size-7 text-primary" /><p className="text-sm font-medium">Drop images or files here</p><p className="mt-1 text-xs text-muted-foreground">Each becomes its own resizable item · Up to 1 GB</p></div></div>}
         {[...visibleNotes].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).map((note, index) => (
           <article
             key={note.id}
@@ -977,7 +1044,7 @@ export function NotesVoid({
                 <Trash2 className="size-3" />
               </Button> : null}
             </div>
-            <div className="flex min-h-0 flex-1 flex-col">
+            {note.asset ? <NoteMedia note={note} /> : <div className="flex min-h-0 flex-1 flex-col">
             <div
               className="shrink-0 space-y-1 px-2 pt-1.5"
               onPointerDown={(event) => event.stopPropagation()}
@@ -1024,6 +1091,7 @@ export function NotesVoid({
             </div>
             <EditableMarkdown
               noteId={note.id}
+              onFiles={addMedia}
               value={note.content}
               onChange={(value) => scheduleUpdate(note, { content: value })}
               interactiveTasks
@@ -1038,7 +1106,7 @@ export function NotesVoid({
                 }
               }}
             />
-            </div>
+            </div>}
             {([
               ["n", "inset-x-1/2 top-0 h-2 w-1/2 -translate-x-1/2 cursor-ns-resize"],
               ["ne", "right-0 top-0 size-3 cursor-nesw-resize"],
@@ -1067,7 +1135,7 @@ export function NotesVoid({
           </div>
         ) : !compact && !visibleNotes.length ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8 text-center text-xs text-muted-foreground">
-            No notes yet. Create one to share context with the agent.
+            Add a note, paste an image, or drop a file. Each item can be moved and resized.
           </div>
         ) : null}
       </div>

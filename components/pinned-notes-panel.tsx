@@ -5,6 +5,7 @@ import { Pin, X } from "lucide-react";
 import type { SharedNote } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NoteMedia } from "@/components/note-media";
 import { EditableMarkdown } from "@/components/editable-markdown";
 
 type ResizeEdge = "e" | "s" | "se";
@@ -241,7 +242,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
               startDrag(event, note);
             }}
           >
-            <EditableMarkdown
+            {note.asset ? <NoteMedia note={note} /> : <EditableMarkdown
               noteId={note.id}
               value={note.content}
               onChange={(content) => scheduleUpdate(note, { content })}
@@ -249,7 +250,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
               placeholder="Write, paste images, or drop files…"
               aria-label="Note content"
               className="min-h-0 bg-transparent p-0 text-black [&_.markdown-body]:text-black [&_.markdown-body_*]:text-black"
-            />
+            />}
           </div>
           {([
             ["e", "inset-y-1/2 right-0 h-1/2 w-1 cursor-ew-resize"],

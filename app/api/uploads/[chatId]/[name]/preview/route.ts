@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getChat } from "@/lib/db-store";
@@ -81,6 +82,7 @@ export async function GET(req: Request, { params }: Params) {
   const filePath = resolveUploadPath(chatId, storedName, ownerId);
   if (!attachment || !filePath) return Response.json({ error: "File not found" }, { status: 404 });
 
+  if (statSync(filePath).size > 20 * 1024 * 1024) return Response.json({ error: "Preview unavailable for large office files. Download the file to open it." }, { status: 413 });
   const preview = officePreview(filePath, attachment.mimeType);
   if (!preview) return Response.json({ error: "Preview unavailable for this file." }, { status: 415 });
   return new Response(preview, {
