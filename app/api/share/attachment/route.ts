@@ -1,5 +1,8 @@
+import { officePreviewResponse } from "@/lib/office-preview";
+import { effectiveFileMime } from "@/lib/file-types";
+import { fileResponse } from "@/lib/file-response";
 import { getChatByShareId } from "@/lib/db-store";
-import { readUpload } from "@/lib/uploads";
+import { resolveUploadPath } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,16 +21,10 @@ async function attachmentResponse(req: Request, body?: { id?: string; name?: str
     .flatMap((message) => message.attachments || [])
     .find((item) => item.storedName === name);
   if (!attachment?.storedName) return Response.json({ error: "Attachment not found" }, { status: 404 });
-  const file = readUpload(result.chat.id, attachment.storedName, result.ownerId);
+  const file = resolveUploadPath(result.chat.id, attachment.storedName, result.ownerId);
   if (!file) return Response.json({ error: "Attachment not found" }, { status: 404 });
-  return new Response(new Uint8Array(file), {
-    headers: {
-      "Content-Type": attachment.mimeType || "application/octet-stream",
-      "Content-Length": String(file.length),
-      "Content-Disposition": `inline; filename="${encodeURIComponent(attachment.name)}"`,
-      "Cache-Control": "private, max-age=3600",
-    },
-  });
+  if(url.searchParams.get("preview") === "1")return officePreviewResponse(file,effectiveFileMime(attachment.mimeType,attachment.name));
+  return fileResponse(file, attachment, req);
 }
 
 export async function GET(req: Request) {

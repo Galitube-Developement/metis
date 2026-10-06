@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { voiceDictionaryPrompt } from "@/lib/voice-dictionary";
 import { mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
@@ -35,6 +36,7 @@ async function openAiTranscription(
   modelId = "whisper-1",
   endpoint?: string,
   connectionId?: string,
+  prompt?: string,
 ) {
   let connectionSecret: ReturnType<typeof getProviderConnectionSecret> | null = null;
   if (ownerId) {
@@ -54,6 +56,7 @@ async function openAiTranscription(
   form.append("file", file, file.name || `recording-${randomUUID()}.webm`);
   form.append("model", modelId.trim() || process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || "whisper-1");
   form.append("response_format", "json");
+  if (prompt) form.append("prompt", prompt);
   if (language?.trim()) form.append("language", language.trim().slice(0, 20));
   const { response } = await fetchWithValidatedRedirects(transcriptionEndpoint(baseUrl), {
     method: "POST",
@@ -80,9 +83,10 @@ async function transcribeWithProviderLimits(
   modelId: string,
   endpoint?: string,
   connectionId?: string,
+  prompt?: string,
 ) {
   if (source.size <= MAX_PROVIDER_AUDIO_BYTES) {
-    return openAiTranscription(source, language, ownerId, modelId, endpoint, connectionId);
+    return openAiTranscription(source, language, ownerId, modelId, endpoint, connectionId, prompt);
   }
   const segmentDir = await mkdtemp(path.join(process.env.TMPDIR || "/tmp", "metis-voice-segments-"));
   try {
@@ -108,7 +112,7 @@ async function transcribeWithProviderLimits(
     for (const name of segmentNames) {
       const segment = await readFile(path.join(segmentDir, name));
       const segmentFile = new File([segment], name, { type: "audio/webm" });
-      parts.push(await openAiTranscription(segmentFile, language, ownerId, modelId, endpoint, connectionId));
+      parts.push(await openAiTranscription(segmentFile, language, ownerId, modelId, endpoint, connectionId, prompt));
     }
     return parts.filter(Boolean).join("\n\n").trim();
   } catch (error) {
@@ -177,7 +181,7 @@ export async function POST(req: Request) {
   try {
     updateVoiceJob(job.id, { status: "transcribing" }, ownerId);
     await writeFile(tempPath, Buffer.from(await file.arrayBuffer()), { mode: 0o600 });
-    const transcript = await transcribeWithProviderLimits(tempPath, file, language, ownerId, modelId, endpoint, connectionId);
+    const transcript = await transcribeWithProviderLimits(tempPath, file, language, ownerId, modelId, endpoint, connectionId, voiceDictionaryPrompt(settings.voiceInput?.dictionary));
     const completed = updateVoiceJob(job.id, { status: "completed", transcript }, ownerId);
     return Response.json({ job: completed, transcript });
   } catch (error) {

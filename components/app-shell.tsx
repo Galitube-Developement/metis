@@ -15,6 +15,10 @@ import {
   startTransition,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { startUpload, waitForUpload, cancelUpload } from "@/lib/background-uploads";
+import { UploadProgress, UploadTray } from "@/components/upload-progress";
+import { readTextFilePreview } from "@/lib/text-file-preview";
+import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
 import { useSearchParams } from "next/navigation";
 import { scheduleUiBackgroundTask, shouldApplySnapshotVersion } from "@/lib/ui-work-scheduling";
 import { createMessageDerivationCache } from "@/lib/message-derivation-cache";
@@ -96,10 +100,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { FileEmbed } from "@/components/file-embed";
+import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
+import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
@@ -450,6 +457,7 @@ type SourceLink = {
 
 type PendingFile = {
   id: string;
+  uploadTaskId?: string;
   file: File;
   previewUrl?: string;
 };
@@ -470,57 +478,9 @@ type PersistedQueuedMessage = {
   references?: ReferenceItem[];
 };
 
-const MAX_PENDING_FILES = 10;
-const MAX_PENDING_FILE_BYTES = 50 * 1024 * 1024;
-const MAX_PENDING_TOTAL_BYTES = 500 * 1024 * 1024;
-const FILE_ACCEPT =
-  "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.webm,.mp4,.mov,.m4v,.mp3,.wav,.ogg,.m4a,.txt,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.css,.html,.xml,.yaml,.yml,.toml,.zip";
-
-function isTextAttachment(mimeType: string, name: string): boolean {
-  return (
-    mimeType.startsWith("text/") ||
-    /(?:json|javascript|typescript|python|csv|markdown|xml|yaml|toml)/i.test(mimeType) ||
-    /\.(json|js|jsx|ts|tsx|py|csv|md|markdown|xml|ya?ml|toml|txt|css|html|go|rs|java|c|cpp|h)$/i.test(name)
-  );
-}
-
-function isOfficeAttachment(mimeType: string, name: string): boolean {
-  return (
-    /wordprocessingml|spreadsheetml|presentationml|msword|ms-excel|ms-powerpoint/i.test(mimeType) ||
-    /\.(docx?|xlsx?|pptx?)$/i.test(name)
-  );
-}
-
-function mimeTypeFromFileName(name: string) {
-  const extension = String(name ?? "").split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
-  return ({
-    gif: "image/gif",
-    jpeg: "image/jpeg",
-    jpg: "image/jpeg",
-    mp3: "audio/mpeg",
-    mp4: "video/mp4",
-    pdf: "application/pdf",
-    png: "image/png",
-    svg: "image/svg+xml",
-    wav: "audio/wav",
-    webm: "video/webm",
-    json: "application/json",
-    md: "text/markdown",
-    txt: "text/plain",
-    csv: "text/csv",
-    html: "text/html",
-    js: "text/javascript",
-    ts: "text/typescript",
-    py: "text/x-python",
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    xls: "application/vnd.ms-excel",
-    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ppt: "application/vnd.ms-powerpoint",
-    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  } as Record<string, string>)[extension || ""] || "application/octet-stream";
-}
-
+const MAX_PENDING_FILES = MAX_ATTACHMENTS;
+const MAX_PENDING_FILE_BYTES = MAX_FILE_BYTES;
+const MAX_PENDING_TOTAL_BYTES = MAX_TOTAL_BYTES;
 function detectedFileLinks(content: string) {
   const links = new Set<string>();
   const pattern = /(?:https?:\/\/[^\s<>()]+)?\/api\/(?:uploads\/[^)\s<>()]+|share\/attachment\?[^)\s<>()]+)/gi;
@@ -537,17 +497,6 @@ function AttachmentIcon({ mimeType, className }: { mimeType: string; className?:
   if (mimeType.startsWith("audio/")) return <AudioLines className={className} />;
   if (isTextAttachment(mimeType, "")) return <FileText className={className} />;
   return <FileIcon className={className} />;
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
 }
 
 function truncateFileName(name: string, max = 22): string {
@@ -1688,205 +1637,19 @@ function AttachmentViewer({
   active: { attachment: MsgAttachment; chatId?: string } | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [text, setText] = useState<string | null>(null);
-  const [textError, setTextError] = useState<string | null>(null);
   const attachment = active?.attachment;
-  const fileUrl =
-    attachment?.storedName && active?.chatId
-      ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}`
-      : attachment?.previewUrl;
-  const textFile = Boolean(attachment && isTextAttachment(attachment.mimeType, attachment.name));
-  const officeFile = Boolean(attachment && isOfficeAttachment(attachment.mimeType, attachment.name));
-  const pdfFile = attachment?.mimeType === "application/pdf";
-  const officePreviewAvailable = officeFile && Boolean(attachment?.storedName && active?.chatId);
-  const url = officePreviewAvailable && fileUrl ? `${fileUrl}/preview` : fileUrl;
-
-  useEffect(() => {
-    let cancelled = false;
-    setText(null);
-    setTextError(null);
-    if (!attachment || !url || (!textFile && !officePreviewAvailable)) return;
-    fetch(url)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
-      .then((value) => {
-        if (!cancelled) setText(value);
-      })
-      .catch((error) => {
-        if (!cancelled) setTextError(error instanceof Error ? error.message : "Could not load file");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [attachment, officePreviewAvailable, textFile, url]);
-
-  return (
-    <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[100dvh] max-h-none w-screen max-w-none rounded-none p-4 sm:h-auto sm:max-h-[90vh] sm:max-w-5xl sm:rounded-xl sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle>
-          {attachment ? (
-            <div className="flex items-center justify-between gap-3 text-left text-xs text-muted-foreground">
-              <span>
-                {attachment.mimeType}{attachment.size ? ` · ${(attachment.size / 1024 / 1024).toFixed(2)} MB` : ""}
-              </span>
-              {fileUrl ? (
-                <a
-                  href={fileUrl}
-                  download={attachment.name}
-                  className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-foreground hover:bg-muted"
-                >
-                  Download
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-        </DialogHeader>
-        <div className="min-h-0 flex-1 max-h-[calc(100dvh-7rem)] overflow-auto sm:max-h-[78vh]">
-          {!attachment || !url ? (
-            <p className="text-sm text-muted-foreground">Preview unavailable.</p>
-          ) : pdfFile ? (
-            <p className="text-sm text-muted-foreground">PDF previews are not available.</p>
-          ) : attachment.mimeType.startsWith("image/") ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={url} alt={attachment.name} className="mx-auto max-h-[70vh] max-w-full object-contain" />
-          ) : attachment.mimeType.startsWith("video/") ? (
-            <video src={url} controls className="mx-auto max-h-[70vh] max-w-full" />
-          ) : attachment.mimeType.startsWith("audio/") ? (
-            <audio src={url} controls className="w-full" />
-          ) : textFile || officePreviewAvailable ? (
-            textError ? (
-              <p className="text-sm text-destructive">Could not load text file: {textError}</p>
-            ) : text === null ? (
-              <p className="text-sm text-muted-foreground">Loading file…</p>
-            ) : (
-              <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-4 text-sm">{text}</pre>
-            )
-          ) : (
-            <div className="flex flex-col items-center gap-3 py-10 text-center">
-              <AttachmentIcon mimeType={attachment.mimeType} className="size-10 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{attachment.mimeType}</p>
-              <a
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                download={attachment.name}
-                className="rounded-lg border border-border/60 px-3 py-2 text-sm hover:bg-muted"
-              >
-                Download / open file
-              </a>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  const url = attachment?.storedName && active?.chatId ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}` : attachment?.previewUrl;
+  return <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
+    <DialogContent className="max-h-[90dvh] max-w-5xl overflow-auto p-4">
+      <DialogHeader><DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle></DialogHeader>
+      {attachment && url ? <FileEmbed file={{...attachment,url}} className="max-h-[75dvh] min-h-64"/> : <p>Preview unavailable.</p>}
+    </DialogContent>
+  </Dialog>;
 }
-
-function FileShareEmbed({
-  href,
-  onOpen,
-}: {
-  href: string;
-  onOpen: (attachment: MsgAttachment) => void;
-}) {
-  const rawName = href.includes("?")
-    ? new URL(href, window.location.origin).searchParams.get("name") || "Shared file"
-    : href.split("/").pop() || "Shared file";
-  let name = rawName;
-  try {
-    name = decodeURIComponent(rawName);
-  } catch {
-    // Keep the raw URL segment when it is not valid encoded text.
-  }
-  const mimeType = mimeTypeFromFileName(name);
-  const attachment: MsgAttachment = {
-    id: `shared-${href}`,
-    name,
-    mimeType,
-    kind: mimeType.startsWith("image/") ? "image" : "file",
-    previewUrl: href,
-  };
-  const textFile = isTextAttachment(mimeType, name);
-  const officeFile = isOfficeAttachment(mimeType, name);
-  const previewUrl = officeFile && href.startsWith("/api/uploads/")
-    ? `${href}/preview`
-    : href;
-  const [text, setText] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!textFile && !officeFile) return;
-    let cancelled = false;
-    fetch(previewUrl)
-      .then((response) => response.ok ? response.text() : "")
-      .then((value) => {
-        if (!cancelled) setText(value);
-      })
-      .catch(() => {
-        if (!cancelled) setText("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [officeFile, previewUrl, textFile]);
-
-  return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-border/60 bg-card/50">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpen(attachment)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onOpen(attachment);
-          }
-        }}
-        className="block w-full text-left"
-        title={`Open ${name}`}
-      >
-        {mimeType.startsWith("image/") ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={href} alt={name} className="max-h-72 w-full object-contain bg-black/10" />
-        ) : mimeType.startsWith("video/") ? (
-          <video src={href} controls className="max-h-72 w-full bg-black/10" />
-        ) : mimeType.startsWith("audio/") ? (
-          <audio src={href} controls className="w-full p-3" />
-        ) : mimeType === "application/pdf" ? (
-          <div className="flex items-center gap-3 bg-muted/30 p-4">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-              <AttachmentIcon mimeType={mimeType} className="size-5 text-muted-foreground" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">PDF file</span>
-              <span className="block text-xs text-muted-foreground">PDF previews are not available.</span>
-            </span>
-          </div>
-        ) : textFile || officeFile ? (
-          <pre className="max-h-48 overflow-hidden whitespace-pre-wrap break-words bg-muted/30 p-3 text-xs text-muted-foreground">
-            {text === null ? "Loading preview…" : text.slice(0, 4_000) || "Preview unavailable."}
-          </pre>
-        ) : (
-          <div className="flex items-center gap-2 p-3 text-sm">
-            <AttachmentIcon mimeType={mimeType} className="size-5 text-muted-foreground" />
-            <span className="truncate">{name}</span>
-          </div>
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-3 border-t border-border/50 px-3 py-2">
-        <span className="truncate text-xs text-muted-foreground">{name}</span>
-        <a
-          href={href}
-          download={name}
-          className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-[11px] hover:bg-muted"
-        >
-          Download
-        </a>
-      </div>
-    </div>
-  );
+function FileShareEmbed({href}: {href:string;onOpen:(attachment:MsgAttachment)=>void}) {
+  let name = href.includes("?") ? new URL(href,"http://localhost").searchParams.get("name") || "Shared file" : href.split("/").pop() || "Shared file";
+  try {name=decodeURIComponent(name);} catch {}
+  return <FileEmbed file={{url:href,name,mimeType:mimeTypeFromFileName(name)}} className="mt-3 max-h-96 rounded-lg border border-border/40"/>;
 }
 
 function paintVoiceWaveform(root: HTMLDivElement | null, level: number) {
@@ -2226,13 +1989,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [questionCustomActive, setQuestionCustomActive] = useState<boolean[]>([]);
   const [answeringQuestion, setAnsweringQuestion] = useState(false);
   const [paneKey, setPaneKey] = useState(0);
-  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [pendingFiles, setVisiblePendingFiles] = useState<PendingFile[]>([]);
+  const pendingByChatRef = useRef(new Map<string, PendingFile[]>());
   const [restoredAttachments, setRestoredAttachments] = useState<MsgAttachment[]>([]);
   const [activeAttachment, setActiveAttachment] = useState<{
     attachment: MsgAttachment;
     chatId?: string;
   } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     if (workspaceOpen) {
@@ -2603,7 +2366,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     return () => {
-      for (const p of pendingFilesRef.current) {
+      for (const p of [...pendingByChatRef.current.values()].flat()) {
         if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
       }
     };
@@ -5973,17 +5736,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }, 400);
   }
 
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const minPx = 36; // match send button size-9
-    el.style.height = "auto";
-    el.style.overflowY = "hidden";
-    const nextHeight = Math.min(Math.max(el.scrollHeight, minPx), 180);
-    el.style.height = `${nextHeight}px`;
-    el.style.overflowY = nextHeight >= 180 ? "auto" : "hidden";
-  }, [input]);
-
   useEffect(() => {
     const el = composerContainerRef.current;
     if (!el) return;
@@ -6137,6 +5889,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       const stillOnDraft = !activeChatIdRef.current;
       if (stillOnDraft) {
+        const files = pendingByChatRef.current.get("__draft__");
+        if (files) { pendingByChatRef.current.set(data.chat.id, files); pendingByChatRef.current.delete("__draft__"); }
         setActiveChatId(data.chat.id);
         activeChatIdRef.current = data.chat.id;
         setActiveChatIncognito(Boolean(data.chat.incognito));
@@ -6531,6 +6285,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
+  function setPendingFiles(next: PendingFile[] | ((previous: PendingFile[]) => PendingFile[])) {
+    const key = activeChatIdRef.current || "__draft__";
+    const previous = pendingByChatRef.current.get(key) || [];
+    const files = typeof next === "function" ? next(previous) : next;
+    pendingByChatRef.current.set(key, files);
+    pendingFilesRef.current = files;
+    setVisiblePendingFiles(files);
+  }
+  useEffect(() => {
+    const files = pendingByChatRef.current.get(activeChatId || "__draft__") || [];
+    pendingFilesRef.current = files;
+    setVisiblePendingFiles(files);
+  }, [activeChatId]);
+
   function addPendingFiles(files: FileList | File[]) {
     const list = Array.from(files).filter((f) => f.size > 0);
     if (!list.length) return;
@@ -6546,7 +6314,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       const sizeValid = list.filter((file) => file.size <= MAX_PENDING_FILE_BYTES);
       if (sizeValid.length < list.length) {
-        toast.error("Each file must be 50 MB or smaller");
+        toast.error("Each file must be 1 GB or smaller");
       }
       const currentTotal = prev.reduce((total, pending) => total + pending.file.size, 0);
       let remainingBytes = MAX_PENDING_TOTAL_BYTES - currentTotal;
@@ -6557,11 +6325,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         remainingBytes -= file.size;
       }
       if (nextFiles.length < Math.min(sizeValid.length, room)) {
-        toast.error("Attachments may not exceed 500 MB total");
+        toast.error("Attachments may not exceed 10 GB total");
       }
       const next = nextFiles.map((file) => {
         return {
           id: `pf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          uploadTaskId: startUpload(file, { label: chatTitle || "New chat" }),
           file,
           previewUrl: URL.createObjectURL(file),
         };
@@ -6575,17 +6344,23 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setPendingFiles((prev) => {
       const target = prev.find((p) => p.id === id);
       if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      if (target?.uploadTaskId) cancelUpload(target.uploadTaskId);
       return prev.filter((p) => p.id !== id);
     });
   }
 
-  function clearPendingFiles() {
-    setPendingFiles((prev) => {
-      for (const pending of prev) {
-        if (pending.previewUrl) URL.revokeObjectURL(pending.previewUrl);
-      }
-      return [];
-    });
+  function clearPendingFiles(key = activeChatIdRef.current || "__draft__", sentFiles?: PendingFile[]) {
+    const previous = pendingByChatRef.current.get(key) || [];
+    const sentIds = sentFiles ? new Set(sentFiles.map((file) => file.id)) : undefined;
+    for (const pending of previous) {
+      if ((!sentIds || sentIds.has(pending.id)) && pending.previewUrl) URL.revokeObjectURL(pending.previewUrl);
+    }
+    const remaining = sentIds ? previous.filter((file) => !sentIds.has(file.id)) : [];
+    pendingByChatRef.current.set(key, remaining);
+    if ((activeChatIdRef.current || "__draft__") === key) {
+      pendingFilesRef.current = remaining;
+      setVisiblePendingFiles(remaining);
+    }
   }
 
   function onComposerPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
@@ -6601,31 +6376,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (!imageFiles.length) return;
     e.preventDefault();
     addPendingFiles(imageFiles);
-  }
-
-  function onComposerDragOver(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (busy) return;
-    setDragOver(true);
-  }
-
-  function onComposerDragLeave(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    const related = e.relatedTarget as Node | null;
-    if (related && e.currentTarget.contains(related)) return;
-    setDragOver(false);
-  }
-
-  function onComposerDrop(e: DragEvent<HTMLFormElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (busy) return;
-    if (e.dataTransfer?.files?.length) {
-      addPendingFiles(e.dataTransfer.files);
-    }
   }
 
   async function submitQuestionAnswers() {
@@ -7235,6 +6985,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     const filesToSend = attachmentsOverride ?? pendingFiles;
+    const uploadOriginKey = activeChatIdRef.current || "__draft__";
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
     const isOverride = textOverride !== undefined && !asComposerSubmission;
@@ -7279,7 +7030,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
 
-    if (!isOverride) {
+    if (!isOverride) clearPendingFiles(pendingByChatRef.current.has(chatId) ? chatId : uploadOriginKey, filesToSend);
+    if (!isOverride && activeChatIdRef.current === chatId) {
       setInputGuarded("", "submitted");
       draftInputRef.current = "";
       setComposerSyncNonce((current) => current + 1);
@@ -7291,7 +7043,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       setReferenceText("");
       setReferences([]);
-      clearPendingFiles();
       setRestoredAttachments([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -7356,18 +7107,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     let submissionAccepted = false;
 
     try {
-      let attachmentsPayload:
-        | Array<{ name: string; mimeType: string; data: string }>
-        | undefined;
-      if (filesToSend.length) {
-        attachmentsPayload = await Promise.all(
-          filesToSend.map(async (p) => ({
-            name: p.file.name,
-            mimeType: p.file.type || "application/octet-stream",
-            data: await fileToBase64(p.file),
-          })),
-        );
-      }
+      const uploadIds = await Promise.all(filesToSend.map(async (pending) => {
+        const taskId = pending.uploadTaskId || startUpload(pending.file, { label: chatTitle || "Chat" });
+        return (await waitForUpload(taskId)).id;
+      }));
 
       let res = await fetch("/api/chat", {
         method: "POST",
@@ -7386,8 +7129,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           agentId: agentId || undefined,
           modelId,
           modelParams,
-          ...(attachmentsPayload?.length
-            ? { attachments: attachmentsPayload }
+          ...(uploadIds.length
+            ? { uploadIds }
             : {}),
           ...(storedAttachmentsToSend.length
             ? { storedAttachments: storedAttachmentsToSend }
@@ -8628,6 +8371,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     workspaceSaveTimersRef.current.set(workspaceId, timer);
   }
 
+  useEffect(() => {
+    const complete = (event: Event) => {
+      const detail = (event as CustomEvent<{chatId:string;workspace:WorkspaceItem}>).detail;
+      if(!detail || activeChatIdRef.current !== detail.chatId)return;
+      setWorkspaces(current => current.map(item => item.id === detail.workspace.id ? mergeIncomingWorkspace(detail.workspace,item,workspaceDraftChangesRef.current.get(item.id)) : item));
+    };
+    window.addEventListener("metis:workspace-upload-complete",complete);
+    return () => window.removeEventListener("metis:workspace-upload-complete",complete);
+  }, []);
+
   function updateWorkspaceDraft(
     workspaceId: string,
     patch: WorkspaceDraftPatch,
@@ -9057,12 +8810,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       <div className="flex flex-col gap-1">
       <form
         onSubmit={(e) => void send(e)}
-        onDragOver={onComposerDragOver}
-        onDragLeave={onComposerDragLeave}
-        onDrop={onComposerDrop}
         className={cn(
           "relative flex w-full flex-col justify-center gap-1.5 rounded-[1.25rem] bg-muted/20 p-1.5 ring-1 ring-inset ring-border/30 transition-[background-color,box-shadow] focus-within:bg-muted/25 focus-within:ring-border/45",
-          dragOver && "bg-muted/40 ring-foreground/30",
         )}
       >
         {slashQuery !== null ? (
@@ -9163,7 +8912,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept={FILE_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const selectedFiles = e.target.files;
@@ -9213,9 +8961,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     <AttachmentIcon mimeType={p.file.type} className="size-4 text-muted-foreground" />
                   </div>
                 )}
-                <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
-                  {p.file.name}
-                </span>
+                <div className="min-w-0 flex-1"><span className="block truncate text-xs text-foreground/90">{p.file.name}</span><UploadProgress taskId={p.uploadTaskId} /></div>
                 <button
                   type="button"
                   aria-label={`Remove ${p.file.name}`}
@@ -9649,7 +9395,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           aria-hidden="true"
           className="absolute left-0 z-10 h-9 w-auto max-w-[5rem] object-contain"
         />
-        <span lang="grc" className="metis-wordmark relative z-20 text-foreground/90">Μῆτις</span>
+        <span role="img" aria-label="Metis" className="metis-wordmark relative z-20 shrink-0 text-foreground/90" />
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/hand-right.png"
@@ -10109,11 +9855,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   return (
-    <div
+    <ChatFileDropZone
+      enabled={!notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+      onFiles={addPendingFiles}
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      <UploadTray />
       <UpdateStatusProbe
         isHostAdmin={Boolean(status?.isHostAdmin)}
         onUpdateAvailableChange={setSettingsUpdateAvailable}
@@ -10381,7 +10130,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         {/* Messages / empty */}
         <div
           key={paneKey}
-          className="relative flex min-h-0 flex-1 flex-col"
+          className={cn(
+            "relative flex min-h-0 flex-1 flex-col",
+            isEmpty && !notesOpen && !automationsOpen && !projectHomeId && !loadingChatId &&
+              (queuedMessages.length ? "justify-end pb-10 sm:pb-8" : "justify-center pb-[10svh] sm:pb-8"),
+          )}
         >
         {!notesOpen && !automationsOpen && !projectHomeId && activeChatId ? <NotesVoid chatId={activeChatId} pinnedOnly compact projectId={chats.find((chat) => chat.id === activeChatId)?.projectId || draftProjectId} /> : null}
         {projectHomeId && !notesOpen && !automationsOpen ? (
@@ -10422,8 +10175,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ) : isEmpty ? (
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col items-center px-4",
-              queuedMessages.length ? "justify-end pb-10 sm:pb-8" : "justify-center pb-[10svh] sm:pb-8",
+              "flex shrink-0 flex-col items-center px-4",
             )}
           >
             <h2 className={cn(
@@ -10437,16 +10189,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 Incognito mode is active. This chat is temporary and won&apos;t use or save your personal context.
               </p>
             ) : null}
-            <div
-              ref={composerContainerRef}
-              className={cn(
-                "w-full max-w-2xl max-sm:px-0",
-                composerFocused && "max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:px-3",
-              )}
-              style={composerFocused ? { bottom: mobileKeyboardInset } : undefined}
-            >
-              {composer}
-            </div>
           </div>
         ) : (
           <>
@@ -10588,30 +10330,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                   att.storedName && activeChatId
                                     ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                     : att.previewUrl;
-                                return (
-                                  <button
-                                    key={att.id}
-                                    type="button"
-                                    title={att.name}
-                                    onClick={() => setActiveAttachment({ attachment: att, chatId: activeChatId ?? undefined })}
-                                    className="flex w-52 shrink-0 items-center gap-2 rounded-xl border border-border/40 bg-background/40 p-2 text-left text-xs text-foreground/90 hover:bg-background/70"
-                                  >
-                                    {att.kind === "image" && href ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={href} alt={att.name} className="size-12 shrink-0 rounded-lg object-cover" />
-                                    ) : (
-                                      <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-                                        <AttachmentIcon mimeType={att.mimeType} className="size-5 text-muted-foreground" />
-                                      </span>
-                                    )}
-                                    <span className="min-w-0">
-                                      <span className="block truncate font-medium">{att.name}</span>
-                                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                        {att.size === undefined ? "Size unavailable" : formatMetricBytes(att.size)}
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
+                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-80 max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
                               })}
                             </div>
                           ) : null}
@@ -10678,38 +10397,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               const href = att.storedName && activeChatId
                                 ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                 : att.previewUrl;
-                              return (
-                                <div key={att.id} className="flex max-w-full items-center gap-2 rounded-xl border border-border/50 bg-card/60 p-2">
-                                  <button
-                                    type="button"
-                                    title={`Preview ${att.name}`}
-                                    onClick={() => setActiveAttachment({ attachment: att, chatId: activeChatId ?? undefined })}
-                                    className="flex min-w-0 items-center gap-2 text-left hover:text-primary"
-                                  >
-                                    {att.kind === "image" && href ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={href} alt={att.name} className="size-10 shrink-0 rounded-lg object-cover" />
-                                    ) : (
-                                      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary/80">
-                                        <AttachmentIcon mimeType={att.mimeType} className="size-5 text-muted-foreground" />
-                                      </span>
-                                    )}
-                                    <span className="min-w-0">
-                                      <span className="block max-w-56 truncate text-xs font-medium">{att.name}</span>
-                                      <span className="block text-[11px] text-muted-foreground">{formatMetricBytes(att.size)}</span>
-                                    </span>
-                                  </button>
-                                  {href ? (
-                                    <a
-                                      href={href}
-                                      download={att.name}
-                                      className="rounded-md border border-border/60 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    >
-                                      Download
-                                    </a>
-                                  ) : null}
-                                </div>
-                              );
+                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-80 max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
                             })}
                           </div>
                         ) : null}
@@ -11221,18 +10909,42 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </div>
             </div>
 
-            {/* Floating composer */}
+            {selectionAction ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="secondary"
+                aria-label="Reference selected text"
+                title="Reference selected text"
+                onClick={() => {
+                  setReferenceText(selectionAction.text);
+                  setSelectionAction(null);
+                  window.getSelection()?.removeAllRanges();
+                  textareaRef.current?.focus();
+                }}
+                style={{ position: "fixed", left: selectionAction.x, top: selectionAction.y, zIndex: 60 }}
+                className="size-8 rounded-full border border-primary/30 bg-background shadow-lg"
+              >
+                <Reply className="size-3.5" />
+              </Button>
+            ) : null}
+          </>
+        )}
+        {/* One composer instance: incoming messages must not remount the editor. */}
+        {!notesOpen && !automationsOpen && !projectHomeId && !loadingChatId ? (
             <div
+              key="chat-composer"
               ref={composerContainerRef}
               className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-background via-background/95 to-transparent pt-5",
-                composerFocused && "max-md:fixed max-md:z-30",
+                "pointer-events-none z-20 w-full",
+                isEmpty ? "relative mx-auto max-w-2xl px-4" : "absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/95 to-transparent pt-5",
+                composerFocused && "max-md:fixed max-md:inset-x-0 max-md:z-30",
               )}
               style={composerFocused ? { bottom: mobileKeyboardInset } : undefined}
             >
-              <div className="pointer-events-none pt-2 sm:pt-3" style={{ paddingBottom: "max(0.25rem, env(safe-area-inset-bottom))" }}>
-                <div className="pointer-events-auto relative mx-auto w-full max-w-2xl px-3 sm:px-6">
-                  {showScrollDown || hasCurrentAttention ? (
+              <div className={cn("pointer-events-none", !isEmpty && "pt-2 sm:pt-3")} style={{ paddingBottom: "max(0.25rem, env(safe-area-inset-bottom))" }}>
+                <div className={cn("pointer-events-auto relative mx-auto w-full max-w-2xl", !isEmpty && "px-3 sm:px-6")}>
+                  {!isEmpty && (showScrollDown || hasCurrentAttention) ? (
                     <Button
                       type="button"
                       size="icon"
@@ -11318,27 +11030,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 </div>
               </div>
             </div>
-            {selectionAction ? (
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="secondary"
-                aria-label="Reference selected text"
-                title="Reference selected text"
-                onClick={() => {
-                  setReferenceText(selectionAction.text);
-                  setSelectionAction(null);
-                  window.getSelection()?.removeAllRanges();
-                  textareaRef.current?.focus();
-                }}
-                style={{ position: "fixed", left: selectionAction.x, top: selectionAction.y, zIndex: 60 }}
-                className="size-8 rounded-full border border-primary/30 bg-background shadow-lg"
-              >
-                <Reply className="size-3.5" />
-              </Button>
-            ) : null}
-          </>
-        )}
+        ) : null}
         </div>
       </div>
 
@@ -11954,6 +11646,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                   <EditableMarkdown
                     key={activeWorkspace.id}
+                    workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
                     onChange={(nextContent) => {
@@ -12035,6 +11728,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                   <EditableMarkdown
                     key={activeWorkspace.id}
+                    workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
                     onChange={(nextContent) => {
@@ -12557,6 +12251,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ChatFileDropZone>
   );
 }

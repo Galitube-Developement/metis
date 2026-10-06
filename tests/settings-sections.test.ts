@@ -28,6 +28,7 @@ test("settings subsection links match the heading order in each tab", () => {
     "settings-token-compression",
     "settings-notifications",
     "settings-voice-input",
+    "settings-dictionary",
     "settings-browser",
     "settings-browser-storage",
     "settings-session",

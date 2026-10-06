@@ -1,3 +1,4 @@
+import { parseFileEmbed } from "@/lib/file-types";
 /** Small source edits used by the live Markdown preview. */
 
 export function minimalMarkdownChange(current: string, next: string) {
@@ -39,14 +40,15 @@ export function toggleMarkdownTask(value: string, index: number, checked: boolea
 
 export function replaceEmbeddedSource(
   value: string,
-  kind: "chart" | "graph" | "mermaid",
+  kind: "chart" | "graph" | "mermaid" | "file",
   index: number,
   source: string,
 ): string {
   let seen = 0;
-  const pattern = /^([ \t]*)(`{3,})(chart|graph|mermaid)[ \t]*\r?\n([\s\S]*?)^\1\2[ \t]*$/gm;
+  const pattern = /^([ \t]*)(`{3,})(chart|graph|mermaid|file)[ \t]*\r?\n([\s\S]*?)^\1\2[ \t]*$/gm;
   return value.replace(pattern, (block, indent: string, fence: string, language: string, previous: string) => {
-    if (language !== kind || seen++ !== index) return block;
+    if (language !== kind || (kind === "file" && !parseFileEmbed(previous)) || seen++ !== index) return block;
+    if (kind === "file" && !source) return "";
     const nextSource = source.replace(/\n$/, "");
     if (previous.replace(/\n$/, "") === nextSource) return block;
     return indent + fence + language + "\n" + nextSource + "\n" + indent + fence;

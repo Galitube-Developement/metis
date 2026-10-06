@@ -45,28 +45,38 @@ test("extractor keeps scoped project requirements out of global memory", () => {
   assert.equal(task?.kind, "task");
 });
 
-test("automatic capture stores durable knowledge, is idempotent, and never stores secrets", () => {
-  const { createChat, listMemories, getChat } = modules[0];
+test("automatic capture never creates or overwrites durable memories", () => {
+  const { createChat, createMemory, listMemories, getChat } = modules[0];
   const { listNotes } = modules[1];
   const { captureKnowledgeFromUserTurn } = modules[2];
   const chat = createChat("Knowledge lifecycle");
+  const manual = createMemory("Mein Server hat 256 GB RAM.", ["manual"]);
+  const legacy = createMemory("Ich bevorzuge lange Antworten.", ["auto:knowledge", "knowledge:durable"]);
+  const before = listMemories();
 
-  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "m0", message: "Ich will, dass der Composer Drafts speichert." });
-  assert.equal(listMemories().filter((m) => m.tags?.includes("auto:knowledge")).length, 0);
+  for (const [index, message] of [
+    "Ich bevorzuge kurze Antworten. Mein Server hat 512 GB RAM.",
+    "Merk dir: mein Server hat 512 GB RAM.",
+    "Remember that I prefer concise answers.",
+    "Mein API Key ist abc123 und mein Token ist secret. Merk dir mein Passwort abc123.",
+  ].entries()) {
+    const result = captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: `m${index}`, message });
+    assert.equal(result.durable, 0);
+    assert.deepEqual(listMemories(), before);
+  }
+  assert.equal(listMemories().find(memory => memory.id === manual.id)?.content, manual.content);
+  assert.equal(listMemories().find(memory => memory.id === legacy.id)?.content, legacy.content);
 
-  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "m1", message: "Merk dir: mein Server hat 256 GB RAM. Die Metis UI soll kompakt bleiben." });
-  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "m1", message: "Merk dir: mein Server hat 256 GB RAM. Die Metis UI soll kompakt bleiben." });
-  assert.equal(listMemories().filter((m) => m.tags?.includes("auto:knowledge")).length, 1);
-  assert.equal(listNotes({ chatId: chat.id, scope: "chat" }).filter((n) => n.kind === "learned_fact").length, 1);
-
-  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "m2", message: "Merk dir: mein Server hat 512 GB RAM." });
-  const auto = listMemories().filter((m) => m.tags?.includes("auto:knowledge"));
-  assert.equal(auto.length, 1);
-  assert.match(auto[0].content, /512 GB RAM/);
-
-  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "m3", message: "Mein API Key ist abc123 und mein Token ist secret. Merk dir mein Passwort abc123." });
-  assert.equal(listMemories().some((m) => /abc123|secret/.test(m.content)), false);
+  const scoped = "Die Metis UI soll kompakt bleiben.";
+  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "task", message: scoped });
+  captureKnowledgeFromUserTurn({ chatId: chat.id, messageId: "task", message: scoped });
+  assert.equal(listNotes({ chatId: chat.id, scope: "chat" }).filter(note => note.kind === "learned_fact").length, 1);
+  assert.deepEqual(listMemories(), before);
   assert.ok((getChat(chat.id)?.keywords || []).includes("server"));
+
+  // Explicit tool/API writes remain available after automatic capture is disabled.
+  const explicit = createMemory("Manuell gespeicherte Testpräferenz.", ["manual"]);
+  assert.equal(listMemories().find(memory => memory.id === explicit.id)?.content, explicit.content);
 });
 
 test("temporary incident and question reports are not stable profile facts", () => {

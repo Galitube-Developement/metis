@@ -1,3 +1,4 @@
+import { materializeUploads } from "@/lib/file-upload-store";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
 import { resolveApproval } from "@/lib/db-approvals";
@@ -48,6 +49,7 @@ type ChatBody = {
   modelParams?: Array<{ id: string; value: string }>;
   attachments?: IncomingAttachment[];
   storedAttachments?: StoredAttachment[];
+  uploadIds?: string[];
   incognito?: boolean;
   streamDeviceId?: string;
 };
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
       typeof body.referenceText === "string"
         ? body.referenceText.trim().slice(0, 100_000)
         : "";
-    if (!chatId || (!message && !attachments.length && !body.storedAttachments?.length)) {
+    if (!chatId || (!message && !attachments.length && !body.storedAttachments?.length && !body.uploadIds?.length)) {
       return Response.json(
         { error: "chatId and message or attachments are required" },
         { status: 400 },
@@ -201,6 +203,14 @@ export async function POST(req: Request) {
           )
           .slice(0, MAX_ATTACHMENTS)
       : [];
+    if (body.uploadIds?.length) {
+      if (!ownerId || !Array.isArray(body.uploadIds) || !body.uploadIds.every((id) => typeof id === "string")) {
+        return Response.json({ error: "Invalid upload ids" }, { status: 400 });
+      }
+      try { storedAttachments.push(...materializeUploads(chatId, body.uploadIds, ownerId)); }
+      catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Invalid uploads" }, { status: 400 }); }
+    }
+    if (storedAttachments.length + attachments.length > MAX_ATTACHMENTS) return Response.json({ error: "Too many attachments" }, { status: 400 });
     if (!message && !attachments.length && !storedAttachments.length) {
       return Response.json({ error: "Message or valid attachments are required" }, { status: 400 });
     }

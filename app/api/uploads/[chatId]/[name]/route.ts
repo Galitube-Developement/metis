@@ -1,6 +1,7 @@
+import { fileResponse } from "@/lib/file-response";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getChat } from "@/lib/db-store";
-import { readUpload } from "@/lib/uploads";
+import { resolveUploadPath } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,18 +25,10 @@ export async function GET(req: Request, { params }: Params) {
     .flatMap((m) => m.attachments ?? [])
     .find((a) => a.storedName === storedName);
 
-  const buf = readUpload(chatId, storedName, ownerId);
-  if (!buf) {
+  const full = resolveUploadPath(chatId, storedName, ownerId);
+  if (!full || !meta) {
     return Response.json({ error: "File not found" }, { status: 404 });
   }
 
-  const mime = meta?.mimeType || "application/octet-stream";
-  return new Response(new Uint8Array(buf), {
-    headers: {
-      "Content-Type": mime,
-      "Content-Length": String(buf.length),
-      "Cache-Control": "private, max-age=3600",
-      "Content-Disposition": `inline; filename="${encodeURIComponent(meta?.name || storedName)}"`,
-    },
-  });
+  return fileResponse(full, meta, req);
 }

@@ -671,3 +671,40 @@ test("layoutAssistantParts never folds the latest Tasks state into edit activity
   if (toolBlocks[0]?.type === "tools") assert.deepEqual(toolBlocks[0].tools.map((tool) => tool.kind), ["todo"]);
   if (toolBlocks[1]?.type === "tools") assert.deepEqual(toolBlocks[1].tools.map((tool) => tool.kind), ["edit", "shell"]);
 });
+
+
+test("memory acknowledgements fall back to submitted content, including MCP wrappers", () => {
+  for (const result of [{ success: true, id: "1" }, { content: [{ type: "text", text: "Saved memory" }] }]) {
+    const card = memoryCardFromPayload("call_mcp_tool", {
+      tool_name: "add_memory", arguments: { content: "Use English UI labels\nKeep the exact wording." },
+    }, result);
+    assert.equal(card.title, "Saved memory");
+    assert.equal(card.body, "Use English UI labels\nKeep the exact wording.");
+  }
+});
+
+test("memory cards prefer stored structured content over submitted content", () => {
+  const card = memoryCardFromPayload("edit_memory", { content: "submitted" }, {
+    content: [{ type: "text", text: "Memory updated" }],
+    structuredContent: { memory: { content: "actually stored" } },
+  });
+  assert.deepEqual(card, { title: "Updated memory", body: "actually stored" });
+});
+
+test("memory cards unwrap JSON MCP results and preserve complete long content", () => {
+  const content = "A durable fact. ".repeat(100);
+  assert.equal(memoryCardFromPayload("add_memory", {}, {
+    content: [{ type: "text", text: JSON.stringify({ memory: { content } }) }],
+  }).body, content.trim());
+});
+
+test("memory cards do not show submitted content as a successful failed save", () => {
+  assert.deepEqual(memoryCardFromPayload("add_memory", { content: "not saved" }, { error: "Storage unavailable" }),
+    { title: "Memory failed", body: "Storage unavailable" });
+});
+
+test("memory list and deletion acknowledgements have accurate empty fallbacks", () => {
+  assert.equal(memoryCardFromPayload("list_memories", { content: "irrelevant input" }, { memories: [] }).body, "No memories");
+  assert.equal(memoryCardFromPayload("delete_memory", { id: "1" }, { success: true }).body, "Memory deleted");
+  assert.equal(memoryCardFromPayload("edit_memory", { id: "1", tags: ["updated"] }, { success: true }).body, "Memory content unavailable");
+});
