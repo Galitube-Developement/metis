@@ -1,3 +1,4 @@
+import { getCompletedUpload } from "@/lib/file-upload-store";
 import { randomUUID } from "node:crypto";
 import { getDatabase, isSqliteForeignKeyError, parseData, transaction, withSqliteRetry } from "@/lib/sqlite";
 import type {
@@ -100,6 +101,7 @@ export type NoteWriteInput = {
   content?: string;
   color?: string;
   kind?: NoteKind;
+  uploadId?: string;
   todos?: NoteTodo[];
   position?: { x?: number; y?: number };
   size?: { width?: number; height?: number };
@@ -224,6 +226,8 @@ export function createNote(input: NoteWriteInput & { ownerId?: string; idempoten
     const existing = getIdempotentResponse<SharedNote>("note:create", input.idempotencyKey, input.ownerId, input.chatId);
     if (existing) return existing;
   }
+  const asset = input.uploadId && input.ownerId ? getCompletedUpload(input.ownerId, input.uploadId) : undefined;
+  if ((input.kind === "image" || input.kind === "file") && !asset) throw new Error("A completed upload is required");
   const timestamp = iso();
   const note: SharedNote = {
     id: randomUUID(),
@@ -233,7 +237,7 @@ export function createNote(input: NoteWriteInput & { ownerId?: string; idempoten
     scope: input.scope || (input.workspaceId ? "workspace" : input.chatId ? "chat" : "global"),
     title: boundedText(input.title, 200) || (input.kind === "project" ? "Untitled project" : "Untitled note"),
     content: boundedText(input.content, 50_000),
-    ...(input.kind === "project"
+    ...(asset ? { asset, kind: asset.kind } : input.kind === "project"
       ? { kind: "project" as const }
       : input.kind === "learned_fact"
         ? { kind: "learned_fact" as const }
@@ -285,7 +289,7 @@ export function updateNote(
       ...current,
       ...(input.title !== undefined ? { title: boundedText(input.title, 200) || current.title } : {}),
       ...(input.content !== undefined ? { content: boundedText(input.content, 50_000) } : {}),
-      ...(input.kind === "project" || input.kind === "note" ? { kind: input.kind } : {}),
+      ...(!current.asset && (input.kind === "project" || input.kind === "note") ? { kind: input.kind } : {}),
     ...(input.projectId === null ? { projectId: undefined } : input.projectId ? { projectId: input.projectId } : {}),
       ...(input.todos !== undefined ? { todos: normalizeNoteTodos(input.todos) } : {}),
       ...(input.color !== undefined && /^#[0-9a-f]{6}$/i.test(input.color) ? { color: input.color } : {}),

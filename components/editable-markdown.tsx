@@ -7,10 +7,11 @@ import { syntaxTree } from "@codemirror/language";
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { Eye, Loader2, Paperclip, Pencil } from "lucide-react";
-import { noteAttachmentMarkdown, type NoteAttachmentLink } from "@/lib/note-scratchpad";
+import { noteAttachmentMarkdown } from "@/lib/note-scratchpad";
 import { Markdown } from "@/components/markdown";
 import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
+import { startUpload, waitForUpload } from "@/lib/background-uploads";
 import { registerFileDrop } from "@/lib/file-drop";
 
 type EditableMarkdownProps = {
@@ -22,6 +23,7 @@ type EditableMarkdownProps = {
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
   interactiveTasks?: boolean;
   noteId?: string;
+  onFiles?: (files: File[]) => void;
 };
 
 function markdownDecorations(view: EditorView): DecorationSet {
@@ -76,6 +78,7 @@ export function EditableMarkdown({
   onPointerDown,
   interactiveTasks = false,
   noteId,
+  onFiles,
 }: EditableMarkdownProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const editorHostRef = useRef<HTMLDivElement>(null);
@@ -95,7 +98,9 @@ export function EditableMarkdown({
   const [fileDrag, setFileDrag] = useState(false);
 
   const uploadFiles = async (files: File[]) => {
-    if (!noteId || !files.length) return;
+    if (!files.length) return;
+    if (onFiles) { onFiles(files); return; }
+    if (!noteId) return;
     if (uploadingRef.current) {
       setUploadError("Wait for the current upload, then add these files again.");
       return;
@@ -107,19 +112,32 @@ export function EditableMarkdown({
     const view = viewRef.current;
     uploadPositionRef.current = preview ? view?.state.doc.length ?? draftRef.current.length : view?.state.selection.main.head ?? 0;
     try {
-      const form = new FormData();
-      for (const file of files) form.append("files", file);
-      const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}/attachments`, { method: "POST", body: form });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not upload files.");
-      const markdown = noteAttachmentMarkdown(body.attachments as NoteAttachmentLink[]);
-      const current = viewRef.current;
-      if (!current) return;
-      // Keep all current text, including edits made during upload.
-      const position = uploadPositionRef.current ?? current.state.doc.length;
-      uploadPositionRef.current = null;
-      const insert = "\n\n" + markdown + "\n\n";
-      current.dispatch({ changes: { from: position, insert }, selection: { anchor: position + insert.length } });
+      const taskIds = files.slice(0, 10).map((file) => startUpload(file, {
+        label: "Note attachment",
+        onComplete: async (asset) => {
+          const markdown = noteAttachmentMarkdown([{ ...asset, url: `/api/file-uploads/${asset.id}/file` }]);
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, { cache: "no-store" });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "Could not load note.");
+            const current = viewRef.current;
+            const mounted = Boolean(current?.dom.isConnected);
+            const base = mounted ? current!.state.doc.toString() : body.note.content;
+            const insert = "\n\n" + markdown + "\n\n";
+            const saved = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+              method: "PATCH", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: base + insert, version: body.note.version }),
+            });
+            if (saved.status === 409) continue;
+            if (!saved.ok) throw new Error((await saved.json()).error || "Could not save attachment.");
+            if (mounted && current?.dom.isConnected) current.dispatch({ changes: { from: current.state.doc.length, insert } });
+            window.dispatchEvent(new Event("metis:notes-changed"));
+            return;
+          }
+          throw new Error("Note changed during upload. Retry to attach the file.");
+        },
+      }));
+      await Promise.all(taskIds.map(waitForUpload));
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Could not upload files.");
     } finally {
@@ -299,7 +317,7 @@ export function EditableMarkdown({
             data-editor-control
             className="absolute bottom-2 right-2 z-10 rounded-md bg-background/90 p-1.5 text-foreground shadow-sm hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
             aria-label={uploading ? "Uploading files" : "Attach images or files"}
-            title="Attach images or files · up to 10 files, 50 MB each"
+            title="Attach images or files · up to 10 files, 1 GB each"
             disabled={uploading}
             onClick={() => fileInputRef.current?.click()}
           >

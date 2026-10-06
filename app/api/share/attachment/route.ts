@@ -1,5 +1,7 @@
+import { createReadStream, statSync } from "node:fs";
+import { Readable } from "node:stream";
 import { getChatByShareId } from "@/lib/db-store";
-import { readUpload } from "@/lib/uploads";
+import { resolveUploadPath } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +20,14 @@ async function attachmentResponse(req: Request, body?: { id?: string; name?: str
     .flatMap((message) => message.attachments || [])
     .find((item) => item.storedName === name);
   if (!attachment?.storedName) return Response.json({ error: "Attachment not found" }, { status: 404 });
-  const file = readUpload(result.chat.id, attachment.storedName, result.ownerId);
+  const file = resolveUploadPath(result.chat.id, attachment.storedName, result.ownerId);
   if (!file) return Response.json({ error: "Attachment not found" }, { status: 404 });
-  return new Response(new Uint8Array(file), {
+  return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, {
     headers: {
-      "Content-Type": attachment.mimeType || "application/octet-stream",
-      "Content-Length": String(file.length),
-      "Content-Disposition": `inline; filename="${encodeURIComponent(attachment.name)}"`,
+      "Content-Type": attachment.kind === "image" ? attachment.mimeType : "application/octet-stream",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Length": String(statSync(file).size),
+      "Content-Disposition": `${attachment.kind === "image" ? "inline" : "attachment"}; filename="${encodeURIComponent(attachment.name)}"`,
       "Cache-Control": "private, max-age=3600",
     },
   });

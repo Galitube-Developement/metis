@@ -11,7 +11,7 @@ type FileDropOptions = {
   accepts?: (event: DragEvent) => boolean;
   containsTarget: (target: EventTarget | null) => boolean;
   onActive: (active: boolean) => void;
-  onFiles: (files: FileList) => void;
+  onFiles: (files: FileList, event: DragEvent) => void;
   resetTarget?: EventTarget;
 };
 
@@ -39,7 +39,7 @@ export function registerFileDrop(host: EventTarget, options: FileDropOptions) {
     reset();
     if (!accepts(event)) return;
     accept(event);
-    if (event.dataTransfer?.files.length) options.onFiles(event.dataTransfer.files);
+    if (event.dataTransfer?.files.length) options.onFiles(event.dataTransfer.files, event);
   };
   const key = (event: Event) => {
     if ((event as KeyboardEvent).key === "Escape") reset();
