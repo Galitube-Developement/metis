@@ -751,6 +751,7 @@ export function NotesVoid({
           <article
             key={note.id}
             data-note-card
+            data-note-drop-target={note.id}
             className={cn(
               "sticky-note pointer-events-auto absolute flex cursor-move flex-col overflow-hidden rounded-md border border-black/10 shadow-md transition-shadow",
               note.id === frontNoteId && "ring-4 ring-primary ring-offset-2 ring-offset-background",

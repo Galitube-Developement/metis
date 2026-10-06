@@ -11,6 +11,7 @@ import { noteAttachmentMarkdown, type NoteAttachmentLink } from "@/lib/note-scra
 import { Markdown } from "@/components/markdown";
 import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
+import { registerFileDrop } from "@/lib/file-drop";
 
 type EditableMarkdownProps = {
   value: string;
@@ -127,7 +128,21 @@ export function EditableMarkdown({
       setUploading(false);
     }
   };
+  const uploadFilesRef = useRef(uploadFiles);
+  uploadFilesRef.current = uploadFiles;
   onChangeRef.current = onChange;
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !noteId) return;
+    const card = root.closest("[data-note-drop-target]")?.closest(".sticky-note") || root;
+    return registerFileDrop(card, {
+      containsTarget: (target) => target instanceof Node && card.contains(target),
+      onActive: setFileDrag,
+      onFiles: (files) => { void uploadFilesRef.current(Array.from(files)); },
+      resetTarget: window,
+    });
+  }, [noteId]);
 
   useEffect(() => {
     const host = editorHostRef.current;
@@ -221,6 +236,7 @@ export function EditableMarkdown({
   return (
     <div
       ref={rootRef}
+      data-note-drop-target={noteId || undefined}
       className={cn("editable-markdown group relative min-h-0 w-full flex-1 overflow-hidden rounded-md", className)}
       onPointerDown={onPointerDown}
       tabIndex={noteId ? 0 : undefined}
@@ -236,23 +252,6 @@ export function EditableMarkdown({
           event.stopPropagation();
           commit(draftRef.current + (draftRef.current ? "\n\n" : "") + event.clipboardData.getData("text/plain"));
         }
-      }}
-      onDragOverCapture={(event) => {
-        if (!noteId || !event.dataTransfer.types.includes("Files")) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.dataTransfer.dropEffect = "copy";
-        setFileDrag(true);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFileDrag(false);
-      }}
-      onDropCapture={(event) => {
-        if (!noteId || !event.dataTransfer.types.includes("Files")) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setFileDrag(false);
-        void uploadFiles(Array.from(event.dataTransfer.files));
       }}
       onChangeCapture={(event) => {
         if (!interactiveTasks) return;
