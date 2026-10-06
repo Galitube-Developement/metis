@@ -149,11 +149,10 @@ export function NotesVoid({
   }, [chatId, mergeLoadedNotes, pinnedOnly]);
 
   useEffect(() => {
-    const timers = saveTimers.current;
     void load();
     return () => {
       loadAbortRef.current?.abort();
-      for (const timer of timers.values()) window.clearTimeout(timer);
+      // Already queued saves keep running when the user switches views.
     };
   }, [load]);
 
@@ -293,6 +292,7 @@ export function NotesVoid({
  setNotes(notesRef.current);
  setStatus("saved");
  setError("");
+ window.dispatchEvent(new Event("metis:notes-changed"));
  return;
  }
  } catch (cause) {
@@ -969,6 +969,7 @@ export function NotesVoid({
                   </div>
                 ) : null}
               </div>
+              <Button type="button" size="icon-xs" variant="ghost" className="size-6 text-black/70 hover:bg-black/10" aria-label="Attach images or files" title="Attach images or files" onPointerDown={e=>e.stopPropagation()} onClick={()=>mediaInputRef.current?.click()}><Paperclip className="size-3" /></Button>
               <Button
                 type="button"
                 size="icon-xs"
@@ -1044,7 +1045,7 @@ export function NotesVoid({
                 <Trash2 className="size-3" />
               </Button> : null}
             </div>
-            {note.asset ? <NoteMedia note={note} /> : <div className="flex min-h-0 flex-1 flex-col">
+            {note.asset ? <NoteMedia note={note} onChange={content => scheduleUpdate(note, {content})} onRemove={() => { void remove(note); }} /> : <div className="flex min-h-0 flex-1 flex-col">
             <div
               className="shrink-0 space-y-1 px-2 pt-1.5"
               onPointerDown={(event) => event.stopPropagation()}
@@ -1091,6 +1092,7 @@ export function NotesVoid({
             </div>
             <EditableMarkdown
               noteId={note.id}
+              hideAttachmentButton
               onFiles={addMedia}
               value={note.content}
               onChange={(value) => scheduleUpdate(note, { content: value })}

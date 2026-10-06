@@ -7,7 +7,7 @@ import { syntaxTree } from "@codemirror/language";
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { Eye, Loader2, Paperclip, Pencil } from "lucide-react";
-import { noteAttachmentMarkdown } from "@/lib/note-scratchpad";
+import { fileEmbedMarkdown, embedFileLinks } from "@/lib/file-types";
 import { Markdown } from "@/components/markdown";
 import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,8 @@ type EditableMarkdownProps = {
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
   interactiveTasks?: boolean;
   noteId?: string;
+  workspace?: {chatId:string;id:string};
+  hideAttachmentButton?: boolean;
   onFiles?: (files: File[]) => void;
 };
 
@@ -79,6 +81,8 @@ export function EditableMarkdown({
   interactiveTasks = false,
   noteId,
   onFiles,
+  workspace,
+  hideAttachmentButton = false,
 }: EditableMarkdownProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const editorHostRef = useRef<HTMLDivElement>(null);
@@ -100,7 +104,7 @@ export function EditableMarkdown({
   const uploadFiles = async (files: File[]) => {
     if (!files.length) return;
     if (onFiles) { onFiles(files); return; }
-    if (!noteId) return;
+    if (!noteId && !workspace) return;
     if (uploadingRef.current) {
       setUploadError("Wait for the current upload, then add these files again.");
       return;
@@ -113,23 +117,27 @@ export function EditableMarkdown({
     uploadPositionRef.current = preview ? view?.state.doc.length ?? draftRef.current.length : view?.state.selection.main.head ?? 0;
     try {
       const taskIds = files.slice(0, 10).map((file) => startUpload(file, {
-        label: "Note attachment",
+        label: workspace ? "Workspace attachment" : "Note attachment",
         onComplete: async (asset) => {
-          const markdown = noteAttachmentMarkdown([{ ...asset, url: `/api/file-uploads/${asset.id}/file` }]);
+          const markdown = fileEmbedMarkdown({ ...asset, url: `/api/file-uploads/${asset.id}/file` });
           for (let attempt = 0; attempt < 3; attempt++) {
-            const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, { cache: "no-store" });
+            const response = await fetch(workspace ? `/api/workspaces?chatId=${encodeURIComponent(workspace.chatId)}&id=${encodeURIComponent(workspace.id)}` : `/api/notes/${encodeURIComponent(noteId!)}`, { cache: "no-store" });
             const body = await response.json();
             if (!response.ok) throw new Error(body.error || "Could not load note.");
+            const record = workspace ? body.workspace : body.note;
             const current = viewRef.current;
             const mounted = Boolean(current?.dom.isConnected);
-            const base = mounted ? current!.state.doc.toString() : body.note.content;
+            const base = mounted ? current!.state.doc.toString() : record.content;
             const insert = "\n\n" + markdown + "\n\n";
-            const saved = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+            if ((base + insert).length > (workspace ? 100_000 : 50_000)) throw new Error("Document is full. Remove some content before retrying.");
+            const saved = await fetch(workspace ? "/api/workspaces" : `/api/notes/${encodeURIComponent(noteId!)}`, {
               method: "PATCH", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: base + insert, version: body.note.version }),
+              body: JSON.stringify({ content: base + insert, version: record.version, ...(workspace ? {chatId:workspace.chatId,id:workspace.id}: {}) }),
             });
             if (saved.status === 409) continue;
             if (!saved.ok) throw new Error((await saved.json()).error || "Could not save attachment.");
+            const result = await saved.json();
+            if(workspace)window.dispatchEvent(new CustomEvent("metis:workspace-upload-complete",{detail:{chatId:workspace.chatId,workspace:result.workspace}}));
             if (mounted && current?.dom.isConnected) current.dispatch({ changes: { from: current.state.doc.length, insert } });
             window.dispatchEvent(new Event("metis:notes-changed"));
             return;
@@ -152,7 +160,7 @@ export function EditableMarkdown({
 
   useEffect(() => {
     const root = rootRef.current;
-    if (!root || !noteId) return;
+    if (!root || (!noteId && !workspace)) return;
     const card = root.closest("[data-note-drop-target]")?.closest(".sticky-note") || root;
     return registerFileDrop(card, {
       containsTarget: (target) => target instanceof Node && card.contains(target),
@@ -160,7 +168,7 @@ export function EditableMarkdown({
       onFiles: (files) => { void uploadFilesRef.current(Array.from(files)); },
       resetTarget: window,
     });
-  }, [noteId]);
+  }, [noteId, workspace?.id, workspace?.chatId]);
 
   useEffect(() => {
     const host = editorHostRef.current;
@@ -238,28 +246,30 @@ export function EditableMarkdown({
     const onEmbedChange = (event: Event) => {
       const detail = (event as CustomEvent<{ kind?: string; source?: string }>).detail;
       const kind = detail?.kind;
-      if (kind !== "chart" && kind !== "graph" && kind !== "mermaid") return;
+      if (kind !== "chart" && kind !== "graph" && kind !== "mermaid" && kind !== "file") return;
       if (typeof detail.source !== "string") return;
       const boards = Array.from(root.querySelectorAll<HTMLElement>(
         '[data-markdown-preview] [data-editor-control="' + kind + '"]',
       ));
       const index = boards.indexOf(event.target as HTMLElement);
       if (index < 0) return;
-      commit(replaceEmbeddedSource(draftRef.current, kind, index, detail.source));
+      const next = replaceEmbeddedSource(embedFileLinks(draftRef.current), kind, index, detail.source);
+      if(next.length > (noteId ? 50_000 : 100_000)) { setUploadError("Document is full. Remove some content before saving this embedding."); return; }
+      commit(next);
     };
     root.addEventListener("metis:markdown-embed-change", onEmbedChange);
     return () => root.removeEventListener("metis:markdown-embed-change", onEmbedChange);
-  }, [commit]);
+  }, [commit, noteId]);
 
   return (
     <div
       ref={rootRef}
-      data-note-drop-target={noteId || undefined}
+      data-note-drop-target={noteId || workspace?.id || undefined}
       className={cn("editable-markdown group relative min-h-0 w-full flex-1 overflow-hidden rounded-md", className)}
       onPointerDown={onPointerDown}
-      tabIndex={noteId ? 0 : undefined}
+      tabIndex={noteId || workspace ? 0 : undefined}
       onPasteCapture={(event) => {
-        if (!noteId) return;
+        if (!noteId && !workspace) return;
         const files = Array.from(event.clipboardData.files);
         if (files.length) {
           event.preventDefault();
@@ -300,7 +310,7 @@ export function EditableMarkdown({
       >
         {preview ? <Pencil className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
       </button>
-      {noteId && (
+      {(noteId || workspace) && (
         <>
           <input
             ref={fileInputRef}
@@ -312,17 +322,17 @@ export function EditableMarkdown({
               event.currentTarget.value = "";
             }}
           />
-          <button
+          {!hideAttachmentButton && <button
             type="button"
             data-editor-control
-            className="absolute bottom-2 right-2 z-10 rounded-md bg-background/90 p-1.5 text-foreground shadow-sm hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
+            className="absolute top-2 right-10 z-10 rounded-md bg-background/90 p-1.5 text-foreground shadow-sm hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
             aria-label={uploading ? "Uploading files" : "Attach images or files"}
             title="Attach images or files · up to 10 files, 1 GB each"
             disabled={uploading}
             onClick={() => fileInputRef.current?.click()}
           >
             {uploading ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
-          </button>
+          </button>}
           {uploading && <div role="status" className="absolute bottom-2 left-2 rounded bg-background px-2 py-1 text-xs text-foreground">Uploading…</div>}
           {uploadError && <div role="alert" className="absolute inset-x-2 bottom-10 z-20 rounded bg-background p-2 text-xs text-destructive">{uploadError}</div>}
           {fileDrag && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-current bg-background/90 p-3 text-sm text-foreground">Drop images or files here</div>}
@@ -335,7 +345,7 @@ export function EditableMarkdown({
           aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
           className="editable-markdown-preview"
         >
-          {previewDraft ? <Markdown content={previewDraft} interactiveTasks={interactiveTasks} /> : (
+          {previewDraft ? <Markdown content={embedFileLinks(previewDraft)} interactiveTasks={interactiveTasks} editableFiles /> : (
             <span className="text-muted-foreground/70">{placeholder || "Nothing to preview yet."}</span>
           )}
         </div>

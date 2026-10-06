@@ -2,6 +2,8 @@
 
 import {
   memo,
+  Children,
+  isValidElement,
   useEffect,
   useRef,
   useState,
@@ -16,6 +18,8 @@ import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
+import { FileEmbed } from "@/components/file-embed";
+import { parseFileEmbed, isFileUrl, mimeTypeFromFileName } from "@/lib/file-types";
 import { normalizeMath, splitStreamingMath } from "@/lib/math";
 import { LinkPreview } from "@/components/link-preview";
 import { ThinkingBlock } from "@/components/thinking-block";
@@ -209,10 +213,12 @@ function CodeBlock({
   className,
   children,
   inline,
+  editableFiles,
   ...props
-}: HTMLAttributes<HTMLElement> & { inline?: boolean }) {
+}: HTMLAttributes<HTMLElement> & { inline?: boolean; editableFiles?: boolean }) {
   const code = String(children).replace(/\n$/, "");
   const isInline = inline ?? (!className && !code.includes("\n"));
+  const fileRoot = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   if (isInline) {
     return (
@@ -222,6 +228,12 @@ function CodeBlock({
     );
   }
   const declaredLanguage = className?.match(/language-([\w-]+)/)?.[1];
+  const file = declaredLanguage === "file" ? parseFileEmbed(code) : null;
+  if (file) return <div ref={fileRoot} data-editor-control="file" onPointerDown={e=>e.stopPropagation()}>
+    <FileEmbed file={file} className="my-2 min-h-40 rounded border border-border/40"
+      onChange={editableFiles ? next => { fileRoot.current?.dispatchEvent(new CustomEvent("metis:markdown-embed-change", {bubbles:true,detail:{kind:"file",source:JSON.stringify(next)}})); } : undefined}
+      onRemove={editableFiles ? () => { fileRoot.current?.dispatchEvent(new CustomEvent("metis:markdown-embed-change",{bubbles:true,detail:{kind:"file",source:""}})); } : undefined}/>
+  </div>;
   if (isChartSource(declaredLanguage, code)) {
     return <ChartBoard code={code} language={declaredLanguage} />;
   }
@@ -298,11 +310,13 @@ export const Markdown = memo(function Markdown({
   streaming = false,
   interactiveTasks = false,
   thinkingDurationMs,
+  editableFiles = false,
 }: {
   content: string;
   streaming?: boolean;
   interactiveTasks?: boolean;
   thinkingDurationMs?: number;
+  editableFiles?: boolean;
 }) {
   const thinkingSegments = splitThinkingBlocks(content);
   if (thinkingSegments.some((segment) => segment.kind === "thinking")) {
@@ -322,6 +336,7 @@ export const Markdown = memo(function Markdown({
               content={segment.text}
               streaming={streaming}
               interactiveTasks={interactiveTasks}
+              editableFiles={editableFiles}
               thinkingDurationMs={thinkingDurationMs}
             />
           ) : null,
@@ -333,7 +348,10 @@ export const Markdown = memo(function Markdown({
   const markdownComponentsWithCode = {
     ...markdownComponents,
     pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
-    code: CodeBlock,
+    code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
+    a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => props.href && isFileUrl(props.href) ? <FileEmbed file={{url:props.href,name:String(props.children || "File"),mimeType:mimeTypeFromFileName(String(props.children || "File"))}} className="my-2 max-h-96"/> : <MarkdownLink {...props}/>,
+    img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,
+    p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.href || child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
     input: (props: InputHTMLAttributes<HTMLInputElement>) => (
       <TaskCheckbox {...props} interactive={interactiveTasks} />
     ),

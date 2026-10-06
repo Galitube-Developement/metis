@@ -49,3 +49,9 @@ export async function readNoteFile(noteId: string, id: string, ownerId?: string)
     return null;
   }
 }
+
+export async function resolveNoteFile(noteId:string,id:string,ownerId?:string) {
+  if(!/^[a-f0-9-]{36}$/.test(id))return null;
+  const dir=attachmentDir(noteId,ownerId);
+  try { const meta=JSON.parse(await readFile(path.join(dir,id+".json"),"utf8")); return {meta,path:path.join(dir,id)}; } catch {return null;}
+}

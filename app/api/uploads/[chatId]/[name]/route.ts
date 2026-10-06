@@ -1,5 +1,4 @@
-import { createReadStream, statSync } from "node:fs";
-import { Readable } from "node:stream";
+import { fileResponse } from "@/lib/file-response";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getChat } from "@/lib/db-store";
 import { resolveUploadPath } from "@/lib/uploads";
@@ -31,14 +30,5 @@ export async function GET(req: Request, { params }: Params) {
     return Response.json({ error: "File not found" }, { status: 404 });
   }
 
-  const mime = meta?.mimeType || "application/octet-stream";
-  return new Response(Readable.toWeb(createReadStream(full)) as ReadableStream, {
-    headers: {
-      "Content-Type": meta.kind === "image" ? mime : "application/octet-stream",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Length": String(statSync(full).size),
-      "Cache-Control": "private, max-age=3600",
-      "Content-Disposition": `${meta.kind === "image" ? "inline" : "attachment"}; filename="${encodeURIComponent(meta?.name || storedName)}"`,
-    },
-  });
+  return fileResponse(full, meta, req);
 }

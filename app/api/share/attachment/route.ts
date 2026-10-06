@@ -1,5 +1,6 @@
-import { createReadStream, statSync } from "node:fs";
-import { Readable } from "node:stream";
+import { officePreviewResponse } from "@/lib/office-preview";
+import { effectiveFileMime } from "@/lib/file-types";
+import { fileResponse } from "@/lib/file-response";
 import { getChatByShareId } from "@/lib/db-store";
 import { resolveUploadPath } from "@/lib/uploads";
 
@@ -22,15 +23,8 @@ async function attachmentResponse(req: Request, body?: { id?: string; name?: str
   if (!attachment?.storedName) return Response.json({ error: "Attachment not found" }, { status: 404 });
   const file = resolveUploadPath(result.chat.id, attachment.storedName, result.ownerId);
   if (!file) return Response.json({ error: "Attachment not found" }, { status: 404 });
-  return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, {
-    headers: {
-      "Content-Type": attachment.kind === "image" ? attachment.mimeType : "application/octet-stream",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Length": String(statSync(file).size),
-      "Content-Disposition": `${attachment.kind === "image" ? "inline" : "attachment"}; filename="${encodeURIComponent(attachment.name)}"`,
-      "Cache-Control": "private, max-age=3600",
-    },
-  });
+  if(url.searchParams.get("preview") === "1")return officePreviewResponse(file,effectiveFileMime(attachment.mimeType,attachment.name));
+  return fileResponse(file, attachment, req);
 }
 
 export async function GET(req: Request) {
