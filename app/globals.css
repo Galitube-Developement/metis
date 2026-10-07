@@ -1974,3 +1974,22 @@
 .chat-file-drop-detail { margin-top: 1rem; font-size: 0.8125rem; color: var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { .chat-file-drop-overlay, .chat-file-drop-message { transition: none; transform: none; } }
 @media (prefers-reduced-transparency: reduce) { .chat-file-drop-overlay { background: var(--background); backdrop-filter: none; } }
+
+/* Only the selected agent and working teammates glance and blink. */
+.team-agent-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.team-agent-eyes-active {
+  animation: team-agent-glance 7s ease-in-out infinite;
+}
+@keyframes team-agent-glance {
+  0%, 6%, 44%, 100% { transform: translate(0, 0) scaleY(1); }
+  12%, 20% { transform: translate(3.5px, -1.5px) scaleY(1); }
+  28%, 36% { transform: translate(-3px, 1px) scaleY(1); }
+  48%, 52% { transform: translate(0, 0) scaleY(1); }
+  50% { transform: translate(0, 0) scaleY(0.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .team-agent-eyes-active { animation: none; transform: none; }
+}

@@ -1,3 +1,6 @@
+import { withChatProgramEvents } from "@/lib/chat-program-events-server";
+import { archiveProjectAgent, getProjectAgentForChat } from "@/lib/project-team";
+import { getProject } from "@/lib/projects";
 import { getAuthenticatedUser } from "@/lib/auth";
 import {
   deleteChat,
@@ -35,7 +38,7 @@ export async function GET(req: Request, { params }: Params) {
     : 0;
   const page = getChatPage(id, ownerId, messageLimit, messageOffset);
   if (!page) return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json(page);
+  return Response.json({ ...page, chat: { ...page.chat, messages: withChatProgramEvents(page.chat.messages, id, ownerId) } });
 }
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -92,6 +95,9 @@ export async function PATCH(req: Request, { params }: Params) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const teamAgent = getProjectAgentForChat(id, ownerId);
+  if (teamAgent && body.projectId !== undefined && body.projectId !== teamAgent.projectId) return Response.json({ error: "Agent chats remain in their project." }, { status: 400 });
+  if (!teamAgent && body.projectId && getProject(body.projectId, ownerId)?.mode === "agents") return Response.json({ error: "Create an agent to join an agent-oriented project." }, { status: 400 });
   const requestedModelId =
     typeof body.modelId === "string" ? body.modelId.trim() : "";
   if (requestedModelId && !isModelAllowed(ownerId, requestedModelId)) {
@@ -166,6 +172,8 @@ export async function DELETE(req: Request, { params }: Params) {
   }
   const { id } = await params;
   const ownerId = user.id;
+  const teamAgent = getProjectAgentForChat(id, ownerId);
+  if (teamAgent) { archiveProjectAgent(teamAgent.projectId, teamAgent.id, ownerId); return Response.json({ ok: true, archived: true }); }
   if (!deleteChat(id, ownerId)) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
