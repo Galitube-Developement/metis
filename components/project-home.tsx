@@ -6,6 +6,7 @@ import { ProjectAvatar, ProjectIconGlyph } from "@/components/project-avatar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ProjectMemoryManager, type ProjectMemoryItem } from "@/components/project-memory-manager";
 import { ProjectSkillsManager, type ProjectSkillItem } from "@/components/project-skills-manager";
+import { ProjectAgentsPanel } from "@/components/project-agents-panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,6 +24,7 @@ type ProjectHomeData = {
  project: {
   id: string;
   name: string;
+  mode?: "chat" | "agents";
   icon: string;
   color: string;
   instructions: string;
@@ -338,13 +340,13 @@ export function ProjectHome({
       }}
      />
      <p className="mt-1 text-xs text-muted-foreground">
-      {data.chats.length} chats · {data.files.length} files · {data.notes.length} notes
+      {data.project.mode === "agents" ? "Agent-oriented project" : `${data.chats.length} chats`} · {data.files.length} files · {data.notes.length} notes
      </p>
     </div>
     <div className="col-span-2 grid grid-cols-2 gap-2 sm:col-span-1 sm:flex sm:shrink-0">
-     <Button type="button" className="min-w-0" onClick={() => onNewChat(projectId)}>
+     <Button type="button" className="min-w-0" onClick={() => data.project.mode === "agents" ? window.dispatchEvent(new CustomEvent("metis:new-project-agent", { detail: { projectId } })) : onNewChat(projectId)}>
       <Plus className="size-4" />
-      New chat
+      {data.project.mode === "agents" ? "New agent" : "New chat"}
      </Button>
      <Button type="button" variant="destructive" className="min-w-0" onClick={() => setDeleteOpen(true)}>
       <Trash2 className="size-4" />
@@ -354,6 +356,8 @@ export function ProjectHome({
    </header>
 
    {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+   {data.project.mode === "agents" ? <ProjectAgentsPanel projectId={projectId} onOpenChat={onOpenChat} /> : null}
 
    <section className="grid gap-3">
     <div className="flex items-center justify-between">

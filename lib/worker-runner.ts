@@ -10,6 +10,7 @@ import {
   type ToolPart,
   type WorkspaceItem,
 } from "@/lib/db-store";
+import { getProjectAgentForChat, projectTeamContextBlock } from "@/lib/project-team";
 import { getProject, projectContextBlock } from "@/lib/projects";
 import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
 import { autoSkillActivationPrompt } from "@/lib/skill-routing";
@@ -566,6 +567,9 @@ export async function runQueuedJob(job: AgentJob) {
     markJobError(job, "Chat not found or access denied.");
     return;
   }
+  const teamAgent = getProjectAgentForChat(chat.id, job.userId);
+  if (teamAgent?.archivedAt) { markJobError(job, "This project agent is archived."); return; }
+  if (job.projectWaitingForHandoffId) updateJob(job.id, { projectWaitingForHandoffId: null });
   // Knowledge capture is infrastructure, not a model behavior. Ordinary
   // requests never create global memories; only chat-scoped task facts and
   // search keywords are captured. Internal child, automation and resume prompts
@@ -994,6 +998,7 @@ export async function runQueuedJob(job: AgentJob) {
     let prompt = [
     metisAgentIdentity(),
     project ? projectContextBlock(project, job.userId) : "",
+    projectTeamContextBlock(chat.id, job.userId),
     skillsCatalogPrompt(skillSettings),
     alwaysOnSkillsPrompt(skillSettings),
     autoSkillActivationPrompt(job.message, skillSettings, {

@@ -105,11 +105,16 @@ import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/li
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
+import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
+import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
 import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
+import { ProjectAgentActions, ProjectAgentChatHeader, useProjectChatAgents } from "@/components/project-agents-panel";
+import type { ProjectAgent } from "@/lib/project-team-types";
+import { TeamAgentAvatar } from "@/components/team-agent-avatar";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { VoiceInput } from "@/components/voice-input";
@@ -431,6 +436,7 @@ type MsgAttachment = {
 };
 
 type Msg = {
+  programEvent?: ChatProgramEvent;
   id: string;
   role: Role;
   content: string;
@@ -647,6 +653,7 @@ type ChatIndexEntry = {
 
 type Chat = ChatIndexEntry & {
   messages: Array<{
+    programEvent?: ChatProgramEvent;
     id: string;
     role: Role;
     content: string;
@@ -1553,6 +1560,7 @@ function mapApiMessages(
     const base = {
       id: m.id,
       role: m.role,
+      programEvent: m.programEvent,
       content: legacyError ? "" : m.content,
       errorMessage: m.errorMessage || legacyError || undefined,
       referenceText: m.referenceText,
@@ -1683,6 +1691,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [chatsLoaded, setChatsLoaded] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const projectedTranscript = useMemo(() => projectChatTranscript(messages), [messages]);
   const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set());
   const [fullyExpandedUserMessages, setFullyExpandedUserMessages] = useState<Set<string>>(new Set());
   const [replyModifierHeld, setReplyModifierHeld] = useState(false);
@@ -1776,8 +1785,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [focusedAutomationId, setFocusedAutomationId] = useState<string | null>(null);
   const [projectHomeId, setProjectHomeId] = useState<string | null>(null);
   const [draftProjectId, setDraftProjectId] = useState<string | null>(null);
+  const [sidebarAllProjects, setSidebarAllProjects] = useState(true);
   const draftProjectIdRef = useRef<string | null>(null);
   const [sidebarProjects, setSidebarProjects] = useState<Array<{
+    mode?: "chat" | "agents";
     id: string;
     name: string;
     icon?: string;
@@ -1785,6 +1796,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     logoStoredName?: string;
     updatedAt?: string;
   }>>([]);
+  const projectChatAgents = useProjectChatAgents(sidebarProjects.filter(project => project.mode === "agents").map(project => project.id));
   const removedQueueIdsRef = useRef(new Map<string, Set<string>>());
   function removedIdsFor(chatId: string) {
     let ids = removedQueueIdsRef.current.get(chatId);
@@ -4847,6 +4859,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         activeChatIdRef.current = null;
         setProjectHomeId(null);
     } else if (routeProjectId) {
+      setSidebarAllProjects(false);
       setAutomationsOpen(false);
       setNotesOpen(false);
       setWorkspaceOpen(false);
@@ -4889,7 +4902,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         if (!res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
-        if (!acceptServerSnapshot(chatId, data.chat.updatedAt, true)) return;
+        const activityChanged = chatProgramEventsChanged(stateRef.current.messages, data.chat.messages);
+        if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)) return;
         const liveRun = runtimeRef.current.has(chatId);
         if (data.chat.modelId && !liveRun) {
           setModelId(data.chat.modelId);
@@ -5027,9 +5041,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (chat) => chat.id === activeChatId &&
         (chat.runStatus === "running" || chat.runStatus === "waiting_input" || chat.runStatus === "waiting_for_user"),
     );
+    const pendingTeamActivity = projectedTranscript.some(item =>
+      item.kind === "team-activity" ? item.activities.some(activity => activity.status === "queued" || activity.status === "running")
+        : item.kind === "team-review" && ["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(item.status),
+    );
     const liveSnapshot =
       currentChatRunsRemotely ||
       busy ||
+      pendingTeamActivity ||
       Boolean(activeChatId && runningChatIds.includes(activeChatId));
     const interval = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
@@ -5037,7 +5056,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       void refreshActiveChatFromServer(activeChatId);
     }, liveSnapshot ? 2000 : 15000);
     return () => window.clearInterval(interval);
-  }, [activeChatId, authed, busy, chats, loadingChatId, refreshActiveChatFromServer, runningChatIds]);
+  }, [activeChatId, authed, busy, chats, loadingChatId, projectedTranscript, refreshActiveChatFromServer, runningChatIds]);
 
   useEffect(() => {
     if (!authed) return;
@@ -8148,8 +8167,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const canSend = Boolean(input.trim() || pendingFiles.length);
   const transcriptPinned = !showScrollDown;
-  const transcriptMessages = useMemo(() => visibleTranscriptMessages(messages, transcriptPinned), [messages, transcriptPinned]);
-  const hiddenTranscriptCount = hiddenTranscriptMessageCount(messages.length, transcriptMessages.length);
+  const transcriptMessages = useMemo(() => visibleTranscriptMessages(projectedTranscript, transcriptPinned), [projectedTranscript, transcriptPinned]);
+  const hiddenTranscriptCount = hiddenTranscriptMessageCount(projectedTranscript.length, transcriptMessages.length);
   const hasConnectedProvider = Boolean(
     status?.cursorSdkConfigured ||
     status?.providers?.some((provider) => provider.enabled && provider.hasSecret),
@@ -9343,7 +9362,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   );
 
   
- const activeProjectId = projectHomeId || draftProjectId || null;
+ const activeProjectId = projectHomeId || chats.find(chat => chat.id === activeChatId)?.projectId || draftProjectId || null;
+ // Chat membership identifies its context; only explicit navigation selects the sidebar filter.
+ const sidebarProjectId = sidebarAllProjects ? null : projectHomeId || draftProjectId;
+ const isAgentChat = !notesOpen && !automationsOpen && !projectHomeId && Boolean(activeChatId && sidebarProjects.find(project => project.id === activeProjectId)?.mode === "agents");
+
+ function renderProjectAgentActions(agent: ProjectAgent, agents: ProjectAgent[]) {
+  return <ProjectAgentActions agent={agent} agents={agents} pinned={chats.find(chat => chat.id === agent.chatId)?.pinned} onTogglePin={() => void updateChatFlags(agent.chatId, { pinned: !chats.find(chat => chat.id === agent.chatId)?.pinned })} onViewLogs={() => void openChatLogs(agent.chatId)} onArchived={() => { chatCacheRef.current.delete(agent.chatId); if (activeChatIdRef.current === agent.chatId) openProjectHome(agent.projectId); void loadChats(); }}/>
+ }
 
  async function moveChatToProject(chatId: string, projectId: string | null) {
  const res = await fetch(`/api/chats/${chatId}`, {
@@ -9359,6 +9385,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  }
 
  function openProjectHome(projectId: string) {
+ setSidebarAllProjects(false);
  setNotesOpen(false);
  setAutomationsOpen(false);
  setWorkspaceOpen(false);
@@ -9413,10 +9440,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               ? "text-primary"
               : "text-muted-foreground hover:bg-white/[0.03] hover:text-foreground",
           )}
-          onClick={() => openDraft({ projectId: draftProjectId })}
+          onClick={() => sidebarProjectId && sidebarProjects.find(p => p.id === sidebarProjectId)?.mode === "agents" ? window.dispatchEvent(new CustomEvent("metis:new-project-agent", { detail: { projectId: sidebarProjectId, target: "nav" } })) : openDraft({ projectId: sidebarProjectId })}
         >
           <Plus className="size-3.5 shrink-0 opacity-60" />
-          <span className="min-w-0 truncate">New chat</span>
+          <span className="min-w-0 truncate">{sidebarProjectId && sidebarProjects.find(p => p.id === sidebarProjectId)?.mode === "agents" ? "New agent" : "New chat"}</span>
         </button>
         <button
           type="button"
@@ -9488,9 +9515,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ) : (
             <ProjectNav
               chats={chats}
-              activeChatId={activeChatId}
-              activeProjectId={activeProjectId}
+              activeChatId={!notesOpen && !automationsOpen && !projectHomeId ? activeChatId : null}
+              activeProjectId={sidebarProjectId}
               notesOpen={notesOpen}
+              renderAgentActions={renderProjectAgentActions}
               renderChat={(chat) => {
                 const c = chats.find((item) => item.id === chat.id);
                 if (!c) return null;
@@ -9533,6 +9561,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       />
                     );
                   })() : null}
+                  {projectChatAgents[c.id] ? <TeamAgentAvatar color={projectChatAgents[c.id].color} name={projectChatAgents[c.id].name} animated={(isAgentChat && activeChatId === c.id) || runningChatIds.includes(c.id) || c.runStatus === "running"} decorative className="size-5" /> : null}
                   {runningChatIds.includes(c.id) ||
                   c.runStatus === "running" ||
                   c.runStatus === "waiting_input" ||
@@ -9564,7 +9593,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   <span className="min-w-0 truncate">{c.title || "Untitled"}</span>
                 </span>
               </button>
-              <DropdownMenu>
+              {projectChatAgents[c.id] ? renderProjectAgentActions(projectChatAgents[c.id], Object.values(projectChatAgents).filter(agent => agent.projectId === c.projectId)) : <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
@@ -9642,7 +9671,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu>}
             </div>
             {activeChatId === c.id && chatBarSubagents.length > 0 ? (
               <div className="relative ml-5 pb-1 pl-3">
@@ -9678,9 +9707,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             </Fragment>
                 );
               }}
+              onOpenAgentChat={(chatId) => void loadChat(chatId)}
               onNewChat={(projectId) => openDraft(projectId ? { projectId } : undefined)}
               onOpenProject={openProjectHome}
               onClearProject={() => {
+               setSidebarAllProjects(true);
                const wasOnHub = Boolean(projectHomeId);
                setProjectHomeId(null);
                setDraftProjectId(null);
@@ -10025,7 +10056,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           >
             <PanelLeft className="size-4" />
           </Button>
-          {!notesOpen && !automationsOpen && !projectHomeId ? (
+          {!notesOpen && !automationsOpen && !projectHomeId && !isAgentChat ? (
             <>
               <div className="min-w-0 flex-1 md:hidden" aria-hidden="true" />
               <div className="absolute inset-y-0 left-14 right-[6.75rem] z-10 flex items-center justify-center md:hidden">
@@ -10072,6 +10103,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm font-medium text-foreground md:text-left">
               Shared Notes
             </p>
+          ) : isAgentChat && activeChatId && activeProjectId ? (
+            <ProjectAgentChatHeader key={activeChatId} projectId={activeProjectId} chatId={activeChatId} fallbackTitle={chatTitle} onOpenTeam={() => openProjectHome(activeProjectId)} />
           ) : !isDraft && !isEmpty ? (
             <p
               className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground md:block md:text-left"
@@ -10237,7 +10270,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     {loadingEarlierMessages ? "Loading more messages…" : "Scroll up for older messages"}
                   </div>
                 ) : null}
-                {transcriptMessages.map((m) => {
+                {transcriptMessages.map((item) => {
+                  if (item.kind === "team-activity") return <article key={item.id} data-message-id={item.id} className="chat-transcript-message w-full"><ChatTeamActivity activities={item.activities} agents={Object.values(projectChatAgents)}/></article>;
+                  if (item.kind === "team-review") return <article key={item.id} data-message-id={item.id} className="chat-transcript-message w-full"><ChatTeamReview status={item.status}/></article>;
+                  const m = item.message;
                   const canRevert = m.role === "user";
                   const sourceLinks = m.role === "assistant" && !m.streaming
                     ? deriveMessageSources(m, [m.content], () => extractMessageSources(m))

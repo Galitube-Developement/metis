@@ -1,3 +1,4 @@
+import { getProject } from "@/lib/projects";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
 import {
@@ -61,6 +62,7 @@ export async function POST(req: Request) {
     }
 
     const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
+    if (body.projectId && getProject(body.projectId, ownerId)?.mode === "agents") return Response.json({ error: "Create an agent in this project." }, { status: 400 });
     let chat = createChat(
       body.title,
       body.browserContext,

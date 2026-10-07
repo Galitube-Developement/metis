@@ -32,13 +32,15 @@ export async function PATCH(req: Request, { params }: Params) {
     const { id } = await params;
     const body = (await req.json().catch(() => ({}))) as {
       name?: string;
+      mode?: "chat" | "agents";
       icon?: string;
       color?: string;
       instructions?: string;
       memoryMode?: "default" | "project_only";
       disabledSkillIds?: string[];
     };
-    const project = updateProject(id, body, ownerId);
+    const { mode: _ignoredMode, ...patch } = body;
+    const project = updateProject(id, patch, ownerId);
     if (!project) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json({ project });
   } catch (error) {

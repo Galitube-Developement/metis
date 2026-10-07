@@ -5,6 +5,7 @@ import { getChat } from "@/lib/db-store";
 import { getUserAgentCwd } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
 import { saveAttachments } from "@/lib/uploads";
+import { registerProvidedFile } from "@/lib/provided-files";
 import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
@@ -87,6 +88,7 @@ export async function POST(req: Request) {
     }], userId);
     const attachment = saved.stored[0];
     if (!attachment) throw new Error("Could not store the file.");
+    registerProvidedFile(chatId, jobId, userId, attachment);
     const url = `/api/uploads/${encodeURIComponent(chatId)}/${encodeURIComponent(attachment.storedName)}`;
     return Response.json({
       attachment,

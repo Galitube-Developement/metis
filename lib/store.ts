@@ -42,6 +42,8 @@ export type ToolPart = {
 };
 
 export type ChatMessage = {
+  /** UI-only program activity; the agent still receives the original transcript. */
+  programEvent?: import("./chat-program-events").ChatProgramEvent;
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -169,6 +171,7 @@ export type Project = {
   id: string;
   ownerId?: string;
   name: string;
+  mode?: "chat" | "agents";
   icon: string;
   color: string;
   instructions: string;

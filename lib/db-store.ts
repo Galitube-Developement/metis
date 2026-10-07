@@ -1141,7 +1141,17 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
     const chat = getChat(chatId);
     if (!chat) return null;
     const index = chat.messages.findIndex((item) => item.id === message.id);
-    const next = { ...message, createdAt: message.createdAt || chat.messages[index]?.createdAt || now() };
+    // Files registered by the gateway must survive provider checkpoints that
+    // omit attachments or only report a subset of tool results.
+    const attachments = [...(chat.messages[index]?.attachments ?? [])];
+    for (const attachment of message.attachments ?? []) {
+      if (!attachments.some((item) => item.id === attachment.id)) attachments.push(attachment);
+    }
+    const next = {
+      ...message,
+      ...(attachments.length ? { attachments } : {}),
+      createdAt: message.createdAt || chat.messages[index]?.createdAt || now(),
+    };
     if (index >= 0) {
       chat.messages[index] = next;
       return persistAssistantMessage(chat, index, next, "set");

@@ -1,5 +1,8 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
+import { transaction } from "@/lib/sqlite";
+import { importTeamDraft } from "@/lib/team-presets";
+import { createProjectTeamPreset } from "@/lib/project-team";
 import { createProject, listProjects, searchProjects } from "@/lib/projects";
 
 export const runtime = "nodejs";
@@ -23,12 +26,15 @@ export async function POST(req: Request) {
     const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
     const body = (await req.json().catch(() => ({}))) as {
       name?: string;
+      mode?: "chat" | "agents";
+      teamPreset?: boolean;
+      teamDraft?: unknown;
       icon?: string;
       color?: string;
       instructions?: string;
       memoryMode?: "default" | "project_only";
     };
-    const project = createProject({ ...body, ownerId });
+    const project = transaction(() => { const result = createProject({ ...body, ownerId }); if (result.mode === "agents") { if (body.teamDraft) importTeamDraft(result.id, body.teamDraft, ownerId); else if (body.teamPreset === true) createProjectTeamPreset(result.id, ownerId); } return result; });
     return Response.json({ project }, { status: 201 });
   } catch (error) {
     captureApiError("/api/projects POST", error, req);

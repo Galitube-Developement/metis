@@ -50,6 +50,10 @@ export type AgentJob = {
   automationId?: string;
   automationRunId?: string;
   /** Structured provider-neutral delegation metadata for child agent runs. */
+  projectTeamId?: string;
+  projectTeamRootJobId?: string;
+  projectHandoffId?: string;
+  projectWaitingForHandoffId?: string | null;
   parentJobId?: string;
   parentChatId?: string;
   subagentTitle?: string;

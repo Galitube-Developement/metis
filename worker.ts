@@ -6,6 +6,7 @@ import { appendRunEvent, cancelChildJobs, claimNextJob, drainNextQueuedMessage, 
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat, upsertMessage } from "@/lib/db-store";
 import { expirePendingQuestions } from "@/lib/db-questions";
+import { expireProjectHandoffs } from "@/lib/project-team";
 import {
   claimDueAutomations,
   failAutomationClaim,
@@ -317,6 +318,7 @@ function enqueuePersistedChatFollowUp(chatId: string, userId?: string) {
 
 function drainPersistedChatQueues() {
   for (const chat of listChatsWithQueuedMessages()) {
+    if (chat.archived) continue;
     try {
       enqueuePersistedChatFollowUp(chat.id, chat.ownerId);
     } catch (error) {
@@ -394,6 +396,7 @@ async function main() {
     }
     if (Date.now() - lastQuestionExpiry > 5_000) {
       lastQuestionExpiry = Date.now();
+      expireProjectHandoffs();
       for (const expired of expirePendingQuestions()) {
         if (!expired) continue;
         if (expired.jobId) updateJob(expired.jobId, { status: "interrupted", error: "The user question expired." });
