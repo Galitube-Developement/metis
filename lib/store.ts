@@ -21,6 +21,8 @@ export type ToolPart = {
   path?: string;
   input?: string;
   result?: string;
+  /** UI-only URL for a large persisted output, loaded on expansion. */
+  resultUrl?: string;
   todos?: Array<{ id?: string; content: string; status?: string }>;
   subagent?: {
     agentId?: string;
@@ -42,6 +44,8 @@ export type ToolPart = {
 };
 
 export type ChatMessage = {
+  /** UI-only estimate from the full transcript before deferring raw outputs. */
+  contextTokenEstimate?: number;
   /** UI-only program activity; the agent still receives the original transcript. */
   programEvent?: import("./chat-program-events").ChatProgramEvent;
   id: string;

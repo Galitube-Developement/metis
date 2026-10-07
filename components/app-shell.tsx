@@ -393,6 +393,7 @@ type ToolPart = {
   todos?: Array<{ id?: string; content: string; status?: string }>;
   input?: string;
   result?: string;
+  resultUrl?: string;
   sourceMessageCreatedAt?: string;
   sourceMessageIsLatestAssistant?: boolean;
   subagent?: {
@@ -436,6 +437,7 @@ type MsgAttachment = {
 };
 
 type Msg = {
+  contextTokenEstimate?: number;
   programEvent?: ChatProgramEvent;
   id: string;
   role: Role;
@@ -653,6 +655,7 @@ type ChatIndexEntry = {
 
 type Chat = ChatIndexEntry & {
   messages: Array<{
+    contextTokenEstimate?: number;
     programEvent?: ChatProgramEvent;
     id: string;
     role: Role;
@@ -1561,6 +1564,7 @@ function mapApiMessages(
       id: m.id,
       role: m.role,
       programEvent: m.programEvent,
+      contextTokenEstimate: m.contextTokenEstimate,
       content: legacyError ? "" : m.content,
       errorMessage: m.errorMessage || legacyError || undefined,
       referenceText: m.referenceText,
@@ -7993,7 +7997,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const latestUsage = selectedRunUsage;
   const estimatedContextTokens = useMemo(() => messages.reduce(
     (total, message) =>
-      total + deriveMessageTokens(message, [message.role, message.content, message.tools], () => estimateContextTokens({
+      total + deriveMessageTokens(message, [message.role, message.content, message.tools, message.contextTokenEstimate, message.streaming], () => !message.streaming && typeof message.contextTokenEstimate === "number" ? message.contextTokenEstimate : estimateContextTokens({
         role: message.role,
         content: message.content,
         tools: message.tools || [],
