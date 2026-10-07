@@ -1,3 +1,4 @@
+import { compactChatPageMessages } from "@/lib/chat-page-payload";
 import { withChatProgramEvents } from "@/lib/chat-program-events-server";
 import { archiveProjectAgent, getProjectAgentForChat } from "@/lib/project-team";
 import { getProject } from "@/lib/projects";
@@ -38,7 +39,7 @@ export async function GET(req: Request, { params }: Params) {
     : 0;
   const page = getChatPage(id, ownerId, messageLimit, messageOffset);
   if (!page) return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json({ ...page, chat: { ...page.chat, messages: withChatProgramEvents(page.chat.messages, id, ownerId) } });
+  return Response.json({ ...page, chat: { ...page.chat, messages: withChatProgramEvents(compactChatPageMessages(page.chat.messages, id), id, ownerId) } });
 }
 
 export async function PATCH(req: Request, { params }: Params) {
