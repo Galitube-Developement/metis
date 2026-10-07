@@ -1,5 +1,6 @@
 import { agentRulesPrompt } from "@/lib/agent-rules";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
+import { projectTeamContextBlock } from "@/lib/project-team";
 import { projectContextBlock } from "@/lib/projects";
 import {
   globalFactsForScope,
@@ -141,6 +142,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   return [
     // Layer 1 — Core Context: stable identity, policy, mode and tool contract.
     metisAgentIdentity(),
+    !incognito ? projectTeamContextBlock(chat.id, ownerId) : "",
     `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
     formatChatGoal(chat.sessionState, ownerId, chat.id, incognito),
     chatMetadataPrompt(chat, incognito),

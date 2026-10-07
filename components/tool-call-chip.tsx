@@ -21,7 +21,9 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { loadToolResult } from "@/lib/tool-result-client";
 import { cn } from "@/lib/utils";
 import { AutomationCard } from "@/components/automation-card";
 import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
@@ -60,6 +62,7 @@ export type ToolCallData = {
   diff?: { before?: string; after?: string; additions?: number; deletions?: number };
   input?: string;
   result?: string;
+  resultUrl?: string;
   todos?: Array<{ id?: string; content: string; status?: string }>;
   subagent?: {
     agentId?: string;
@@ -332,7 +335,8 @@ export const ToolCallChip = memo(function ToolCallChip({
   path,
   diff,
   input,
-  result,
+  result: previewResult,
+  resultUrl,
   subagent,
   onOpenDiff,
   onOpenSubagent,
@@ -349,6 +353,10 @@ export const ToolCallChip = memo(function ToolCallChip({
   workspaces,
 }: ToolCallProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const [loadedOutput, setLoadedOutput] = useState<{ url: string; result: string } | null>(null);
+  const [outputError, setOutputError] = useState("");
+  const [outputRetry, setOutputRetry] = useState(0);
+  const result = resultUrl && loadedOutput?.url === resultUrl ? loadedOutput.result : previewResult;
   // A few adapters deliver the result while leaving the lifecycle status at
   // "running". The result is terminal evidence, so never keep the spinner in
   // that case (including an intentionally empty response).
@@ -358,6 +366,22 @@ export const ToolCallChip = memo(function ToolCallChip({
   const resolvedKind = display.kind;
   const isCommand = resolvedKind === "shell";
   const expanded = isCommand ? userOpen === true : locked ? autoExpand : userOpen ?? autoExpand;
+  useEffect(() => {
+    if (!expanded || !resultUrl || loadedOutput?.url === resultUrl) return;
+    const controller = new AbortController();
+    setOutputError("");
+    void loadToolResult(resultUrl, controller.signal).then(full => {
+      if (!controller.signal.aborted) setLoadedOutput({ url: resultUrl, result: full });
+    }).catch(() => {
+      if (!controller.signal.aborted) setOutputError("Could not load full output");
+    });
+    return () => controller.abort();
+  }, [expanded, resultUrl, loadedOutput, outputRetry]);
+  const outputStatus = resultUrl && loadedOutput?.url !== resultUrl ? (
+    <p role="status" className="text-muted-foreground">
+      {outputError ? <button type="button" onClick={() => setOutputRetry(value => value + 1)}>{outputError} · Retry</button> : "Loading full output…"}
+    </p>
+  ) : null;
   const resolvedName = display.name || name;
   const deleteTool = /(^|[._:/-])(delete|remove|unlink)(?=[._:/-]|$)/i.test(resolvedName);
   const headline = useMemo(() => toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames }), [resolvedName, resolvedKind, input, detail, path, hostnames]);
@@ -626,6 +650,7 @@ export const ToolCallChip = memo(function ToolCallChip({
             <section>
               <p className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">Response</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono">{formatToolOutput(result || detail)}</pre>
+              {outputStatus}
             </section>
           ) : null}
           {!input && !(kind === "edit" && diff) && !result && !detail ? "No output available yet." : null}
@@ -650,6 +675,7 @@ export const ToolCallChip = memo(function ToolCallChip({
             <section className="min-w-0">
               <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Output</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>
+              {outputStatus}
             </section>
           ) : null}
           {!input && !result && !detail ? <p className="text-muted-foreground">No output available yet.</p> : null}
@@ -789,7 +815,11 @@ export const ToolCallGroup = memo(function ToolCallGroup({
       onOpenWorkspace={() => onOpenWorkspace?.(tool)}
       onBuildPlan={(plan, options) => onBuildPlan?.(tool, plan, options)}
       buildDisabled={buildDisabled}
-      onOpenRaw={() => onOpenRaw?.(tool)}
+      onOpenRaw={() => {
+        if (!tool.resultUrl) { onOpenRaw?.(tool); return; }
+        void loadToolResult(tool.resultUrl).then(result => onOpenRaw?.({ ...tool, result, resultUrl: undefined }))
+          .catch(() => toast.error("Could not load full output"));
+      }}
       autoExpand={!nested && Boolean(live || autoExpand) && tool.id === lastToolId}
       locked={false}
     />

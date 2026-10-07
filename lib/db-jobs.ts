@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
 import {
   getDatabase,
   isSqliteBusyError,
@@ -181,6 +182,13 @@ function enqueueJobInTransaction(
     // in the chat with no job behind it.
     options?.beforeInsert?.();
 
+    const team = getDatabase().prepare("SELECT p.id AS projectId, p.owner_id AS ownerId, p.data AS projectData, a.data AS agentData FROM chats c JOIN projects p ON p.id = json_extract(c.data, '$.projectId') LEFT JOIN project_agents a ON a.chat_id = c.id WHERE c.id = ?").get(input.chatId) as { projectId: string; ownerId: string; projectData: string; agentData?: string } | undefined;
+    if (team && JSON.parse(team.projectData).mode === "agents") {
+      const agent = team.agentData ? JSON.parse(team.agentData) : null;
+      if (!input.userId || team.ownerId !== input.userId || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
+      const parent = input.parentJobId ? getJob(input.parentJobId) : null;
+      input = { ...input, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
+    }
     const now = iso();
     const background =
       input.workload === "background" || Boolean(input.automationId);
@@ -224,6 +232,7 @@ function enqueueJobInTransaction(
       createdAt: now,
       updatedAt: now,
     };
+    if (job.projectTeamId && !job.projectTeamRootJobId) job.projectTeamRootJobId = job.id;
     getDatabase()
       .prepare(
         "INSERT INTO jobs (id, chat_id, user_id, data, status, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -355,7 +364,7 @@ export function cancelChildJobs(
       const updated = updateJob(child.id, {
         status: "cancelled",
         error: reason,
-      });
+      }, { control: true });
       if (!updated) continue;
       cancelled.push(updated);
       updateChat(
@@ -446,6 +455,19 @@ export function claimNextJob(
                )
            )
          )
+         AND (
+           CASE WHEN json_valid(data) THEN json_extract(data, '$.projectTeamId') END IS NULL
+           OR NOT EXISTS (
+             SELECT 1 FROM jobs team_active
+             WHERE CASE WHEN json_valid(team_active.data) THEN json_extract(team_active.data, '$.projectTeamId') END = CASE WHEN json_valid(jobs.data) THEN json_extract(jobs.data, '$.projectTeamId') END
+               AND team_active.id != jobs.id
+               AND team_active.status IN ('running','switching','waiting_input','waiting_for_user')
+               AND (
+                 COALESCE(CASE WHEN json_valid(team_active.data) THEN json_extract(team_active.data, '$.projectTeamRootJobId') END, team_active.id) != COALESCE(CASE WHEN json_valid(jobs.data) THEN json_extract(jobs.data, '$.projectTeamRootJobId') END, jobs.id)
+                 OR CASE WHEN json_valid(team_active.data) THEN json_extract(team_active.data, '$.projectWaitingForHandoffId') END IS NULL
+               )
+           )
+         )
        ORDER BY COALESCE(
                   CASE WHEN json_valid(data) THEN CAST(json_extract(data, '$.priority') AS INTEGER) END,
                   100
@@ -513,6 +535,7 @@ export function claimNextJob(
           jobRevision(job),
         );
       if (result.changes) {
+        syncHandoffForJob(claimed);
         return {
           ...claimed,
           leaseOwner: workerId,
@@ -579,15 +602,16 @@ export function updateJob(
       | "pendingModelId"
       | "pendingModelParams"
       | "modelSwitchRequestedAt"
+      | "projectWaitingForHandoffId"
     >
   >,
-  options: { expectedRevision?: number } = {},
+  options: { expectedRevision?: number; control?: boolean } = {},
 ) {
   return transaction(() => {
     const db = getDatabase();
     const current = getJob(id);
     if (!current) return null;
-    if (!hasActiveWorkerLease(db, id, iso())) return null;
+    if (!options.control && !hasActiveWorkerLease(db, id, iso())) return null;
     if (patch.status && !canTransitionJobStatus(current.status, patch.status)) {
       throw new Error(
         `Invalid job state transition: ${current.status} -> ${patch.status}`,
@@ -631,6 +655,7 @@ export function updateJob(
     if (!result.changes) return null;
     if (releasesLease)
       db.prepare("DELETE FROM job_leases WHERE job_id = ?").run(id);
+    syncHandoffForJob(updated);
     return updated;
   });
 }
@@ -1067,7 +1092,7 @@ export function requestJobCancel(chatId: string, userId?: string) {
   const cancelled = updateJob(job.id, {
     status: "cancelled",
     error: "Cancellation requested by user.",
-  });
+  }, { control: true });
   if (cancelled) cancelChildJobs(job.id, userId, "Parent agent cancelled.");
   return cancelled;
 }

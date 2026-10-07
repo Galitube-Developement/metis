@@ -238,6 +238,10 @@ export function getDatabase(): DatabaseSync {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS chats_owner_updated ON chats(owner_id, updated_at DESC);
+    -- The worker checks this queue every second. Do not reparse every transcript.
+    CREATE INDEX IF NOT EXISTS chats_pending_queue ON chats(updated_at)
+      WHERE json_type(data, '$.queuedMessages') = 'array'
+        AND json_array_length(json_extract(data, '$.queuedMessages')) > 0;
     CREATE INDEX IF NOT EXISTS chats_share_id ON chats(json_extract(data, '$.share.id'));
     CREATE TABLE IF NOT EXISTS queue_message_removals (
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -277,6 +281,7 @@ export function getDatabase(): DatabaseSync {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs(status, updated_at);
+    CREATE INDEX IF NOT EXISTS jobs_chat_owner ON jobs(chat_id, user_id);
     CREATE TABLE IF NOT EXISTS job_leases (
       job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
       worker_id TEXT NOT NULL,
@@ -415,6 +420,42 @@ export function getDatabase(): DatabaseSync {
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS team_presets (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS team_presets_owner ON team_presets(owner_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS team_preset_generations (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS team_preset_generations_owner ON team_preset_generations(owner_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS project_agents (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL UNIQUE REFERENCES chats(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS project_agents_project ON project_agents(project_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS project_handoffs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS project_handoffs_project ON project_handoffs(project_id, updated_at DESC);
   CREATE TABLE IF NOT EXISTS project_files (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

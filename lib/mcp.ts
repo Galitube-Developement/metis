@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { getDatabase } from "@/lib/sqlite";
 import path from "node:path";
 import { signTrustedMcpSession } from "@/lib/mcp-core/session-token.mjs";
 import {
@@ -188,6 +189,11 @@ export function getMcpServers(context: McpContext = {}): McpServerMap {
   }
   const identity = requireUserExecutionIdentity(context.userId);
   const agentCwd = getUserAgentCwd(context.userId);
+  const teamChat = config.databasePath && context.chatId ? (() => { try { return getDatabase().prepare("SELECT 1 FROM project_agents WHERE chat_id = ? AND owner_id = ?").get(context.chatId, context.userId); } catch { return null; } })() : null;
+  if (teamChat) {
+    const policy = JSON.parse(context.modePolicy || "{}");
+    context.modePolicy = JSON.stringify({ ...policy, toolOverrides: { ...policy.toolOverrides, delegate_subagent: false } });
+  }
   const env = getMcpBridgeEnv(context);
 
   // Internal native agent runtimes use the already-running Streamable HTTP MCP

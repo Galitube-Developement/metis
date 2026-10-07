@@ -10,7 +10,8 @@ import {
  PROJECT_ICONS,
 } from "@/lib/project-constants";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
-import { listChatsForUser } from "@/lib/db-store";
+import { listChatsForUser, updateChat } from "@/lib/db-store";
+import { requestJobCancel } from "@/lib/db-jobs";
 import type { ChatIndexEntry, Memory, Project, ProjectFile, SharedNote } from "@/lib/store";
 import { decodeBase64Size, isTextAttachment, sanitizeFileName } from "@/lib/uploads";
 
@@ -84,6 +85,7 @@ function rowToProject(row: unknown): Project | null {
   id: parsed.id,
   ...(typeof parsed.ownerId === "string" ? { ownerId: parsed.ownerId } : {}),
   name: clip(parsed.name, 80) || "Untitled project",
+  mode: parsed.mode === "agents" ? "agents" : "chat",
   icon: PROJECT_ICONS.includes(parsed.icon as (typeof PROJECT_ICONS)[number]) ? parsed.icon : "folder",
   color: /^#[0-9a-f]{6}$/i.test(parsed.color || "") ? String(parsed.color) : PROJECT_COLORS[0],
   instructions: clip(parsed.instructions, 20_000),
@@ -136,6 +138,7 @@ export function getProject(id: string, ownerId?: string): Project | null {
 
 export function createProject(input: {
  name?: string;
+ mode?: "chat" | "agents";
  icon?: string;
  color?: string;
  instructions?: string;
@@ -149,6 +152,7 @@ export function createProject(input: {
   id: randomUUID(),
   ...(input.ownerId ? { ownerId: input.ownerId } : {}),
   name: clip(input.name, 80) || "New project",
+  mode: input.mode === "agents" ? "agents" : "chat",
   icon: PROJECT_ICONS.includes((input.icon || "") as (typeof PROJECT_ICONS)[number]) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
   color: /^#[0-9a-f]{6}$/i.test(input.color || "") ? String(input.color) : PROJECT_COLORS[count % PROJECT_COLORS.length],
   instructions: clip(input.instructions, 20_000),
@@ -296,6 +300,12 @@ export function deleteProject(id: string, ownerId?: string) {
   const current = getProject(id, ownerId);
   if (!current) return null;
   const db = getDatabase();
+  if (current.mode === "agents") {
+   for (const chat of listChatsForUser(ownerId, { includeArchived: true }).filter(chat => chat.projectId === id)) {
+    while (requestJobCancel(chat.id, ownerId)) { /* Drain all pending team assignments before removal. */ }
+    updateChat(chat.id, { archived: true }, ownerId);
+   }
+  }
   db.prepare("DELETE FROM project_files WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM projects WHERE id = ?").run(id);
     db.prepare("UPDATE automations SET project_id = NULL WHERE project_id = ?").run(id);

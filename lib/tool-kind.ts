@@ -58,6 +58,7 @@ export function resolveMcpToolName(name: string, ...sources: unknown[]): string 
 
 export function classifyTool(name: string, input?: unknown): ToolPart["kind"] {
   const value = resolveMcpToolName(name, input).toLowerCase();
+  if (value.includes("project_handoff")) return "mcp";
   if (value.includes("automation")) return "automation";
   if (isSubagentControlName(value)) return "mcp";
   if (isSubagentSpawnName(value)) return "subagent";
