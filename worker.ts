@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { writeWorkerHeartbeat } from "@/lib/worker-health";
 import { appendRunEvent, cancelChildJobs, claimNextJob, drainNextQueuedMessage, enqueueJob, getActiveParentJob, getJob, listChildJobs, reapExpiredJobLeases, recoverStaleJobs, requeueSwitchingJob, updateJob } from "@/lib/db-jobs";
 import { snapshotInterruptedJob } from "@/lib/recovery";
-import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat, upsertMessage } from "@/lib/db-store";
+import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat } from "@/lib/db-store";
 import { expirePendingQuestions } from "@/lib/db-questions";
 import { expireProjectHandoffs } from "@/lib/project-team";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/automations";
 import { parseWorkerConcurrency, waitForSchedulerTick } from "@/lib/worker-scheduler";
 import { logError } from "@/lib/error-logs";
+import { persistWorkerFailureMessage } from "@/lib/worker-failure";
 import { checkGatewayHealth } from "@/lib/mcp";
 
 const pollMs = Number(process.env.AI_CHAT_WORKER_POLL_MS || 500);
@@ -67,30 +68,7 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
       const job = getJob(jobId);
       if (job && job.status === "error") {
         appendRunEvent(job.id, job.chatId, job.userId, "error", { message });
-        const chat = getChat(job.chatId, job.userId);
-        if (chat && !chat.messages.some(
-          (entry) => entry.role === "assistant" && (
-            entry.errorMessage === message || entry.content.includes(message)
-          ),
-        )) {
-          const pendingAssistant = [...chat.messages]
-            .reverse()
-            .find((entry) => entry.role === "assistant" && !entry.content.trim());
-          if (pendingAssistant) {
-            upsertMessage(job.chatId, {
-              id: pendingAssistant.id,
-              role: "assistant",
-              content: "",
-              errorMessage: message,
-            });
-          } else {
-            appendMessage(job.chatId, {
-              role: "assistant",
-              content: "",
-              errorMessage: message,
-            });
-          }
-        }
+        persistWorkerFailureMessage(job.id, message);
         updateChat(job.chatId, {
           runStatus: "error",
           runUpdatedAt: new Date().toISOString(),
