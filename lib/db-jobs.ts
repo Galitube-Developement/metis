@@ -1012,25 +1012,25 @@ export function listRunEvents(
   userId: string | undefined,
   after = 0,
   jobId?: string,
+  limit = 500,
 ) {
+  // Keep equality predicates visible to SQLite so the existing
+  // (chat_id, job_id, id) index can seek directly into this run.
+  const params: Array<string | number> = [chatId, after];
+  if (jobId !== undefined) params.push(jobId);
+  if (userId !== undefined) params.push(userId);
+  params.push(Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 500);
   const rows = getDatabase()
     .prepare(
       `SELECT id, id as sequence, job_id as jobId, chat_id as chatId, event, data, created_at as createdAt
      FROM run_events
      WHERE chat_id = ? AND id > ?
-       AND (? IS NULL OR job_id = ?)
-       AND (? IS NULL OR user_id = ?)
+       ${jobId !== undefined ? "AND job_id = ?" : ""}
+       ${userId !== undefined ? "AND user_id = ?" : ""}
      ORDER BY id ASC
-     LIMIT 500`,
+     LIMIT ?`,
     )
-    .all(
-      chatId,
-      after,
-      jobId ?? null,
-      jobId ?? null,
-      userId ?? null,
-      userId ?? null,
-    ) as Array<Record<string, unknown>>;
+    .all(...params) as Array<Record<string, unknown>>;
   return rows.map((row) => ({
     ...row,
     id: Number(row.id),

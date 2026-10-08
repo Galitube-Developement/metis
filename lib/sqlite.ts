@@ -707,18 +707,33 @@ export function getDatabase(): DatabaseSync {
     FROM chats
     WHERE NOT EXISTS (SELECT 1 FROM chat_list WHERE chat_list.id = chats.id);
   `);
-  database.exec(`
-    UPDATE chat_list
-    SET agent_title_locked = 1
-    WHERE agent_title_locked = 0
-      AND EXISTS (
-        SELECT 1
-        FROM chats
-        WHERE chats.id = chat_list.id
-          AND json_type(chats.data, '$.agentTitleLocked') IS NULL
-          AND json_extract(chats.data, '$.titleSource') = 'user'
-      );
-  `);
+  // This is a legacy backfill, not a per-worker startup reconciliation.
+  // New/missing rows are already populated above; ordinary writes use syncChatList.
+  const titleLockMigration = "chat_list_agent_title_lock_v1";
+  if (!database.prepare("SELECT 1 FROM meta WHERE key = ?").get(titleLockMigration)) {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      // Another worker may have completed the migration while we waited.
+      if (!database.prepare("SELECT 1 FROM meta WHERE key = ?").get(titleLockMigration)) {
+        database.exec(`
+          UPDATE chat_list
+          SET agent_title_locked = 1
+          WHERE agent_title_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM chats
+              WHERE chats.id = chat_list.id
+                AND json_type(chats.data, '$.agentTitleLocked') IS NULL
+                AND json_extract(chats.data, '$.titleSource') = 'user'
+            );
+        `);
+        database.prepare("INSERT INTO meta(key, value) VALUES (?, '1')").run(titleLockMigration);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  }
   database.prepare(
     "INSERT OR IGNORE INTO meta (key, value) VALUES ('provider_connections_schema', '1')",
   ).run();

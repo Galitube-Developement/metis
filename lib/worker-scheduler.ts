@@ -28,6 +28,27 @@ export function describeQueueWait(running: number, queuedAhead: number, maxWorke
   return `Waiting for a free worker slot (${ahead} run${ahead === 1 ? "" : "s"} ahead, ${workers} parallel chats).`;
 }
 
+type Completion = { failed: false } | { failed: true; error: unknown };
+type JobObserver = { completion?: Completion; listeners: Set<(completion: Completion) => void> };
+// One reaction per job, rather than one permanently retained Promise.race
+// reaction per poll. Timed-out poll listeners are removed immediately.
+const jobObservers = new WeakMap<Promise<unknown>, JobObserver>();
+
+function observeJob(job: Promise<unknown>): JobObserver {
+  let observer = jobObservers.get(job);
+  if (observer) return observer;
+  observer = { listeners: new Set() };
+  jobObservers.set(job, observer);
+  const settled = observer;
+  const finish = (completion: Completion) => {
+    settled.completion = completion;
+    for (const listener of settled.listeners) listener(completion);
+    settled.listeners.clear();
+  };
+  void job.then(() => finish({ failed: false }), error => finish({ failed: true, error }));
+  return observer;
+}
+
 export async function waitForSchedulerTick(
   active: ReadonlySet<Promise<unknown>>,
   concurrency: number,
@@ -37,12 +58,24 @@ export async function waitForSchedulerTick(
     await sleep(pollMs);
     return "idle-poll";
   }
-  if (Number.isFinite(concurrency) && concurrency > 0 && active.size >= concurrency) {
-    await Promise.race(active);
-    return "slot-freed";
+  const atCapacity = Number.isFinite(concurrency) && concurrency > 0 && active.size >= concurrency;
+  const observers = [...active].map(observeJob);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onCompletion!: (completion: Completion) => void;
+  try {
+    return await new Promise<"capacity-poll" | "slot-freed">((resolve, reject) => {
+      onCompletion = completion => {
+        if (completion.failed) reject(completion.error);
+        else resolve("slot-freed");
+      };
+      for (const observer of observers) {
+        if (observer.completion) onCompletion(observer.completion);
+        else observer.listeners.add(onCompletion);
+      }
+      if (!atCapacity) timer = setTimeout(() => resolve("capacity-poll"), pollMs);
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    for (const observer of observers) observer.listeners.delete(onCompletion);
   }
-  return Promise.race([
-    Promise.race(active).then(() => "slot-freed" as const),
-    sleep(pollMs).then(() => "capacity-poll" as const),
-  ]);
 }
