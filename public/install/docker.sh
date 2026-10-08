@@ -50,15 +50,16 @@ Options:
 EOF
 }
 
+port_set=0; mcp_port_set=0; bind_set=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) [[ $# -ge 2 ]] || fail "--version requires a value"; VERSION="$2"; shift 2 ;;
     --install-dir) [[ $# -ge 2 ]] || fail "--install-dir requires a value"; INSTALL_DIR="$2"; shift 2 ;;
     --data-dir) [[ $# -ge 2 ]] || fail "--data-dir requires a value"; DATA_DIR="$2"; shift 2 ;;
     --workspace) [[ $# -ge 2 ]] || fail "--workspace requires a value"; WORKSPACE_DIR="$2"; shift 2 ;;
-    --port) [[ $# -ge 2 ]] || fail "--port requires a value"; PORT="$2"; shift 2 ;;
-    --bind) [[ $# -ge 2 ]] || fail "--bind requires a value"; BIND="$2"; shift 2 ;;
-    --mcp-port) [[ $# -ge 2 ]] || fail "--mcp-port requires a value"; MCP_PORT="$2"; shift 2 ;;
+    --port) [[ $# -ge 2 ]] || fail "--port requires a value"; PORT="$2"; port_set=1; shift 2 ;;
+    --bind) [[ $# -ge 2 ]] || fail "--bind requires a value"; BIND="$2"; bind_set=1; shift 2 ;;
+    --mcp-port) [[ $# -ge 2 ]] || fail "--mcp-port requires a value"; MCP_PORT="$2"; mcp_port_set=1; shift 2 ;;
     --image-repository) [[ $# -ge 2 ]] || fail "--image-repository requires a value"; IMAGE_REPOSITORY="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --replace-existing) REPLACE_EXISTING=1; shift ;;
@@ -76,13 +77,33 @@ if (( NON_INTERACTIVE == 0 )); then
 fi
 
 INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
-DATA_DIR="${DATA_DIR:-$INSTALL_DIR/data}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-$INSTALL_DIR/workspace}"
+saved_config="$INSTALL_DIR/.env"
+read_saved_config() {
+  [[ -f "$saved_config" ]] || return 0
+  awk -v key="$1" '$0 ~ "^" key "=" {value=substr($0,length(key)+2); gsub(/^"|"$/, "", value); print value; exit}' "$saved_config"
+}
+saved_port="$(read_saved_config PORT)"; saved_mcp_port="$(read_saved_config MCP_PORT)"; saved_bind="$(read_saved_config AI_CHAT_HOST)"
+(( port_set )) || PORT="${saved_port:-$PORT}"
+(( mcp_port_set )) || MCP_PORT="${saved_mcp_port:-$MCP_PORT}"
+(( bind_set )) || BIND="${saved_bind:-$BIND}"
+saved_data="$(read_saved_config METIS_DATA_DIR)"; saved_workspace="$(read_saved_config METIS_WORKSPACE)"
+DATA_DIR="${DATA_DIR:-${saved_data:-$INSTALL_DIR/data}}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-${saved_workspace:-$INSTALL_DIR/workspace}}"
 
-[[ "$VERSION" == "latest" || "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || \
-  fail "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
+if [[ "$VERSION" == "latest" ]]; then
+  command -v curl >/dev/null 2>&1 || fail "curl is required to resolve latest."
+  repo_url="${METIS_AI_REPO_URL:-https://github.com/f1shyondrugs/metis-ai.git}"
+  repo_slug="${repo_url##github.com/}"
+  repo_slug="${repo_slug%.git}"
+  latest_json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo_slug/releases/latest")" ||
+    fail "Could not resolve the latest stable release."
+  VERSION="$(printf '%s' "$latest_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9A-Za-z.-]*\)".*/\1/p' | head -n 1)"
+fi
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
+  fail "Version must be a resolved v-prefixed SemVer tag, for example v1.0.0."
 [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65535 ]] || fail "Invalid web port: $PORT"
 [[ "$MCP_PORT" =~ ^[0-9]+$ && "$MCP_PORT" -ge 1 && "$MCP_PORT" -le 65535 ]] || fail "Invalid MCP port: $MCP_PORT"
+[[ "$PORT" != "$MCP_PORT" ]] || fail "Web and MCP ports must be different."
 [[ "$IMAGE_REPOSITORY" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "Invalid image repository."
 
 if docker compose version >/dev/null 2>&1; then
@@ -339,24 +360,52 @@ fi
 EOF
 chmod 700 "$INSTALL_DIR/reload.sh"
 
+web_port="$PORT"
+gateway_port="$MCP_PORT"
 unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull
 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
 
 for attempt in $(seq 1 60); do
-  if curl --fail --silent --max-time 2 "http://${BIND}:${PORT}/" >/dev/null 2>&1 || curl --fail --silent --max-time 2 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+  if curl --fail --silent --max-time 2 "http://${BIND}:${web_port}/" >/dev/null 2>&1 || curl --fail --silent --max-time 2 "http://127.0.0.1:${web_port}/" >/dev/null 2>&1; then
     break
   fi
-  [[ "$attempt" -eq 60 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 app >&2 || true; fail "Metis did not become healthy on port $PORT."; }
+  [[ "$attempt" -eq 60 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 app >&2 || true; fail "Metis did not become healthy on port $web_port."; }
   sleep 2
 done
 for attempt in $(seq 1 30); do
-  if curl --fail --silent --max-time 2 "http://127.0.0.1:${MCP_PORT}/health" >/dev/null 2>&1; then
+  if curl --fail --silent --max-time 2 "http://127.0.0.1:${gateway_port}/health" >/dev/null 2>&1; then
     break
   fi
-  [[ "$attempt" -eq 30 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 mcp >&2 || true; fail "The MCP gateway did not become healthy on port $MCP_PORT."; }
+  [[ "$attempt" -eq 30 ]] && { compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=80 mcp >&2 || true; fail "The MCP gateway did not become healthy on port $gateway_port."; }
   sleep 2
 done
+
+# Verify the containers created by this Compose project, not an unrelated HTTP listener.
+for service in app worker mcp; do
+  container="$(compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q "$service")"
+  [[ -n "$container" ]] || fail "Compose did not create the $service container."
+  for attempt in $(seq 1 60); do
+    state="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container")"
+    [[ "$state" == "running healthy" ]] && break
+    [[ "$service" == worker && "$state" == "running no-healthcheck" ]] && break
+    [[ "$state" != exited\ * && "$state" != dead\ * ]] || fail "$service container stopped: $state"
+    [[ "$attempt" -lt 60 ]] || fail "$service container is not healthy: $state"
+    sleep 2
+  done
+done
+app_container="$(compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q app)"
+actual_image="$(docker inspect -f '{{.Image}}' "$app_container")"
+for service in worker mcp; do
+  container="$(compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q "$service")"
+  [[ "$(docker inspect -f '{{.Image}}' "$container")" == "$actual_image" ]] ||
+    fail "The app, worker and MCP gateway are running different images."
+done
+image_digest="$(docker image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$actual_image")"
+image_arch="$(docker image inspect -f '{{.Architecture}}' "$actual_image")"
+image_commit="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$actual_image")"
+image_tag="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$actual_image")"
+[[ -z "$image_tag" || "$image_tag" == "$VERSION" ]] || fail "Image release label $image_tag does not match $VERSION."
 
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [[ -f "$MANIFEST_FILE" ]]; then
@@ -369,7 +418,11 @@ cat > "$MANIFEST_FILE" <<EOF
   "schemaVersion": 1,
   "installMethod": "docker",
   "image": "$(printf '%s' "$IMAGE" | sed 's/"/\\"/g')",
+  "tag": "$(printf '%s' "$VERSION" | sed 's/"/\\\"/g')",
   "version": "$(printf '%s' "$VERSION" | sed 's/"/\\"/g')",
+  "commit": "$(printf '%s' "${image_commit:-}" | sed 's/"/\\\"/g')",
+  "repoDigest": "$(printf '%s' "${image_digest:-}" | sed 's/"/\\\"/g')",
+  "architecture": "$(printf '%s' "${image_arch:-unknown}" | sed 's/"/\\\"/g')",
   "installDir": "$(printf '%s' "$INSTALL_DIR" | sed 's/"/\\"/g')",
   "dataDir": "$(printf '%s' "$DATA_DIR" | sed 's/"/\\"/g')",
   "workspaceDir": "$(printf '%s' "$WORKSPACE_DIR" | sed 's/"/\\"/g')",
@@ -378,6 +431,6 @@ cat > "$MANIFEST_FILE" <<EOF
 }
 EOF
 chmod 600 "$MANIFEST_FILE"
-printf 'Metis AI %s is running.\nOpen: http://%s:%s\nYou can change this. Add: %s\nApply: %s\n' "$VERSION" "$display_host" "$PORT" "$ENV_FILE" "$INSTALL_DIR/reload.sh"
+printf 'Metis AI %s is running.\nOpen: http://%s:%s\nYou can change this. Add: %s\nApply: %s\n' "$VERSION" "$display_host" "$web_port" "$ENV_FILE" "$INSTALL_DIR/reload.sh"
 printf 'Install manifest: %s\n' "$MANIFEST_FILE"
 printf 'Upgrade: rerun this installer with --version vX.Y.Z or --version latest\n'

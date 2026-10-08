@@ -46,6 +46,11 @@ fi
 echo "INVALID_VERSION_REJECTED"
 
 printf 'release payload for checksum test\n' > "$work_dir/metis-ai-${release_tag}.tar.gz"
-sha256sum "$work_dir/metis-ai-${release_tag}.tar.gz" > "$work_dir/SHA256SUMS"
+(cd "$work_dir" && sha256sum "metis-ai-${release_tag}.tar.gz" > SHA256SUMS)
 (cd "$work_dir" && sha256sum --check SHA256SUMS)
 echo "CHECKSUM_OK"
+
+bash scripts/release-install-notes.sh "$release_tag" f1shyondrugs/metis-ai > "$work_dir/install-notes.md"
+grep -F "bash metis-install.sh --version $release_tag" "$work_dir/install-notes.md"
+! grep -E "master|-- --version|download/latest" "$work_dir/install-notes.md"
+echo "PINNED_RELEASE_INSTRUCTIONS_OK"

@@ -14,6 +14,7 @@ for (const exitCode of [0, 7]) {
     try {
       const script = path.join(temp, "check.ps1");
       writeFileSync(script, `$ErrorActionPreference = "Stop"
+$env:METIS_AI_INSTALL_BASE = "https://fixture.invalid/v1.2.3"
 $script:downloads = @()
 function Invoke-WebRequest {
   param([switch]$UseBasicParsing, $Uri, $OutFile)

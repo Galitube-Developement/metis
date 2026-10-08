@@ -1,5 +1,7 @@
 "use client";
 
+import { RunStatus } from "@/components/run-status";
+
 import {
   BookOpen,
   Bot,
@@ -12,7 +14,6 @@ import {
   FolderOpen,
   Globe2,
   ListTodo,
-  LoaderCircle,
   ExternalLink,
   Search,
   Shrink,
@@ -23,7 +24,7 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { loadToolResult } from "@/lib/tool-result-client";
+import { loadToolPayload, type FullToolPayload } from "@/lib/tool-result-client";
 import { cn } from "@/lib/utils";
 import { AutomationCard } from "@/components/automation-card";
 import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
@@ -63,6 +64,7 @@ export type ToolCallData = {
   input?: string;
   result?: string;
   resultUrl?: string;
+  inputUrl?: string;
   todos?: Array<{ id?: string; content: string; status?: string }>;
   subagent?: {
     agentId?: string;
@@ -334,9 +336,10 @@ export const ToolCallChip = memo(function ToolCallChip({
   kind,
   path,
   diff,
-  input,
+  input: previewInput,
   result: previewResult,
   resultUrl,
+  inputUrl,
   subagent,
   onOpenDiff,
   onOpenSubagent,
@@ -353,10 +356,13 @@ export const ToolCallChip = memo(function ToolCallChip({
   workspaces,
 }: ToolCallProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const [loadedOutput, setLoadedOutput] = useState<{ url: string; result: string } | null>(null);
+  const [loadedOutput, setLoadedOutput] = useState<{ url: string; payload: FullToolPayload } | null>(null);
   const [outputError, setOutputError] = useState("");
   const [outputRetry, setOutputRetry] = useState(0);
-  const result = resultUrl && loadedOutput?.url === resultUrl ? loadedOutput.result : previewResult;
+  const payloadUrl = inputUrl || resultUrl;
+  const fullPayload = loadedOutput?.url === payloadUrl ? loadedOutput?.payload : undefined;
+  const input = inputUrl ? fullPayload?.input ?? previewInput : previewInput;
+  const result = resultUrl ? fullPayload?.result ?? previewResult : previewResult;
   // A few adapters deliver the result while leaving the lifecycle status at
   // "running". The result is terminal evidence, so never keep the spinner in
   // that case (including an intentionally empty response).
@@ -367,19 +373,19 @@ export const ToolCallChip = memo(function ToolCallChip({
   const isCommand = resolvedKind === "shell";
   const expanded = isCommand ? userOpen === true : locked ? autoExpand : userOpen ?? autoExpand;
   useEffect(() => {
-    if (!expanded || !resultUrl || loadedOutput?.url === resultUrl) return;
+    if (!expanded || !payloadUrl || loadedOutput?.url === payloadUrl) return;
     const controller = new AbortController();
     setOutputError("");
-    void loadToolResult(resultUrl, controller.signal).then(full => {
-      if (!controller.signal.aborted) setLoadedOutput({ url: resultUrl, result: full });
+    void loadToolPayload(payloadUrl, controller.signal).then(full => {
+      if (!controller.signal.aborted) setLoadedOutput({ url: payloadUrl, payload: full });
     }).catch(() => {
-      if (!controller.signal.aborted) setOutputError("Could not load full output");
+      if (!controller.signal.aborted) setOutputError("Could not load full tool details");
     });
     return () => controller.abort();
-  }, [expanded, resultUrl, loadedOutput, outputRetry]);
-  const outputStatus = resultUrl && loadedOutput?.url !== resultUrl ? (
+  }, [expanded, payloadUrl, loadedOutput, outputRetry]);
+  const outputStatus = payloadUrl && loadedOutput?.url !== payloadUrl ? (
     <p role="status" className="text-muted-foreground">
-      {outputError ? <button type="button" onClick={() => setOutputRetry(value => value + 1)}>{outputError} · Retry</button> : "Loading full output…"}
+      {outputError ? <button type="button" onClick={() => setOutputRetry(value => value + 1)}>{outputError} · Retry</button> : "Loading tool details…"}
     </p>
   ) : null;
   const resolvedName = display.name || name;
@@ -415,7 +421,7 @@ export const ToolCallChip = memo(function ToolCallChip({
               const active = /^(in_progress|running)$/i.test(todo.status || "");
               return (
                 <div key={todo.id ?? `${todo.content}-${index}`} className="flex min-w-0 items-start gap-2 text-xs">
-                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] transition-colors", done ? "border-emerald-400/45 bg-emerald-400/10 text-emerald-300" : active ? "border-blue-400/55 bg-blue-400/10 text-blue-300" : "border-border/65 text-transparent")}>{done ? "✓" : active ? "•" : "·"}</span>
+                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] transition-colors", done ? "border-emerald-400/45 bg-emerald-400/10 text-emerald-300" : active ? "border-blue-400/55 bg-blue-400/10 text-blue-300" : "border-border/65 text-muted-foreground")}><RunStatus status={todo.status || "pending"} iconOnly decorative /></span>
                   <span className={cn("min-w-0 flex-1 leading-4", done ? "text-muted-foreground/60 line-through" : active ? "font-medium text-foreground/90" : "text-foreground/72")}>{todo.content}</span>
                 </div>
               );
@@ -557,7 +563,7 @@ export const ToolCallChip = memo(function ToolCallChip({
           }}
         >
           {running ? (
-            <LoaderCircle className="size-3 shrink-0 animate-spin" />
+            <RunStatus status={status} iconOnly decorative className="shrink-0 text-xs" />
           ) : nested && !isCommand ? null : (
             <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
           )}
@@ -650,9 +656,9 @@ export const ToolCallChip = memo(function ToolCallChip({
             <section>
               <p className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">Response</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono">{formatToolOutput(result || detail)}</pre>
-              {outputStatus}
             </section>
           ) : null}
+          {outputStatus}
           {!input && !(kind === "edit" && diff) && !result && !detail ? "No output available yet." : null}
         </div>
       ) : null}
@@ -675,9 +681,9 @@ export const ToolCallChip = memo(function ToolCallChip({
             <section className="min-w-0">
               <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Output</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>
-              {outputStatus}
             </section>
           ) : null}
+          {outputStatus}
           {!input && !result && !detail ? <p className="text-muted-foreground">No output available yet.</p> : null}
         </PopoverContent>
       ) : null}
@@ -816,9 +822,10 @@ export const ToolCallGroup = memo(function ToolCallGroup({
       onBuildPlan={(plan, options) => onBuildPlan?.(tool, plan, options)}
       buildDisabled={buildDisabled}
       onOpenRaw={() => {
-        if (!tool.resultUrl) { onOpenRaw?.(tool); return; }
-        void loadToolResult(tool.resultUrl).then(result => onOpenRaw?.({ ...tool, result, resultUrl: undefined }))
-          .catch(() => toast.error("Could not load full output"));
+        const url = tool.inputUrl || tool.resultUrl;
+        if (!url) { onOpenRaw?.(tool); return; }
+        void loadToolPayload(url).then(payload => onOpenRaw?.({ ...tool, ...payload, inputUrl: undefined, resultUrl: undefined }))
+          .catch(() => toast.error("Could not load full tool details"));
       }}
       autoExpand={!nested && Boolean(live || autoExpand) && tool.id === lastToolId}
       locked={false}
@@ -899,7 +906,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  onClick={() => setUserOpen((open) => open === null ? !groupOpen : !open)}
  >
  {activityRunning || combinedThinking?.done === false ? (
- <LoaderCircle className="size-3 shrink-0 animate-spin" />
+ <RunStatus status="running" iconOnly decorative className="shrink-0 text-xs" />
  ) : (
  <ChevronRight className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
  )}

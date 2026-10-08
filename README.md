@@ -78,9 +78,9 @@ Pfad. Er lädt ein unveränderliches Image aus GHCR, erstellt keine Git-Checkout
 Abhängigkeit und legt Daten sowie Workspace außerhalb des Containers ab.
 
 ```bash
-curl -fsSL https://github.com/f1shyondrugs/metis/releases/latest/download/metis-docker-install.sh \\
+curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/download/v1.0.10/metis-docker-install.sh \\
   -o metis-docker-install.sh
-bash metis-docker-install.sh --version latest
+bash metis-docker-install.sh --version v1.0.10
 ```
 
 Für reproduzierbare Installationen kann ein konkreter Release-Tag verwendet werden:
@@ -88,6 +88,11 @@ Für reproduzierbare Installationen kann ein konkreter Release-Tag verwendet wer
 ```bash
 bash metis-docker-install.sh --version v1.0.8
 ```
+
+`latest` wird vor dem ersten Schreibzugriff in den zuletzt veröffentlichten
+stabilen Release-Tag aufgelöst; danach bleiben Image, Compose-Konfiguration und
+Manifest auf genau diesem Tag. Für reproduzierbare Installationen kann der Tag
+direkt mit `--version vX.Y.Z` gesetzt werden.
 
 Ein Upgrade wird mit demselben Befehl und einer neuen Version ausgeführt. Die
 Installationsdatei `.metis-release.json`, `.env`, das Datenverzeichnis und der
@@ -105,7 +110,7 @@ downloads the platform installer to a temp file and executes that file — it do
 not run the installer from a pipe.
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)"
+/bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)"
 ```
 
 If an older native Linux install reports update status `127`, rerun the current
@@ -114,7 +119,7 @@ service name if customized). The old, already-running updater cannot acquire
 this PATH repair before its first successful update:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- \
+/bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)" -- \
   --non-interactive --native --install-dir "/absolute/path/to/metis-ai"
 ```
 
@@ -125,7 +130,7 @@ and pnpm directories in `.env` for service starts and future updates.
 Uninstall with the same bootstrap:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- uninstall --yes --keep-data
+/bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)" -- uninstall --yes --keep-data
 ```
 
 The same command works on macOS and Linux. Do not use `curl | bash` against
@@ -134,7 +139,7 @@ The same command works on macOS and Linux. Do not use `curl | bash` against
 The default path never creates an account or asks for credentials. Start the app and create the first account in the first-run UI. For agents and CI, pass optional configuration flags after `--`:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.sh)" -- \
+/bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)" -- \
  --non-interactive --port 3100
 ```
 
@@ -145,7 +150,7 @@ On Windows, the one-liner is a bootstrap without a `param()` block so
 `-File`:
 
 ```powershell
-irm https://raw.githubusercontent.com/f1shyondrugs/metis/master/install.ps1 | iex
+irm https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.ps1 | iex
 ```
 
 For a prompt-free Windows installation, download the platform script and pass

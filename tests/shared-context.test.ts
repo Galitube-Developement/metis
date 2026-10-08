@@ -431,11 +431,13 @@ test("subagents inherit the chat goal and parent-scoped goal references", async 
   assert.match(formatChatGoal(child?.sessionState, child?.ownerId, child!.id), /Use the compact layout/);
 });
 
-test("agent prompt tells the model to set a short chat title", () => {
+test("agent prompt tells the model to set a short chat title", async () => {
+  const { chatMetadataPrompt } = await import("../lib/chat-metadata-prompt");
   const source = readFileSync(new URL("../lib/worker-runner.ts", import.meta.url), "utf8");
-  assert.match(source, /update_chat_title with a 2-6 word label/);
-  assert.match(source, /not the first prompt/);
-  assert.match(source, /The user locked this chat title\. Do not call update_chat_title/);
+  assert.match(source, /chatMetadataPrompt/);
+  assert.match(chatMetadataPrompt({}), /update_chat_title with a 2-6 word label/);
+  assert.match(chatMetadataPrompt({}), /not the first prompt/);
+  assert.match(chatMetadataPrompt({ agentTitleLocked: true }), /The user locked this chat title. Do not call update_chat_title/);
 });
 
 test("rename modal exposes the agent title lock", () => {
