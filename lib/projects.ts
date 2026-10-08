@@ -467,8 +467,8 @@ export function projectContextBlock(project: Project, ownerId?: string, chats?: 
   `Active project: ${project.name}`,
   `Project instructions override the user's global custom instructions while this chat is in the project:\n${project.instructions || "(none)"}`,
   project.memoryMode === "project_only"
-   ? "Memory mode is project_only: do not use global memories or personal context-hub facts. Stay inside this project's instructions, files, notes, and chats."
-   : "Memory mode is default: global memories still apply, plus this project's files and notes.",
+   ? "Include global memory is OFF: global memory and personal context-hub reads and writes are forbidden. Use memory tools with scope project only. Stay inside this project's instructions, files, notes, and chats."
+   : "Include global memory is ON: choose scope project for facts specific to this project, or scope global for account-wide facts and preferences. Memory tools default to project scope in this chat. Global memories also apply.",
   project.memories.length
    ? `Project memory (durable facts managed from Project Home and memory tools):\n${project.memories.slice(-100).map((memory) => `- ${memory.id}: ${memory.content}`).join("\n")}`
    : "Project memory: (none)",

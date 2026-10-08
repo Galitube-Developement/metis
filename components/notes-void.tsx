@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, ExternalLink, LayoutGrid, Maximize2, Palette, Pin, PinOff, Plus, RefreshCw, Search, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { SharedNote, NoteTodo } from "@/lib/store";
+import { clearSavedNoteDraft, commitNoteDraft, enqueueNoteSave, mergeNoteDraft, mergeTodoDraft, noteConflictFields, type NoteDraft, type NoteConflict } from "@/lib/note-save-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableMarkdown } from "@/components/editable-markdown";
@@ -75,11 +76,18 @@ export function NotesVoid({
   const todoInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimers = useRef(new Map<string, number>());
+  const saveQueuesRef = useRef(new Map<string, Promise<unknown>>());
+  const confirmedNotesRef = useRef(new Map<string, SharedNote>());
+  const conflictRemoteRef = useRef(new Map<string, SharedNote>());
+  const retryDraftsRef = useRef<() => void>(() => {});
+  const blockedNoteIdsRef = useRef(new Set<string>());
+  const [conflicts, setConflicts] = useState<Record<string, NoteConflict[]>>({});
   const loadAbortRef = useRef<AbortController | null>(null);
   const hasInitializedViewRef = useRef(false);
  const notesRef = useRef<SharedNote[]>([]);
- const localDraftsRef = useRef(new Map<string, Partial<Pick<SharedNote, "title" | "content" | "position" | "size">>>());
+ const localDraftsRef = useRef(new Map<string, NoteDraft>());
  const dirtyNoteIdsRef = useRef(new Set<string>());
+ const draftOwnerRef = useRef<string | null>(null);
  const consumedFocusNoteIdRef = useRef<string | null>(null);
   const viewRef = useRef(view);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
@@ -87,13 +95,34 @@ export function NotesVoid({
   viewRef.current = view;
 
  const mergeLoadedNotes = useCallback((serverNotes: SharedNote[]) => {
- const currentById = new Map(notesRef.current.map((note) => [note.id, note]));
+ const ownerId = serverNotes.find((note) => note.ownerId)?.ownerId;
+ if (ownerId && draftOwnerRef.current !== ownerId) {
+   // Owner-scoped drafts must never carry across an account change.
+   for (const timer of saveTimers.current.values()) window.clearTimeout(timer);
+   saveTimers.current.clear();
+   localDraftsRef.current.clear(); dirtyNoteIdsRef.current.clear();
+   confirmedNotesRef.current.clear(); conflictRemoteRef.current.clear();
+   blockedNoteIdsRef.current.clear(); setConflicts({}); notesRef.current = [];
+   draftOwnerRef.current = ownerId;
+   try {
+     const saved = JSON.parse(sessionStorage.getItem(`metis:notes:drafts:${ownerId}`) || "{}") as { drafts?: Record<string, NoteDraft>; bases?: Record<string, SharedNote> };
+     for (const [id, draft] of Object.entries(saved.drafts || {})) {
+       const base = saved.bases?.[id];
+       if (base?.ownerId && base.ownerId !== ownerId) continue;
+       localDraftsRef.current.set(id, draft);
+       dirtyNoteIdsRef.current.add(id);
+       if (base) confirmedNotesRef.current.set(id, base);
+     }
+   } catch { /* stale or unavailable session storage */ }
+ }
  const merged = serverNotes.map((serverNote) => {
- const local = currentById.get(serverNote.id);
  const draft = localDraftsRef.current.get(serverNote.id);
- return draft && local
- ? { ...serverNote, ...draft }
- : serverNote;
+ const dirty = dirtyNoteIdsRef.current.has(serverNote.id);
+ const confirmed = confirmedNotesRef.current.get(serverNote.id);
+ if (!dirty && !blockedNoteIdsRef.current.has(serverNote.id) && (confirmed?.version ?? -1) <= serverNote.version) {
+   confirmedNotesRef.current.set(serverNote.id, serverNote);
+ }
+ return mergeNoteDraft((confirmed?.version ?? -1) > serverNote.version ? confirmed! : serverNote, draft);
  });
  const serverIds = new Set(serverNotes.map((note) => note.id));
  for (const local of notesRef.current) {
@@ -107,8 +136,7 @@ export function NotesVoid({
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
-    setStatus("loading");
-    setError("");
+    if (!blockedNoteIdsRef.current.size) setError("");
     try {
       const params = new URLSearchParams();
       if (chatId) params.set("chatId", chatId);
@@ -134,7 +162,9 @@ export function NotesVoid({
         setGlobalPinnedIds(pinBody.globalNoteIds || []);
         setConfiguredPinnedIds(pinBody.configuredNoteIds || []);
       }
-      setStatus("saved");
+      if (!localDraftsRef.current.size && !saveTimers.current.size && !saveQueuesRef.current.size && !blockedNoteIdsRef.current.size) setStatus("saved");
+      else setStatus(blockedNoteIdsRef.current.size ? "error" : "saving");
+      retryDraftsRef.current();
       if (!hasInitializedViewRef.current && next.length) {
         const minX = Math.min(...next.map((note) => note.position.x));
         const minY = Math.min(...next.map((note) => note.position.y));
@@ -193,9 +223,13 @@ export function NotesVoid({
     const refreshOnReturn = () => {
       if (document.visibilityState === "visible") void load();
     };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 10000);
     window.addEventListener("focus", refreshOnReturn);
     document.addEventListener("visibilitychange", refreshOnReturn);
     return () => {
+      window.clearInterval(interval);
       window.removeEventListener("focus", refreshOnReturn);
       document.removeEventListener("visibilitychange", refreshOnReturn);
     };
@@ -242,106 +276,178 @@ export function NotesVoid({
     [notes],
   );
 
-  const mergeServerNote = useCallback((serverNote: SharedNote, local?: SharedNote) => {
- const draft = localDraftsRef.current.get(serverNote.id);
- return draft && local
- ? { ...serverNote, ...draft }
- : serverNote;
+
+ const persistDrafts = useCallback(() => {
+   const ownerId = draftOwnerRef.current;
+   if (!ownerId) return;
+   try {
+     sessionStorage.setItem(`metis:notes:drafts:${ownerId}`, JSON.stringify({
+       drafts: Object.fromEntries(localDraftsRef.current),
+       bases: Object.fromEntries([...confirmedNotesRef.current].filter(([id]) => dirtyNoteIdsRef.current.has(id))),
+     }));
+   } catch { /* private mode or storage quota; in-memory drafts remain */ }
  }, []);
 
- const update = useCallback(async (note: SharedNote, patch: Omit<Partial<SharedNote>, "projectId"> & { projectId?: string | null }) => {
- setStatus("saving");
- try {
- let version = note.version;
- for (let attempt = 0; attempt < 3; attempt++) {
- const response = await fetch(`/api/notes/${encodeURIComponent(note.id)}`, {
- method: "PATCH",
- headers: {
- "Content-Type": "application/json",
- "Idempotency-Key": requestKey(),
- },
- body: JSON.stringify({ ...patch, version }),
- });
- const body = await response.json().catch(() => ({}));
- if (!response.ok) {
- if (response.status === 409 && body.note) {
- const serverNote = body.note as SharedNote;
- const current = notesRef.current.find((item) => item.id === note.id);
- const merged = mergeServerNote(serverNote, current);
- notesRef.current = notesRef.current.map((item) => item.id === note.id ? merged : item);
- setNotes(notesRef.current);
- if (attempt < 2 && patch.title === undefined && patch.content === undefined) { version = serverNote.version; continue; }
- }
- throw new Error(body.error || "Could not save note.");
- }
- const returnedNote = body.note as SharedNote;
- const draft = localDraftsRef.current.get(note.id);
- if (draft) {
- if (patch.title !== undefined && draft.title === patch.title) delete draft.title;
- if (patch.content !== undefined && draft.content === patch.content) delete draft.content;
- if (patch.position && JSON.stringify(draft.position) === JSON.stringify(patch.position)) delete draft.position;
- if (patch.size && JSON.stringify(draft.size) === JSON.stringify(patch.size)) delete draft.size;
- if (Object.keys(draft).length === 0) {
- localDraftsRef.current.delete(note.id);
- dirtyNoteIdsRef.current.delete(note.id);
- }
- }
- const current = notesRef.current.find((item) => item.id === note.id);
- const merged = mergeServerNote(returnedNote, current);
- notesRef.current = notesRef.current.map((item) => item.id === note.id ? merged : item);
- setNotes(notesRef.current);
- setStatus("saved");
- setError("");
- window.dispatchEvent(new Event("metis:notes-changed"));
- return;
- }
- } catch (cause) {
- setStatus("error");
- setError(cause instanceof Error ? cause.message : "Could not save note.");
- }
- }, [mergeServerNote]);
+ const update = useCallback(async (note: SharedNote) => {
+   const queuedOwner = draftOwnerRef.current;
+   try {
+     await enqueueNoteSave(saveQueuesRef.current, note.id, async () => {
+       if (queuedOwner !== draftOwnerRef.current || blockedNoteIdsRef.current.has(note.id)) return;
+       const originalPatch = { ...localDraftsRef.current.get(note.id) };
+       if (!Object.keys(originalPatch).length) return;
+       const base = confirmedNotesRef.current.get(note.id) || note;
+       setStatus("saving");
+       const result = await commitNoteDraft(base, originalPatch, async (patch, version, key) => {
+         const response = await fetch(`/api/notes/${encodeURIComponent(note.id)}`, {
+           method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+           body: JSON.stringify({ ...patch, version }),
+         });
+         const body = await response.json();
+         return { status: response.status, note: body.note as SharedNote | undefined, error: body.error as string | undefined };
+       });
+       if (queuedOwner !== draftOwnerRef.current) return;
+       const latestDraft = localDraftsRef.current.get(note.id) || {};
+       if (result.conflicts.length) {
+         // Compare against the latest typing, never repaint with an old request's text.
+         const fieldConflicts = noteConflictFields(base, latestDraft, result.note);
+         if (fieldConflicts.length) {
+           conflictRemoteRef.current.set(note.id, result.note);
+           blockedNoteIdsRef.current.add(note.id);
+           setConflicts(current => ({ ...current, [note.id]: fieldConflicts }));
+           setStatus("error"); setError("Another change overlaps your draft. Choose which values to keep.");
+           notesRef.current = notesRef.current.map(item => item.id === note.id ? mergeNoteDraft(result.note, latestDraft) : item);
+           setNotes(notesRef.current);
+           persistDrafts();
+           return;
+         }
+         confirmedNotesRef.current.set(note.id, result.note);
+         // The conflict vanished because the user made both sides identical. Requeue their current draft.
+         void update(mergeNoteDraft(result.note, latestDraft));
+         return;
+       }
+       const remaining = clearSavedNoteDraft(latestDraft, originalPatch);
+       const acknowledged = mergeNoteDraft(base, originalPatch);
+       const rebasedRemaining = mergeTodoDraft(acknowledged, remaining, result.note);
+       if (Object.keys(rebasedRemaining).length) localDraftsRef.current.set(note.id, rebasedRemaining);
+       else { localDraftsRef.current.delete(note.id); dirtyNoteIdsRef.current.delete(note.id); }
+       confirmedNotesRef.current.set(note.id, result.note);
+       notesRef.current = notesRef.current.map(item => item.id === note.id ? mergeNoteDraft(result.note, rebasedRemaining) : item);
+       setNotes(notesRef.current); persistDrafts(); setError("");
+       window.dispatchEvent(new Event("metis:notes-changed"));
+       if ("BroadcastChannel" in window) {
+         const channel = new BroadcastChannel("metis:notes");
+         channel.postMessage({ type: "success", noteId: note.id, version: result.note.version }); channel.close();
+       }
+     });
+     if (!localDraftsRef.current.size && !saveTimers.current.size && !saveQueuesRef.current.size && !blockedNoteIdsRef.current.size) setStatus("saved");
+   } catch (cause) {
+     setStatus(navigator.onLine ? "error" : "offline");
+     setError(cause instanceof Error ? cause.message : "Could not save note. Your draft is kept.");
+     persistDrafts();
+   }
+ }, [persistDrafts]);
 
- const scheduleUpdate = useCallback((note: SharedNote, patch: Partial<SharedNote>) => {
+ const scheduleUpdate = useCallback((note: SharedNote, patch: NoteDraft) => {
  const current = notesRef.current.find((item) => item.id === note.id) || note;
- if (patch.title !== undefined || patch.content !== undefined || patch.position || patch.size) {
+ if (patch.title !== undefined || patch.content !== undefined || patch.todos !== undefined || patch.position || patch.size || patch.projectId !== undefined || patch.color !== undefined || patch.archived !== undefined) {
  const draft = localDraftsRef.current.get(note.id) || {};
  if (patch.title !== undefined) draft.title = patch.title;
  if (patch.content !== undefined) draft.content = patch.content;
  if (patch.position) draft.position = patch.position;
  if (patch.size) draft.size = patch.size;
+ if (patch.todos !== undefined) draft.todos = patch.todos;
+ if (patch.projectId !== undefined) draft.projectId = patch.projectId;
+ if (patch.color !== undefined) draft.color = patch.color;
+ if (patch.archived !== undefined) draft.archived = patch.archived;
  localDraftsRef.current.set(note.id, draft);
  dirtyNoteIdsRef.current.add(note.id);
+ const ownerId = current.ownerId || draftOwnerRef.current;
+ if (ownerId) {
+   draftOwnerRef.current = ownerId;
+   try {
+     sessionStorage.setItem(`metis:notes:drafts:${ownerId}`, JSON.stringify({
+       drafts: Object.fromEntries(localDraftsRef.current),
+       bases: Object.fromEntries([...confirmedNotesRef.current].filter(([id]) => dirtyNoteIdsRef.current.has(id))),
+     }));
+   } catch { /* quota/private mode */ }
  }
- const nextNotes = notesRef.current.map((item) => item.id === note.id ? { ...item, ...patch } : item);
+ }
+ const { projectId: patchProjectId, ...patchWithoutProjectId } = patch;
+ const statePatch: Partial<SharedNote> = patchProjectId === null
+   ? { ...patchWithoutProjectId, projectId: undefined }
+   : { ...patchWithoutProjectId, ...(patchProjectId !== undefined ? { projectId: patchProjectId } : {}) };
+ const nextNotes = notesRef.current.map((item) => item.id === note.id ? { ...item, ...statePatch } : item);
  notesRef.current = nextNotes;
  setNotes(nextNotes);
  const existing = saveTimers.current.get(note.id);
  if (existing) window.clearTimeout(existing);
  const timer = window.setTimeout(() => {
- const latest = notesRef.current.find((item) => item.id === note.id) || { ...current, ...patch };
- void update(latest, { ...localDraftsRef.current.get(note.id), ...patch });
+ const latest = notesRef.current.find((item) => item.id === note.id) || { ...current, ...statePatch };
+ void update(latest);
  saveTimers.current.delete(note.id);
  }, 500);
  saveTimers.current.set(note.id, timer);
  }, [update]);
 
  const commitTodos = useCallback((note: SharedNote, todos: NoteTodo[]) => {
-   const current = notesRef.current.find((item) => item.id === note.id) || note;
-   const nextNotes = notesRef.current.map((item) => item.id === note.id ? { ...item, todos } : item);
-   notesRef.current = nextNotes;
-   setNotes(nextNotes);
-   void update(current, { todos });
- }, [update]);
+   scheduleUpdate(note, { todos });
+ }, [scheduleUpdate]);
 
  const setNoteProject = useCallback((note: SharedNote, nextProjectId: string | null) => {
-   const current = notesRef.current.find((item) => item.id === note.id) || note;
-   const next = { ...current };
-   if (nextProjectId) next.projectId = nextProjectId;
-   else delete next.projectId;
-   notesRef.current = notesRef.current.map((item) => item.id === note.id ? next : item);
+   scheduleUpdate(note, { projectId: nextProjectId });
+ }, [scheduleUpdate]);
+
+ const resolveConflict = useCallback((noteId: string, conflict: NoteConflict, choice: "local" | "server") => {
+   const note = notesRef.current.find((item) => item.id === noteId);
+   if (!note) return;
+   const draft = localDraftsRef.current.get(noteId) || {};
+   const remote = conflictRemoteRef.current.get(noteId);
+   const base = confirmedNotesRef.current.get(noteId);
+   const refreshedConflict = remote ? noteConflictFields(base, draft, remote).find(item => item.field === conflict.field) : undefined;
+   const latestLocal = conflict.field === "todos" && refreshedConflict ? refreshedConflict.local : draft[conflict.field] !== undefined ? draft[conflict.field] : conflict.local;
+   const latestRemote = refreshedConflict?.remote ?? conflict.remote;
+   if (choice === "local") {
+     draft[conflict.field] = latestLocal as never;
+     localDraftsRef.current.set(noteId, draft);
+     dirtyNoteIdsRef.current.add(noteId);
+   } else {
+     if (conflict.field === "todos") draft.todos = latestRemote as NoteTodo[];
+     else delete draft[conflict.field];
+     if (Object.keys(draft).length) localDraftsRef.current.set(noteId, draft);
+     else {
+       localDraftsRef.current.delete(noteId);
+       dirtyNoteIdsRef.current.delete(noteId);
+     }
+   }
+   const next = { ...note, [conflict.field]: choice === "local" ? latestLocal : latestRemote };
+   notesRef.current = notesRef.current.map((item) => item.id === noteId ? next : item);
    setNotes(notesRef.current);
-   void update(current, { projectId: nextProjectId });
- }, [update]);
+   const remaining = conflicts[noteId]?.filter((item) => item.field !== conflict.field) || [];
+   if (remaining.length) {
+     persistDrafts();
+     setConflicts((current) => ({ ...current, [noteId]: remaining }));
+     return;
+   }
+   blockedNoteIdsRef.current.delete(noteId);
+   confirmedNotesRef.current.set(noteId, conflictRemoteRef.current.get(noteId) || next);
+   conflictRemoteRef.current.delete(noteId);
+   persistDrafts();
+   setConflicts((current) => {
+     const nextConflicts = { ...current };
+     delete nextConflicts[noteId];
+     return nextConflicts;
+   });
+   if (Object.keys(draft).length) void update(next);
+   else { setError(""); setStatus("saved"); }
+ }, [conflicts, update, persistDrafts]);
+
+ retryDraftsRef.current = () => {
+   for (const [id] of localDraftsRef.current) {
+     if (blockedNoteIdsRef.current.has(id) || saveTimers.current.has(id) || saveQueuesRef.current.has(id)) continue;
+     const note = notesRef.current.find(item => item.id === id);
+     if (note) void update(note);
+   }
+ };
 
  const create = async () => {
     setStatus("saving");
@@ -361,6 +467,7 @@ export function NotesVoid({
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not create note.");
       const created = body.note as SharedNote;
+      confirmedNotesRef.current.set(created.id, created);
       const nextNotes = [created, ...notesRef.current.filter((item) => item.id !== created.id)];
       notesRef.current = nextNotes;
       setNotes(nextNotes);
@@ -384,8 +491,15 @@ export function NotesVoid({
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not delete note.");
-      setNotes((current) => current.filter((item) => item.id !== note.id));
-      setStatus("saved");
+      const timer = saveTimers.current.get(note.id);
+      if (timer) window.clearTimeout(timer);
+      saveTimers.current.delete(note.id); localDraftsRef.current.delete(note.id);
+      dirtyNoteIdsRef.current.delete(note.id); blockedNoteIdsRef.current.delete(note.id);
+      confirmedNotesRef.current.delete(note.id); conflictRemoteRef.current.delete(note.id);
+      setConflicts(current => { const next = { ...current }; delete next[note.id]; return next; });
+      notesRef.current = notesRef.current.filter(item => item.id !== note.id);
+      setNotes(notesRef.current); persistDrafts();
+      setStatus(localDraftsRef.current.size ? "saving" : "saved");
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not delete note.");
@@ -440,8 +554,8 @@ export function NotesVoid({
     }
     const availableColors = NOTE_COLORS.filter((color) => color !== current.color);
     const color = availableColors[Math.floor(Math.random() * availableColors.length)];
-    void update(current, { color });
-  }, [notes, update]);
+    scheduleUpdate(current, { color });
+  }, [notes, scheduleUpdate]);
 
   const fitAll = useCallback((items: SharedNote[] = notes) => {
     if (!items.length) {
@@ -645,9 +759,17 @@ export function NotesVoid({
     });
   }, []);
   useEffect(() => {
-    const refresh = () => { void load(); };
+    const refresh = () => { if (!document.hidden) void load(); };
     window.addEventListener("metis:notes-changed", refresh);
-    return () => window.removeEventListener("metis:notes-changed", refresh);
+    let channel: BroadcastChannel | null = null;
+    if ("BroadcastChannel" in window) {
+      channel = new BroadcastChannel("metis:notes");
+      channel.addEventListener("message", refresh);
+    }
+    return () => {
+      window.removeEventListener("metis:notes-changed", refresh);
+      channel?.close();
+    };
   }, [load]);
 
   return (
@@ -717,6 +839,13 @@ export function NotesVoid({
         }}
       />
       {error && !compact ? <div className="flex shrink-0 items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"><span className="truncate">{error}</span><Button type="button" size="xs" variant="ghost" onClick={() => void load()}>Retry</Button></div> : null}
+      {!compact && Object.entries(conflicts).flatMap(([noteId, items]) => items.map((conflict) => (
+        <div key={`${noteId}-${String(conflict.field)}`} className="flex shrink-0 items-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px]">
+          <span className="truncate">Conflict in {String(conflict.field)}.</span>
+          <Button type="button" size="xs" variant="ghost" onClick={() => resolveConflict(noteId, conflict, "local")}>Keep local</Button>
+          <Button type="button" size="xs" variant="ghost" onClick={() => resolveConflict(noteId, conflict, "server")}>Use server</Button>
+        </div>
+      )))}
       <div
         ref={surfaceRef}
         data-scratchpad-surface

@@ -1769,26 +1769,11 @@
   gap: 7px;
 }
 
-.automation-run-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--automation-queued);
-}
-
-.automation-run-dot[data-status="completed"] {
-  background: var(--automation-active);
-}
-
-.automation-run-dot[data-status="running"] {
-  background: var(--automation-running);
-}
-
-.automation-run-dot[data-status="error"],
-.automation-run-dot[data-status="cancelled"] {
-  background: var(--automation-error);
-}
+.automation-run-indicator { font-size: 12px; color: var(--automation-queued); }
+.automation-run-indicator[data-run-status="completed"] { color: var(--automation-active); }
+.automation-run-indicator[data-run-status="running"] { color: var(--automation-running); }
+.automation-run-indicator[data-run-status="error"],
+.automation-run-indicator[data-run-status="cancelled"] { color: var(--automation-error); }
 
 .automation-run-when {
   min-width: 0;
@@ -1992,4 +1977,21 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .team-agent-eyes-active { animation: none; transform: none; }
+}
+
+
+/* Shared lifecycle motion: text remains readable and settled states stop moving. */
+.run-status { display: inline-flex; align-items: center; gap: 0.375em; vertical-align: baseline; }
+.run-status-icon { width: 1em; height: 1em; flex: none; transform-origin: center; animation: run-status-settle 240ms ease-out both; }
+.run-status[data-run-status="running"] > .run-status-icon { animation: run-status-spin 1.15s linear infinite; }
+.run-status[data-run-status="queued"] > .run-status-icon { animation: run-status-queue 2.4s ease-in-out infinite; }
+.run-status[data-run-status="waiting"] > .run-status-icon { animation: run-status-wait 3s ease-in-out infinite; }
+.run-status[data-run-status="error"] > .run-status-icon { animation: run-status-attention 450ms ease-out 2; }
+@keyframes run-status-spin { to { transform: rotate(360deg); } }
+@keyframes run-status-queue { 0%, 100% { opacity: 0.65; transform: rotate(-12deg); } 50% { opacity: 1; transform: rotate(12deg); } }
+@keyframes run-status-wait { 0%, 100% { opacity: 0.65; } 50% { opacity: 1; } }
+@keyframes run-status-settle { from { opacity: 0.4; transform: scale(0.85); } to { opacity: 1; transform: scale(1); } }
+@keyframes run-status-attention { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) {
+  .run-status[data-run-status] > .run-status-icon { animation: none; transform: none; opacity: 1; }
 }

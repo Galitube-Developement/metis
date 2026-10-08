@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS, PROJECT_ICONS } from "@/lib/project-constants";
 import { cn } from "@/lib/utils";
@@ -172,6 +173,7 @@ export function ProjectHome({
  const [busy, setBusy] = useState(false);
  const [deleteOpen, setDeleteOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
+ const [memorySaving, setMemorySaving] = useState(false);
  const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
  const togglePanel = (id: ProjectHomePanel) => {
   setActivePanel((current) => (current === id ? null : id));
@@ -225,6 +227,29 @@ export function ProjectHome({
   if (response.ok) {
    window.dispatchEvent(new Event("metis:projects-changed"));
    load();
+  }
+ }
+
+ async function saveMemoryMode(includeGlobal: boolean) {
+  if (memorySaving) return;
+  setMemorySaving(true);
+  setError("");
+  try {
+   const nextMode = includeGlobal ? "default" : "project_only";
+   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ memoryMode: nextMode }),
+   });
+   const body = await response.json().catch(() => ({})) as { error?: string };
+   if (!response.ok) throw new Error(body.error || "Could not save memory settings.");
+   setMemoryMode(nextMode);
+   window.dispatchEvent(new Event("metis:projects-changed"));
+   await load();
+  } catch (cause) {
+   setError(cause instanceof Error ? cause.message : "Could not save memory settings.");
+  } finally {
+   setMemorySaving(false);
   }
  }
 
@@ -340,7 +365,7 @@ export function ProjectHome({
       }}
      />
      <p className="mt-1 text-xs text-muted-foreground">
-      {data.project.mode === "agents" ? "Agent-oriented project" : `${data.chats.length} chats`} · {data.files.length} files · {data.notes.length} notes
+         {data.project.mode === "agents" ? "Agent-oriented project" : `${data.chats.length} chats`} · {data.files.length} files · {data.notes.length} notes
      </p>
     </div>
     <div className="col-span-2 grid grid-cols-2 gap-2 sm:col-span-1 sm:flex sm:shrink-0">
@@ -355,8 +380,7 @@ export function ProjectHome({
     </div>
    </header>
 
-   {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
+   {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
    {data.project.mode === "agents" ? <ProjectAgentsPanel projectId={projectId} onOpenChat={onOpenChat} /> : null}
 
    <section className="grid gap-3">
@@ -414,26 +438,6 @@ export function ProjectHome({
     </div>
    </section>
 
-   <section className="grid gap-2">
-    <h3 className="text-sm font-medium">Memory scope</h3>
-    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-     {(["default", "project_only"] as const).map((mode) => (
-      <Button
-       key={mode}
-       type="button"
-       variant={memoryMode === mode ? "default" : "outline"}
-       className="min-w-0 px-2.5 text-xs sm:px-4 sm:text-sm"
-       onClick={() => {
-        setMemoryMode(mode);
-        void save({ memoryMode: mode });
-       }}
-      >
-       {mode === "default" ? "Default (include global)" : "Project only"}
-      </Button>
-     ))}
-    </div>
-   </section>
-
    <div className="grid grid-cols-2 gap-2" data-slot="project-home-tiles">
     <ProjectHomeTile
      id="instructions"
@@ -445,7 +449,7 @@ export function ProjectHome({
     />
     <ProjectHomeTile
      id="memory"
-     title="Memory"
+     title="Memories"
      meta={data.project.memories.length ? `${data.project.memories.length} ${data.project.memories.length === 1 ? "fact" : "facts"}` : "No facts yet"}
      icon={Brain}
      selected={activePanel === "memory"}
@@ -501,8 +505,27 @@ export function ProjectHome({
       ) : null}
 
       {activePanel === "memory" ? (
-       <section id="project-home-panel-memory" data-project-home-panel="memory" className="grid gap-3">
-        <ProjectMemoryManager projectId={projectId} memories={data.project.memories} onChanged={load} />
+       <section id="project-home-panel-memory" data-project-home-panel="memory" className="grid gap-6">
+        {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+     <section aria-labelledby="project-memory-settings" className="grid gap-3">
+      <h3 id="project-memory-settings" className="text-sm font-medium">Memory settings</h3>
+      <div className="flex items-start justify-between gap-4">
+       <div className="min-w-0">
+        <label htmlFor="include-global-memory" className="cursor-pointer text-sm font-medium">Include global memory</label>
+        <p id="include-global-memory-description" className="mt-1 text-xs leading-5 text-muted-foreground">
+         {memoryMode === "default"
+          ? "Chats and agents can read and write project or global memories. Project-specific facts stay in this project."
+          : "Chats and agents can only read and write this project's memories. Global memory and personal context are blocked."}
+        </p>
+       </div>
+       <Switch id="include-global-memory" checked={memoryMode === "default"} disabled={memorySaving}
+        aria-describedby="include-global-memory-description" onCheckedChange={(checked) => void saveMemoryMode(checked)} />
+      </div>
+     </section>
+     <section aria-labelledby="project-memories-title" className="grid gap-3">
+      <h3 id="project-memories-title" className="text-sm font-medium">Project memories</h3>
+      <ProjectMemoryManager projectId={projectId} memories={data.project.memories} onChanged={load} />
+     </section>
        </section>
       ) : null}
 

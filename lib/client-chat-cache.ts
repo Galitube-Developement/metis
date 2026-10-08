@@ -1,5 +1,7 @@
 const DB_NAME = "metis-client-chat-cache";
-const DB_VERSION = 1;
+// Invalidate pre-lazy-payload snapshots once; they retained megabytes of raw
+// tool input/output even when the server returned a compact replacement.
+const DB_VERSION = 2;
 const STORE_NAME = "snapshots";
 export const MAX_SNAPSHOTS = 8;
 export const MAX_MEMORY_CHAT_SNAPSHOTS = 8;
@@ -110,10 +112,12 @@ function openDatabase(): Promise<IDBDatabase | null> {
         settled = true;
         resolve(db);
       };
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: "key" });
+        } else if ((event as IDBVersionChangeEvent).oldVersion < DB_VERSION) {
+          request.transaction?.objectStore(STORE_NAME).clear();
         }
       };
       request.onsuccess = () => finish(request.result);

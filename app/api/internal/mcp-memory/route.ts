@@ -1,10 +1,12 @@
 import { createMemory, deleteMemory, getChat, listMemories, updateMemory } from "@/lib/db-store";
 import {
+  getProject,
   createProjectMemory,
   deleteProjectMemory,
   listProjectMemories,
   updateProjectMemory,
 } from "@/lib/projects";
+import { getJob } from "@/lib/db-jobs";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { bearerTokenMatches } from "@/lib/security";
 
@@ -26,11 +28,39 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as Record<string, unknown>;
   const action = typeof body.action === "string" ? body.action : "list";
   const chatId = req.headers.get("x-ai-chat-id")?.trim() || "";
-  const projectId = chatId ? getChat(chatId, userId)?.projectId : undefined;
+  // Resolve the live policy from the owned chat on every call, including during
+  // a running job. Never fall back to account memory for a missing project/chat.
+  if (process.env.NODE_ENV === "production" && (!jobId || !userId)) {
+    return Response.json({ error: "A leased owner context is required" }, { status: 401 });
+  }
+  const chat = chatId ? getChat(chatId, userId) : null;
+  if (!chat) return Response.json({ error: "Chat not found" }, { status: 404 });
+  if (jobId) {
+    const job = getJob(jobId);
+    if (!job || job.chatId !== chat.id || job.userId !== userId) {
+      return Response.json({ error: "Run context does not match this chat" }, { status: 403 });
+    }
+  }
+  if (chat.incognito) return Response.json({ error: "Memory tools are unavailable in Incognito." }, { status: 403 });
+  const project = chat.projectId ? getProject(chat.projectId, userId) : null;
+  if (chat.projectId && !project) return Response.json({ error: "Project not found" }, { status: 404 });
+  if (body.scope !== undefined && body.scope !== "project" && body.scope !== "global") {
+    return Response.json({ error: "scope must be project or global" }, { status: 400 });
+  }
+  const scope = body.scope ?? (project ? "project" : "global");
+  if (scope === "project" && !project) return Response.json({ error: "No project is active" }, { status: 400 });
+  if (scope === "global" && project?.memoryMode === "project_only") {
+    return Response.json({ error: "Global memory access is disabled for this project. Use scope project." }, { status: 403 });
+  }
+  const projectId = scope === "project" ? project?.id : undefined;
+  const availableScopes = project
+    ? project.memoryMode === "project_only" ? ["project"] : ["project", "global"]
+    : ["global"];
+  if (action === "access") return Response.json({ scope, availableScopes });
 
   if (action === "list") {
     return Response.json({
-      scope: projectId ? "project" : "global",
+      scope, availableScopes,
       memories: projectId ? listProjectMemories(projectId, userId) : listMemories(userId),
     });
   }
@@ -41,7 +71,7 @@ export async function POST(req: Request) {
     const memory = projectId
       ? createProjectMemory(projectId, content, tags, userId)
       : createMemory(content, tags, userId);
-    return Response.json({ scope: projectId ? "project" : "global", memory });
+    return Response.json({ scope, availableScopes, memory });
   }
   if (action === "edit") {
     const id = typeof body.id === "string" ? body.id : "";
@@ -54,13 +84,13 @@ export async function POST(req: Request) {
       ? updateProjectMemory(projectId, id, patch, userId)
       : updateMemory(id, patch, userId);
     if (!memory) return Response.json({ error: "Memory not found" }, { status: 404 });
-    return Response.json({ memory });
+    return Response.json({ scope, memory });
   }
   if (action === "delete") {
     const id = typeof body.id === "string" ? body.id : "";
     const deleted = projectId ? deleteProjectMemory(projectId, id, userId) : deleteMemory(id, userId);
     if (!deleted) return Response.json({ error: "Memory not found" }, { status: 404 });
-    return Response.json({ ok: true, id });
+    return Response.json({ ok: true, scope, id });
   }
   return Response.json({ error: "Unknown memory action" }, { status: 400 });
 }

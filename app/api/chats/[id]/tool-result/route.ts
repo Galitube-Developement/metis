@@ -17,8 +17,11 @@ export async function GET(req: Request, { params }: Params) {
   const message = getChat(id, user.id)?.messages.find(message => message.id === messageId);
   const tool = message?.tools?.find(tool => tool.id === toolId)
     || message?.parts?.find(part => part.type === "tool" && part.id === toolId);
-  if (!tool || !("result" in tool) || typeof tool.result !== "string") {
+  if (!tool || (!("result" in tool) || typeof tool.result !== "string") && (!("input" in tool) || typeof tool.input !== "string")) {
     return Response.json({ error: "Tool output not found" }, { status: 404 });
   }
-  return Response.json({ result: tool.result }, { headers: { "Cache-Control": "private, no-store" } });
+  return Response.json({
+    ...("result" in tool && typeof tool.result === "string" ? { result: tool.result } : {}),
+    ...("input" in tool && typeof tool.input === "string" ? { input: tool.input } : {}),
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

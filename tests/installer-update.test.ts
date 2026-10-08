@@ -37,7 +37,7 @@ test("native Linux settings updates run linux.sh non-interactively", () => {
   assert.equal(plan.unitName, "metis-ai-self-update");
 });
 
-test("native commit updates omit --version so the installer selects origin/master", () => {
+test("native commit updates omit --version so the installer selects the requested dev commit", () => {
   const plan = buildInstallerUpdatePlan({
     ...base,
     docker: false,

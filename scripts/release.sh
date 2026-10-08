@@ -88,7 +88,14 @@ cp public/install/docker.sh "$work_dir/metis-docker-install.sh"
 cp public/install/linux.sh "$work_dir/metis-linux.sh"
 cp public/install/macos.sh "$work_dir/metis-macos.sh"
 cp public/install/windows.ps1 "$work_dir/metis-windows.ps1"
-sha256sum "$work_dir/metis-ai-${tag}.tar.gz" "$work_dir/metis-install.sh" "$work_dir/metis-install.ps1" "$work_dir/metis-docker-install.sh" "$work_dir/metis-linux.sh" "$work_dir/metis-macos.sh" "$work_dir/metis-windows.ps1" > "$work_dir/SHA256SUMS"
+(cd "$work_dir" && sha256sum \
+  "metis-ai-${tag}.tar.gz" \
+  "metis-install.sh" \
+  "metis-install.ps1" \
+  "metis-docker-install.sh" \
+  "metis-linux.sh" \
+  "metis-macos.sh" \
+  "metis-windows.ps1" > SHA256SUMS && sha256sum --check --strict SHA256SUMS)
 
 image="${METIS_IMAGE_REPOSITORY:-ghcr.io/f1shyondrugs/metis-ai}"
 gh auth token | docker login ghcr.io --username "$owner" --password-stdin >/dev/null
@@ -98,7 +105,7 @@ docker buildx build --push \
   --label "org.opencontainers.image.version=${tag}" \
   --label "org.opencontainers.image.revision=$commit" \
   --build-arg "METIS_RELEASE_TAG=${tag}" \
-  --build-arg "METIS_RELEASE_VERSION=${tag}" \
+  --build-arg "METIS_RELEASE_VERSION=${expected_version}" \
   --build-arg "METIS_RELEASE_COMMIT=$commit" .
 
 notes_file="$work_dir/release-notes.md"
@@ -110,55 +117,8 @@ notes_file="$work_dir/release-notes.md"
     p && /^## / {exit}
     p {print}
   ' CHANGELOG.md
-  cat <<EOF
+  bash scripts/release-install-notes.sh "$tag" "$repo"
 
-## How to install
-
-Pick the installer that matches how you want to run Metis.
-
-### Docker (recommended for production)
-
-\`\`\`bash
-curl -fsSL https://github.com/${repo}/releases/latest/download/metis-docker-install.sh -o metis-docker-install.sh
-bash metis-docker-install.sh --version ${tag}
-\`\`\`
-
-### Linux and macOS
-
-\`\`\`bash
-/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/${repo}/master/install.sh)"
-\`\`\`
-
-From this release:
-
-\`\`\`bash
-curl -fsSL https://github.com/${repo}/releases/latest/download/metis-install.sh -o metis-install.sh
-bash metis-install.sh
-\`\`\`
-
-Linux is native systemd by default. Docker: add \`-- --docker\` after the bootstrap, or run \`bash metis-linux.sh --docker\`.
-On macOS, Docker is used when available; add \`-- --native\` to force Node.js + launchd.
-
-### Windows
-
-\`\`\`powershell
-irm https://raw.githubusercontent.com/${repo}/master/install.ps1 | iex
-\`\`\`
-
-From this release:
-
-\`\`\`powershell
-irm https://github.com/${repo}/releases/latest/download/metis-install.ps1 | iex
-\`\`\`
-
-Native (no Docker): download \`metis-windows.ps1\` and run \`powershell -File .\\metis-windows.ps1 -Native\`.
-
-### Source tarball
-
-Download \`metis-ai-${tag}.tar.gz\`, extract it, copy \`.env.example\` to \`.env\`, then \`pnpm install && pnpm build\`.
-
-See [CHANGELOG.md](https://github.com/${repo}/blob/${tag}/CHANGELOG.md) for the full changelog.
-EOF
 } > "$notes_file"
 
 gh release create "$tag" \

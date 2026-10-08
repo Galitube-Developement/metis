@@ -1,6 +1,8 @@
 "use client";
 
-import { Activity, Check, ChevronRight, CircleAlert, Clock3, CircleStop } from "lucide-react";
+import { RunStatus } from "@/components/run-status";
+
+import { Activity, ChevronRight } from "lucide-react";
 import { TeamAgentAvatar } from "@/components/team-agent-avatar";
 import { Markdown } from "@/components/markdown";
 import type { HandoffActivity } from "@/lib/chat-program-events";
@@ -8,11 +10,11 @@ import type { ProjectAgent } from "@/lib/project-team-types";
 import { cn } from "@/lib/utils";
 
 const statuses = {
-  queued: { label: "Queued", Icon: Clock3 },
-  running: { label: "Working", Icon: Activity },
-  completed: { label: "Replied", Icon: Check },
-  error: { label: "Failed", Icon: CircleAlert },
-  cancelled: { label: "Cancelled", Icon: CircleStop },
+  queued: { label: "Queued" },
+  running: { label: "Working" },
+  completed: { label: "Replied" },
+  error: { label: "Failed" },
+  cancelled: { label: "Cancelled" },
 };
 
 export function ChatTeamActivity({ activities, agents = [] }: { activities: HandoffActivity[]; agents?: ProjectAgent[] }) {
@@ -31,7 +33,7 @@ export function ChatTeamActivity({ activities, agents = [] }: { activities: Hand
     </div>
     <div className="divide-y divide-border/40">
       {activities.map(activity => {
-        const { label, Icon } = statuses[activity.status];
+        const { label } = statuses[activity.status];
         const agent = agents.find(item => item.name === activity.recipient);
         return <details key={activity.id} data-handoff-activity={activity.id} className="group min-w-0">
           <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm hover:bg-muted/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden" aria-label={`${activity.sender} to ${activity.recipient}, ${label}. Show task and result`}>
@@ -40,7 +42,7 @@ export function ChatTeamActivity({ activities, agents = [] }: { activities: Hand
               <span className="block break-words font-medium">{activity.recipient}</span>
               <span className="block truncate text-xs text-muted-foreground">Assigned by {activity.sender}</span>
             </span>
-            <span className={cn("flex shrink-0 items-center gap-1.5 text-xs", activity.status === "error" ? "text-destructive" : "text-muted-foreground")}><Icon className="size-3.5" aria-hidden="true"/>{label}</span>
+            <span className={cn("flex shrink-0 items-center gap-1.5 text-xs", activity.status === "error" ? "text-destructive" : "text-muted-foreground")}><RunStatus status={activity.status} label={label}/></span>
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true"/>
           </summary>
           <div className="space-y-3 pb-3 pl-1 pr-1 text-sm [overflow-wrap:anywhere] sm:pl-8">
@@ -64,8 +66,7 @@ export function ChatTeamReview({ status }: { status: string }) {
   const active = ["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(status);
   const failed = ["error", "interrupted"].includes(status);
   const title = status === "queued" ? "Waiting to review team results" : active ? "Reviewing team results…" : failed ? "Team review interrupted" : status === "cancelled" ? "Team review cancelled" : "Team review finished";
-  const Icon = failed ? CircleAlert : active ? Activity : status === "cancelled" ? CircleStop : Check;
   return <div data-chat-team-review className={cn("flex items-center gap-2 px-1 py-1 text-xs", failed ? "text-destructive" : "text-muted-foreground")}>
-    <Icon className="size-3.5 shrink-0" aria-hidden="true"/><span aria-live="polite">{title}</span>
+    <RunStatus status={status} iconOnly decorative/><span aria-live="polite">{title}</span>
   </div>;
 }

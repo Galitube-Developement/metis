@@ -300,6 +300,7 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "list_memories",
   "add_memory",
   "edit_memory",
+  "delete_memory",
   "list_server_tools",
   "ensure_capability",
 ] as const;

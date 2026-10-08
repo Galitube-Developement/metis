@@ -2385,7 +2385,7 @@ export function SettingsPanel({
                 <div>
                   <h3 id="settings-memories" className="text-sm font-medium">Memories</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Relevant memories and context are retrieved when they can help with a request. Useful information may be saved automatically.
+                    Global facts and preferences shared across chats. Projects manage their own memories in the Memories dialog; Include global memory controls whether their agents can read or write this list.
                   </p>
                 </div>
                 <div className="flex gap-2">

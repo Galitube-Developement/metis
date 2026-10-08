@@ -44,3 +44,12 @@ test("loading and empty overlays do not capture pan or wheel on the notes surfac
   assert.match(notes, /!visibleNotes\.length \? \(\s*<div className="pointer-events-none absolute inset-0/);
   assert.match(notes, /id: "__pan__"/);
 });
+
+test("note saves keep confirmed base separate and expose field-wise conflicts", async () => {
+  const source = readFileSync(new URL("../lib/note-save-state.ts", import.meta.url), "utf8");
+  assert.match(source, /enqueueNoteSave/);
+  assert.match(source, /noteConflictFields/);
+  assert.match(notes, /confirmedNotesRef/);
+  assert.match(notes, /Keep local/);
+  assert.match(notes, /Use server/);
+});

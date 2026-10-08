@@ -21,6 +21,7 @@ import type {
 } from "@/lib/store";
 import { chatUploadDir, resolveUploadPath } from "@/lib/uploads";
 import { RUNTIME_MODES } from "@/lib/runtime-mode";
+import { currentChatTodos, type ChatTodoState } from "@/lib/chat-todos";
 import { recordChatSyncEvent, type ChatSyncEventKind } from "@/lib/chat-sync";
 
 const now = () => new Date().toISOString();
@@ -48,6 +49,7 @@ const MAX_CHAT_KEYWORD_LENGTH = 80;
 const MAX_CHAT_TITLE_LENGTH = 48;
 type ChatPageResult = {
   chat: Chat;
+  currentTodos: ChatTodoState | null;
   messageOffset: number;
   hasEarlierMessages: boolean;
   totalMessages: number;
@@ -418,10 +420,12 @@ function makeSearchSnippet(text: string, index: number, matchLength: number) {
 export function getChat(id: string, ownerId?: string): Chat | null {
   if (!id || id.includes("/") || id.includes("..")) return null;
   const db = getDatabase();
-  const row = ownerId
-    ? db.prepare("SELECT data, updated_at as updatedAt FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
-    : db.prepare("SELECT data, updated_at as updatedAt FROM chats WHERE id = ?").get(id);
-  const updatedAt = (row as { updatedAt?: string } | undefined)?.updatedAt;
+  // Check the tiny revision row before transferring a potentially huge transcript.
+  const identity = ownerId
+    ? db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    : db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ?").get(id);
+  const updatedAt = (identity as { updatedAt?: string } | undefined)?.updatedAt;
+  if (!updatedAt) return null;
   const cached = chatCache.get(id);
   if (cached && cached.updatedAt === updatedAt) {
     if (cached.chat.incognito && cached.chat.expiresAt && new Date(cached.chat.expiresAt).getTime() <= Date.now()) {
@@ -432,6 +436,9 @@ export function getChat(id: string, ownerId?: string): Chat | null {
     }
     return cached.chat.ownerId && ownerId && cached.chat.ownerId !== ownerId ? null : cached.chat;
   }
+  const row = ownerId
+    ? db.prepare("SELECT data FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    : db.prepare("SELECT data FROM chats WHERE id = ?").get(id);
   const chat = rowChat(row);
   if (chat?.incognito && chat.expiresAt && new Date(chat.expiresAt).getTime() <= Date.now()) {
     getDatabase().prepare("DELETE FROM chats WHERE id = ?").run(id);
@@ -464,63 +471,22 @@ export function getChatPage(
   if (cachedPage?.updatedAt === identity.updatedAt) {
     return cachedPage.page;
   }
+  // JSON1 re-parsed the complete transcript for metadata, count, iteration and
+  // aggregation. Read once and slice in JS; raw messages remain unchanged.
   const row = ownerId
-    ? db.prepare(
-        `SELECT json_remove(data, ?) AS base,
-                json_array_length(data, ?) AS total,
-                updated_at AS updatedAt
-         FROM chats
-         WHERE id = ? AND owner_id = ?`,
-      ).get("$.messages", "$.messages", id, ownerId) as
-      | { base?: string; total?: number; updatedAt?: string }
-      | undefined
-    : db.prepare(
-        `SELECT json_remove(data, ?) AS base,
-                json_array_length(data, ?) AS total,
-                updated_at AS updatedAt
-         FROM chats
-         WHERE id = ?`,
-      ).get("$.messages", "$.messages", id) as
-      | { base?: string; total?: number; updatedAt?: string }
-      | undefined;
-  if (!row?.base) return null;
-
-  const totalMessages = Math.max(0, Number(row.total) || 0);
-  const end = Math.max(0, totalMessages - messageOffset);
-  const start = Math.max(0, end - messageLimit);
-  const messageRow = ownerId
-    ? db.prepare(
-        `SELECT COALESCE(json_group_array(json(value)), ?) AS messages
-         FROM (
-           SELECT value
-           FROM chats, json_each(chats.data, ?)
-           WHERE chats.id = ? AND chats.owner_id = ?
-             AND CAST(json_each.key AS INTEGER) >= ?
-             AND CAST(json_each.key AS INTEGER) < ?
-           ORDER BY CAST(json_each.key AS INTEGER)
-           LIMIT ?
-         )`,
-      ).get("[]", "$.messages", id, ownerId, start, end, messageLimit) as { messages?: string } | undefined
-    : db.prepare(
-        `SELECT COALESCE(json_group_array(json(value)), ?) AS messages
-         FROM (
-           SELECT value
-           FROM chats, json_each(chats.data, ?)
-           WHERE chats.id = ?
-             AND CAST(json_each.key AS INTEGER) >= ?
-             AND CAST(json_each.key AS INTEGER) < ?
-           ORDER BY CAST(json_each.key AS INTEGER)
-           LIMIT ?
-         )`,
-      ).get("[]", "$.messages", id, start, end, messageLimit) as { messages?: string } | undefined;
-
+    ? db.prepare("SELECT data FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    : db.prepare("SELECT data FROM chats WHERE id = ?").get(id);
   try {
-    const base = JSON.parse(row.base) as Omit<Chat, "messages">;
-    const messages = JSON.parse(messageRow?.messages || "[]") as ChatMessage[];
-    const chat: Chat = { ...base, messages };
-    if (row.updatedAt) chat.updatedAt = row.updatedAt;
+    const full = rowChat(row);
+    if (!full) return null;
+    if (full.incognito && full.expiresAt && new Date(full.expiresAt).getTime() <= Date.now()) return null;
+    const totalMessages = full.messages.length;
+    const end = Math.max(0, totalMessages - messageOffset);
+    const start = Math.max(0, end - messageLimit);
+    const chat: Chat = { ...full, updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) };
     const page: ChatPageResult = {
       chat,
+      currentTodos: currentChatTodos(full.messages),
       messageOffset,
       hasEarlierMessages: start > 0,
       totalMessages,

@@ -1028,7 +1028,9 @@ export async function runQueuedJob(job: AgentJob) {
               job.automationContext ? `Automation-level context from the source chat and prior completed runs. Use it as durable background context, but keep this run's transcript separate:\n${job.automationContext}` : "",
             ]
         : [
-                  "Personal context: retrieve the smallest relevant slice from the owner's shared context hub. The system selectively captures clear first-person profile facts and interaction preferences; ordinary requests, temporary state, secrets, and tool output are not auto-saved. Use context_remember for durable facts discovered through tools or for an explicit correction. Never dump the context hub or memory list into the prompt.",
+                  project?.memoryMode === "project_only"
+                    ? "Include global memory is OFF: only project memory tools are allowed; global memory and personal context-hub reads and writes are forbidden."
+                    : "Personal context: retrieve the smallest relevant slice from the owner's shared context hub. The system selectively captures clear first-person profile facts and interaction preferences; ordinary requests, temporary state, secrets, and tool output are not auto-saved. Use context_remember for durable facts discovered through tools or for an explicit correction. Never dump the context hub or memory list into the prompt.",
           ]),
       ...(job.incognito || chat.incognito ? [] : [
       "When referring to an existing or newly created plan/canvas, include its exact Markdown link using workspace://plan/<id> or workspace://canvas/<id>.",

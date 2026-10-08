@@ -26,7 +26,7 @@ test("focused mobile composer stays above the software keyboard", () => {
   assert.match(shell, /const visualShrink = Math\.max\(0, mobileKeyboardBaselineRef\.current - visibleBottom\)/);
   assert.match(shell, /const layoutShrink = Math\.max\(0, mobileKeyboardBaselineRef\.current - currentLayoutHeight\)/);
   assert.match(shell, /const obscured = Math\.max\(0, visualShrink - layoutShrink\)/);
-  assert.match(shell, /composerFocused && "max-md:fixed max-md:z-30"/);
+  assert.match(shell, /composerFocused && "max-md:fixed max-md:inset-x-0 max-md:z-30"/);
   assert.match(shell, /style=\{composerFocused \? \{ bottom: mobileKeyboardInset \} : undefined\}/);
 });
 
@@ -88,7 +88,7 @@ test("opening a chat pins the transcript to the bottom and does not page history
   assert.match(shell, /}, \[activeChatId, paneKey, loadingChatId\]\)/);
   assert.doesNotMatch(shell, /}, \[activeChatId, paneKey, loadingChatId, messages\]\)/);
   assert.match(shell, /if \(enteringChatRef\.current\) return/);
-  assert.match(shell, /visibleTranscriptMessages\(messages, transcriptPinned\)/);
+  assert.match(shell, /visibleTranscriptMessages\(projectedTranscript, transcriptPinned\)/);
   assert.match(shell, /chat-transcript-message/);
   assert.doesNotMatch(shell, /className="messages-composer-mask min-h-0 flex-1 overflow-y-auto/);
 });
@@ -117,6 +117,8 @@ test("composer input stays in the action row so wrap width does not jump", () =>
   assert.doesNotMatch(shell, /composer-single-line/);
   assert.doesNotMatch(shell, /composerMultiline/);
   assert.match(shell, /composer-input-area relative min-w-0 flex-1/);
-  assert.match(shell, /useLayoutEffect\(\(\) => \{[\s\S]*textareaRef\.current[\s\S]*el\.style\.height = "auto"/);
-  assert.match(shell, /el\.style\.overflowY = nextHeight >= 180 \? "auto" : "hidden"/);
+  assert.match(shell, /<RichComposerInput[\s\S]*?ref=\{textareaRef\}/);
+  const composer = readFileSync(new URL("../components/rich-composer-input.tsx", import.meta.url), "utf8");
+  assert.match(composer, /element\.style\.height = "auto"/);
+  assert.match(composer, /element\.style\.overflowY = fullHeight > MAX_COMPOSER_HEIGHT \? "auto" : "hidden"/);
 });

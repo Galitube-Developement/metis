@@ -88,13 +88,11 @@ test("project hub uses clickable tiles that open bulky sections in a modal and k
   assert.match(homeSource, /data-project-home-panel="files"/);
   assert.match(homeSource, /activePanel === "instructions" \? \(/);
   assert.match(homeSource, />Appearance</);
-  assert.match(homeSource, />Memory scope</);
-  const appearanceAt = homeSource.indexOf(">Appearance<");
-  const scopeAt = homeSource.indexOf(">Memory scope<");
+  assert.match(homeSource, /Include global memory/);
+  assert.match(homeSource, /<Switch id="include-global-memory"/);
+  assert.doesNotMatch(homeSource, /<Tabs|setHomeTab/);
   const tilesAt = homeSource.indexOf('data-slot="project-home-tiles"');
   const notesAt = homeSource.indexOf('data-slot="project-home-notes"');
-  assert.ok(appearanceAt > 0 && scopeAt > appearanceAt, "Memory scope stays visible after Appearance");
-  assert.ok(tilesAt > scopeAt, "tiles come after Memory scope");
   assert.ok(notesAt > tilesAt, "Notes stay at the bottom");
 });
 

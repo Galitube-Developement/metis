@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Metis AI Linux installer. Run as a file, not via `curl | bash`.
-# Prefer: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/f1shyondrugs/metis-ai/master/install.sh)"
+# Prefer: /bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)"
 set -Eeuo pipefail
 
 # systemd-run and other non-login environments omit HOME. `set -u` then
@@ -358,15 +358,57 @@ public_url="${public_url:-http://${public_host}:${port}}"
 [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || die "Web port must be a number between 1 and 65535."
 [[ "$mcp_port" =~ ^[0-9]+$ && "$mcp_port" -ge 1 && "$mcp_port" -le 65535 ]] || die "MCP port must be a number between 1 and 65535."
 [[ "$service_name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "Service name may contain letters, numbers, underscores and hyphens."
-if [[ -n "$release_version" && "$release_version" != "latest" ]]; then
-  [[ "$release_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
-fi
-if [[ -n "$commit_sha" ]]; then
-  [[ "$commit_sha" =~ ^[0-9a-fA-F]{7,40}$ ]] || die "Commit must be a git SHA."
-fi
 if [[ -n "$release_version" && -n "$commit_sha" ]]; then
   die "Use either --version or --commit, not both."
 fi
+if [[ -n "$commit_sha" ]]; then
+  [[ "$commit_sha" =~ ^[0-9a-fA-F]{7,40}$ ]] || die "Commit must be a git SHA."
+else
+  if [[ -z "$release_version" || "$release_version" == "latest" ]]; then
+    command -v curl >/dev/null 2>&1 || die "curl is required to resolve the latest stable Metis AI release."
+    release_api="$(curl -fsSL -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest')" ||
+      die "Could not resolve the latest stable Metis AI release."
+    release_version="$(printf '%s' "$release_api" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9A-Za-z.-]*\)".*/\1/p' | head -n 1)"
+  fi
+  [[ "$release_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
+    die "The selected stable release tag is invalid or unavailable: ${release_version:-empty}."
+fi
+
+# Validate releases before changing an existing installation; Git need not be installed yet.
+if [[ "$REPO_URL" == https://github.com/* ]]; then
+  repo_slug="${REPO_URL#https://github.com/}"; repo_slug="${repo_slug%.git}"
+  command -v curl >/dev/null 2>&1 || die "curl is required to validate the selected release."
+  if [[ -n "$commit_sha" ]]; then
+    commit_json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo_slug/commits/$commit_sha")" ||
+      die "The selected commit is unavailable: $commit_sha"
+    commit_sha="$(printf '%s' "$commit_json" | sed -n 's/^[[:space:]]*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)"
+    [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || die "GitHub returned no valid commit."
+  else
+    selected_release="${release_api:-}"
+    if [[ -z "$selected_release" ]]; then
+      selected_release="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo_slug/releases/tags/$release_version")" ||
+        die "The selected published release is unavailable: $release_version"
+    fi
+    printf '%s' "$selected_release" | grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS"' ||
+      die "The selected release has no installer checksum asset."
+  fi
+else
+  # Private/local Git mirrors are an explicit developer transport override.
+  command -v git >/dev/null 2>&1 || die "git is required for a custom repository."
+  if [[ -n "$commit_sha" ]]; then
+    ref_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/metis-ref-check.XXXXXX")"
+    git -C "$ref_check_dir" init -q
+    if ! git -C "$ref_check_dir" fetch --depth=1 "$REPO_URL" "$commit_sha" >/dev/null 2>&1; then
+      rm -rf "$ref_check_dir"; die "The selected commit is unavailable: $commit_sha"
+    fi
+    commit_sha="$(git -C "$ref_check_dir" rev-parse FETCH_HEAD)"
+    rm -rf "$ref_check_dir"
+  else
+    git ls-remote --exit-code --tags "$REPO_URL" "refs/tags/$release_version" >/dev/null 2>&1 ||
+      die "The selected release tag is unavailable: $release_version"
+  fi
+fi
+export METIS_AI_INSTALL_BASE="${METIS_AI_INSTALL_BASE:-https://raw.githubusercontent.com/f1shyondrugs/metis-ai/${commit_sha:-$release_version}}"
 
 existing_service_state=""
 existing_service_dir=""
@@ -698,13 +740,11 @@ else
 fi
 if [[ -n "$commit_sha" ]]; then
   update_ref="$commit_sha"
-  git -C "$install_dir" checkout --force -B master "$update_ref"
-elif [[ -n "$release_version" && "$release_version" != "latest" ]]; then
+  git -C "$install_dir" fetch origin "$commit_sha"
+  git -C "$install_dir" checkout --force --detach "$update_ref"
+else
   update_ref="$release_version"
   git -C "$install_dir" checkout --force "$update_ref"
-else
-  update_ref="origin/master"
-  git -C "$install_dir" checkout --force -B master "$update_ref"
 fi
 # Installer updates replace tracked local edits and divergent commits with the
 # selected upstream ref. Ignored install state (including .env and data) stays.

@@ -1,5 +1,7 @@
 "use client";
 
+import { RunStatus } from "@/components/run-status";
+
 import {
   ClipboardEvent,
   DragEvent,
@@ -112,6 +114,7 @@ import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
 import { ChatGoalBanner } from "@/components/chat-goal-banner";
+import { ChatTodoBar } from "@/components/chat-todo-bar";
 import { ProjectAgentActions, ProjectAgentChatHeader, useProjectChatAgents } from "@/components/project-agents-panel";
 import type { ProjectAgent } from "@/lib/project-team-types";
 import { TeamAgentAvatar } from "@/components/team-agent-avatar";
@@ -394,6 +397,7 @@ type ToolPart = {
   input?: string;
   result?: string;
   resultUrl?: string;
+  inputUrl?: string;
   sourceMessageCreatedAt?: string;
   sourceMessageIsLatestAssistant?: boolean;
   subagent?: {
@@ -4592,13 +4596,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     [acceptServerSnapshot, activeChatIncognito, applySnapshot, chatCacheScope, clearUnread, modelParamsByModel, navigateChat, persistActiveSnapshot, setBusySynced, setInput, workspaceDefaultCwd],
   );
 
-  useEffect(() => {
-    if (!chatsLoaded || !chats.length) return;
-    const timer = window.setTimeout(() => {
-      for (const chat of chats.slice(0, 3)) void prefetchChat(chat.id);
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [chats, chatsLoaded, prefetchChat]);
+  // Prefetch on explicit sidebar hover/focus only. Startup prefetches compete
+  // with the foreground chat and block other requests on large histories.
 
   const loadEarlierMessages = useCallback(async () => {
     const id = activeChatIdRef.current;
@@ -9697,11 +9696,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       title={title}
                     >
                       <span className="absolute -left-3 top-1/2 w-3 border-t border-border/40" aria-hidden="true" />
-                      {isBarSubagentLive(subagent, childRunByChatId[subagent.subagent?.chatId || ""], isToolRunning) ? (
-                        <LoaderCircle className="size-3 shrink-0 animate-spin text-muted-foreground" />
-                      ) : (
-                        <Check className="size-3 shrink-0 text-muted-foreground/70" />
-                      )}
+                      <RunStatus status={childRunByChatId[subagent.subagent?.chatId || ""] || subagent.status} iconOnly className="shrink-0 text-xs text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">{title}</span>
                     </button>
                   );
@@ -10163,6 +10158,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             </Button>
           ) : null}
         </header>
+
+        {!notesOpen && !automationsOpen && !projectHomeId && !loadingChatId && activeChatId ? (
+          <ChatTodoBar key={activeChatId} chatId={activeChatId} messages={messages} reverting={reverting} />
+        ) : null}
 
         {/* Messages / empty */}
         <div
@@ -11042,7 +11041,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
                                 onClick={() => setActiveSubagent(tool)}
                               >
-                                <LoaderCircle className="size-3 animate-spin text-muted-foreground" />
+                                <RunStatus status={childRunByChatId[tool.subagent?.chatId || ""] || tool.status} iconOnly className="text-xs text-muted-foreground" />
                                 <span className="min-w-0 flex-1 truncate">{tool.subagent?.title || tool.subagent?.prompt || tool.name}</span>
                                 {tool.subagent?.model ? <span className="max-w-28 shrink-0 truncate text-[10px] text-muted-foreground/70">{tool.subagent.model}</span> : null}
                               </button>
@@ -11590,7 +11589,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             className="flex min-w-0 flex-1 items-center gap-2 text-left"
                             onClick={() => setActiveSubagent(tool)}
                           >
-                            <LoaderCircle className="size-3 animate-spin text-muted-foreground" />
+                            <RunStatus status={childRunByChatId[tool.subagent?.chatId || ""] || tool.status} iconOnly className="text-xs text-muted-foreground" />
                             <span className="min-w-0 flex-1 truncate">
                               {tool.subagent?.title || tool.subagent?.prompt || tool.name}
                             </span>

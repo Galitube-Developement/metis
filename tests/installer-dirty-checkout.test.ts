@@ -23,7 +23,7 @@ test("native Unix updates replace dirty tracked files and divergent commits", ()
   const installDir = path.join(temp, "install");
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const checkout = (commitSha: string) => execFileSync("bash", ["-c", "set -euo pipefail\n" + checkoutStep], {
-    env: { ...process.env, install_dir: installDir, commit_sha: commitSha, release_version: "" },
+    env: { ...process.env, install_dir: installDir, commit_sha: commitSha, release_version: commitSha ? "" : "origin/master" },
     stdio: "pipe",
   });
 

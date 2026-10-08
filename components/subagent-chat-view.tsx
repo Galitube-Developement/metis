@@ -1,6 +1,8 @@
 "use client";
 
-import { ArrowLeft, Bot, CircleStop, Clock3, LoaderCircle } from "lucide-react";
+import { RunStatus } from "@/components/run-status";
+
+import { ArrowLeft, CircleStop, Clock3, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ToolPart } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -143,10 +145,7 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
           <ArrowLeft className="size-4" />
         </Button>
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={title}>{title}</p>
-        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {displayedTool.status === "running" ? <LoaderCircle className="size-3 animate-spin" /> : <Bot className="size-3" />}
-          {status}
-        </span>
+        <RunStatus status={displayedTool.status} label={status} className="shrink-0 text-xs text-muted-foreground" />
         {displayedTool.status === "running" && onCancel ? (
           <Button type="button" variant="destructive" size="sm" onClick={onCancel} disabled={cancelling}>
             <CircleStop className="mr-1.5 size-3.5" />

@@ -118,7 +118,44 @@ if (-not $NonInteractive) {
 $passwordPlain = $Password
 if ($Password -and $Password.Length -lt 8) { throw "Password must contain at least 8 characters." }
 if ($Docker -and $Native) { throw "Use either -Docker or -Native, not both." }
-# Account creation takes place in the browser, as on Linux.
+if ($Commit -and $Version) { throw "Use either -Version or -Commit, not both." }
+if ($Commit) {
+  if ($Commit -notmatch '^[0-9a-fA-F]{7,40}$') { throw "Commit must be a git SHA." }
+} else {
+  if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq "latest") {
+    try {
+      $release = Invoke-RestMethod -Headers @{ Accept = "application/vnd.github+json" } -Uri "https://api.github.com/repos/f1shyondrugs/metis-ai/releases/latest"
+      $Version = [string]$release.tag_name
+    } catch {
+      throw "Could not resolve the latest stable Metis AI release."
+    }
+  }
+  if ($Version -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+    throw "The selected stable release tag is invalid or unavailable: $Version"
+  }
+}
+# Preflight uses GitHub metadata, so a fresh machine does not need Git yet.
+if ($RepoUrl -match '^https://github\.com/(.+?)(?:\.git)?$') {
+  $repoSlug = $Matches[1]
+  if ($Commit) {
+    try {
+      $commitInfo = Invoke-RestMethod -Headers @{ Accept = "application/vnd.github+json" } -Uri "https://api.github.com/repos/$repoSlug/commits/$Commit"
+      $Commit = [string]$commitInfo.sha
+    } catch { throw "The selected commit is unavailable: $Commit" }
+    if ($Commit -notmatch '^[0-9a-fA-F]{40}$') { throw "GitHub returned no valid commit." }
+  } else {
+    if (-not $release) {
+      try { $release = Invoke-RestMethod -Headers @{ Accept = "application/vnd.github+json" } -Uri "https://api.github.com/repos/$repoSlug/releases/tags/$Version" }
+      catch { throw "The selected published release is unavailable: $Version" }
+    }
+    if (-not ($release.assets | Where-Object { $_.name -eq "SHA256SUMS" })) { throw "The selected release has no installer checksum asset." }
+  }
+}
+if (-not $env:METIS_AI_INSTALL_BASE) {
+  $selectedRef = if ($Commit) { $Commit } else { $Version }
+  $env:METIS_AI_INSTALL_BASE = "https://raw.githubusercontent.com/f1shyondrugs/metis-ai/$selectedRef"
+}
+# Account creation takes place in the browser.
 
 $publicHost = if ($aiChatHost -eq "0.0.0.0") { Get-DefaultPublicHost } else { "127.0.0.1" }
 $publicUrl = if ($PublicUrl) { $PublicUrl } else { "http://$publicHost`:$port" }
@@ -483,6 +520,7 @@ if (-not $SkipRuntimeInstall) {
 Require-Command git
 if (-not $useDocker -and (Get-NodeMajor) -lt 22) { throw "Node.js 22 or newer is required." }
 
+
 if (Test-Path (Join-Path $InstallDir ".git")) {
   git -C $InstallDir fetch --force origin
   if ($LASTEXITCODE -ne 0) { throw "Could not fetch Metis AI commits." }
@@ -496,19 +534,11 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
   if ($LASTEXITCODE -ne 0) { throw "Could not clone Metis AI." }
 }
 if ($Commit) {
-  if ($Commit -notmatch '^[0-9a-fA-F]{7,40}$') { throw "Commit must be a git SHA." }
-  if ($Version -and $Version -ne "latest") { throw "Use either -Version or -Commit, not both." }
   $updateRef = $Commit
-  git -C $InstallDir checkout --force -B master $updateRef
-} elseif ($Version -and $Version -ne "latest") {
-  if ($Version -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
-    throw "Version must be latest or a v-prefixed SemVer tag, for example v1.0.0."
-  }
+  git -C $InstallDir checkout --force --detach $updateRef
+} else {
   $updateRef = $Version
   git -C $InstallDir checkout --force $updateRef
-} else {
-  $updateRef = "origin/master"
-  git -C $InstallDir checkout --force -B master $updateRef
 }
 if ($LASTEXITCODE -ne 0) { throw "Could not check out Metis AI $updateRef." }
 # Replace tracked local edits and divergent commits, preserving ignored install state.
