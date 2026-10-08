@@ -112,3 +112,35 @@ test("user cancellation interrupts buffered generation within the existing poll 
   assert.equal(f.context.signal!.aborted, true);
   assert.equal(f.getJob(f.job.id)?.status, "cancelled");
 });
+
+
+test("real runner records expired-lease diagnostics and the supervisor publishes the failure", async (t) => {
+  const f = await fixture(t);
+  const { getDatabase } = await import("../lib/sqlite");
+  const { queryErrorLogs } = await import("../lib/error-logs");
+  const { persistWorkerFailureMessage } = await import("../lib/worker-failure");
+  const token = crypto.randomUUID();
+  getDatabase().prepare(
+    "INSERT INTO job_leases (job_id, worker_id, lease_token, expires_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(f.job.id, "expired-worker", token, new Date(Date.now() - 1000).toISOString(), new Date(Date.now() - 121000).toISOString());
+  process.env.AI_CHAT_JOB_ID = f.job.id;
+  process.env.AI_CHAT_WORKER_ID = "expired-worker";
+  process.env.AI_CHAT_JOB_LEASE_TOKEN = token;
+  try {
+    t.mock.timers.tick(30_000);
+    await f.run;
+    assert.equal(f.context.signal!.aborted, true);
+    const log = queryErrorLogs({ chatId: f.chat.id }).find(entry => entry.message.includes("lost its worker lease"));
+    assert.ok(log);
+    assert.equal((log.context?.lease as { leaseState: string }).leaseState, "expired");
+    assert.ok(!JSON.stringify(log.context).includes(token));
+    assert.equal(f.getJob(f.job.id)?.status, "running", "the stale child cannot commit a terminal state");
+  } finally {
+    delete process.env.AI_CHAT_JOB_ID;
+    delete process.env.AI_CHAT_WORKER_ID;
+    delete process.env.AI_CHAT_JOB_LEASE_TOKEN;
+  }
+  f.updateJob(f.job.id, { status: "error", error: "Worker lease lost" });
+  persistWorkerFailureMessage(f.job.id, "Worker lease lost");
+  assert.equal(f.getChat(f.chat.id)?.messages.at(-1)?.errorMessage, "Worker lease lost");
+});

@@ -31,7 +31,7 @@ import {
 } from "@/lib/providers/adapters/provider-support";
 import { modelKey, parseModelKey } from "@/lib/providers/types";
 import type { AgentJob } from "@/lib/jobs";
-import { appendRunEvent, getJob, touchJob, updateJob } from "@/lib/db-jobs";
+import { appendRunEvent, getJob, jobLeaseDiagnostics, touchJob, updateJob } from "@/lib/db-jobs";
 import { modeById } from "@/lib/modes";
 import { estimateProviderInputTokens } from "@/lib/providers/adapters/provider-support";
 import { activeInFlightTool, providerIdleTimeouts } from "@/lib/providers/stream-guard";
@@ -150,9 +150,15 @@ export async function runAlternativeProviderJob(
       controller.abort();
     }
   }, 250);
+  let lastLeaseHeartbeatAt = Date.now();
+  let leaseFailureContext: Record<string, unknown> | undefined;
   const leaseHeartbeat = setInterval(() => {
+    const heartbeatAt = Date.now();
+    const heartbeatDelayMs = Math.max(0, heartbeatAt - lastLeaseHeartbeatAt - 30_000);
+    lastLeaseHeartbeatAt = heartbeatAt;
     const touched = touchJob(job.id);
     if (touched || controller.signal.aborted) return;
+    leaseFailureContext = { ...jobLeaseDiagnostics(job.id), heartbeatDelayMs };
     abortCause = "lease_lost";
     abortDetail = "The provider run lost its worker lease and was stopped to prevent duplicate execution.";
     controller.abort();
@@ -598,6 +604,7 @@ export async function runAlternativeProviderJob(
           jobId: job.id,
           provider: definition.key,
           modelId: parsed.modelId,
+          ...(leaseFailureContext ? { lease: leaseFailureContext } : {}),
         },
       });
     }

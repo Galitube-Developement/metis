@@ -700,6 +700,33 @@ export function releaseUserInputWait(jobId: string) {
   });
 }
 
+/** Safe diagnostic snapshot: lease tokens are compared but never returned. */
+export function jobLeaseDiagnostics(id: string) {
+  const db = getDatabase();
+  const lease = db.prepare(
+    "SELECT worker_id, lease_token, expires_at, updated_at FROM job_leases WHERE job_id = ?",
+  ).get(id) as { worker_id: string; lease_token: string; expires_at: string; updated_at: string } | undefined;
+  const checkedAt = iso();
+  const expectedWorkerId = process.env.AI_CHAT_WORKER_ID?.trim();
+  const expectedToken = process.env.AI_CHAT_JOB_LEASE_TOKEN?.trim();
+  const workerMatches = lease && expectedWorkerId ? lease.worker_id === expectedWorkerId : null;
+  const tokenMatches = lease && expectedToken ? lease.lease_token === expectedToken : null;
+  return {
+    checkedAt,
+    jobStatus: getJob(id)?.status ?? null,
+    leaseState: !lease ? "missing" : workerMatches === false ? "worker_mismatch"
+      : tokenMatches === false ? "token_mismatch"
+        : lease.expires_at <= checkedAt ? "expired" : "active",
+    expectedWorkerId: expectedWorkerId ?? null,
+    actualWorkerId: lease?.worker_id ?? null,
+    workerMatches,
+    tokenMatches,
+    expiresAt: lease?.expires_at ?? null,
+    lastRenewedAt: lease?.updated_at ?? null,
+    expiredForMs: lease ? Math.max(0, Date.now() - Date.parse(lease.expires_at)) : null,
+  };
+}
+
 export function touchJob(id: string) {
   const current = getJob(id);
   if (!current || !["running", "waiting_input", "waiting_for_user"].includes(current.status)) return current;
