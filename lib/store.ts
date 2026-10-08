@@ -23,6 +23,8 @@ export type ToolPart = {
   result?: string;
   /** UI-only URL for a large persisted output, loaded on expansion. */
   resultUrl?: string;
+  /** UI-only URL for full tool arguments, loaded on expansion. */
+  inputUrl?: string;
   todos?: Array<{ id?: string; content: string; status?: string }>;
   subagent?: {
     agentId?: string;

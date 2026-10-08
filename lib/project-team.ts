@@ -1,3 +1,4 @@
+import type { ChatRunStatus } from "@/lib/store";
 import { createHash, randomUUID } from "node:crypto";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
 import { createChat, appendMessage, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
@@ -36,7 +37,7 @@ function ownedProject(projectId: string, ownerId?: string) {
 function rowAgent(row: unknown, ownerId: string): ProjectAgent | null {
  const value = parseData<ProjectAgent>(row);
  if (!value?.id) return null;
- const chat = getChat(value.chatId, ownerId);
+ const chat = getDatabase().prepare("SELECT run_status AS runStatus FROM chat_list WHERE id = ? AND owner_id = ?").get(value.chatId, ownerId) as { runStatus?: ChatRunStatus } | undefined;
  const active = getDatabase().prepare("SELECT status FROM jobs WHERE chat_id = ? AND user_id = ? AND status IN ('queued','running','switching','waiting_input','waiting_for_user') LIMIT 1").get(value.chatId, ownerId) as { status: string } | undefined;
  return { ...value, status: value.archivedAt ? "archived" : active?.status === "queued" ? "queued" : deriveProjectAgentStatus(chat?.runStatus, value.archivedAt) };
 }

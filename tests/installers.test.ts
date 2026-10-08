@@ -288,26 +288,29 @@ test("installers print the Open URL and the .env path after install", () => {
 });
 
 test("the release script publishes every installer option", () => {
-  const release = readFileSync(path.join(root, "scripts", "release.sh"), "utf8");
+  const release = readFileSync(path.join(root, "scripts", "release.sh"), "utf8") + readFileSync(path.join(root, "scripts", "release-install-notes.sh"), "utf8");
   assert.match(release, /metis-docker-install\.sh/);
   assert.match(release, /metis-install\.sh/);
   assert.match(release, /metis-install\.ps1/);
   assert.match(release, /metis-linux\.sh/);
   assert.match(release, /metis-macos\.sh/);
   assert.match(release, /metis-windows\.ps1/);
-  assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.sh/);
-  assert.match(release, /raw\.githubusercontent\.com\/\$\{repo\}\/master\/install\.ps1/);
+  assert.match(release, /releases\/download\/@TAG@\/metis-install\.sh/);
+  assert.match(release, /releases\/download\/@TAG@\/metis-install\.ps1/);
   assert.match(release, /ghcr\.io\/f1shyondrugs\/metis-ai/);
   assert.match(release, /--docker/);
-  assert.doesNotMatch(release, /github\.com\/\$\{owner\}\/metis-ai\/releases/);
+  assert.match(release, /SHA256SUMS/);
 });
 
-test("unix bootstrap remaps the v1.0.0 install base to current master scripts", () => {
+test("unix bootstrap resolves stable latest releases and pins explicit tags", () => {
   const bootstrap = readFileSync(path.join(root, "install.sh"), "utf8");
   const published = readFileSync(path.join(installerDir, "install.sh"), "utf8");
   for (const source of [bootstrap, published]) {
-    assert.match(source, /raw\.githubusercontent\.com\/f1shyondrugs\/metis-ai\/v1\.0\.0/);
-    assert.match(source, /base="https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis-ai\/master"/);
+    assert.match(source, /metis_resolve_release_base/);
+    assert.match(source, /releases\/latest/);
+    assert.match(source, /releases\/download\/\$requested/);
+    assert.match(source, /forward_args\+=\(--commit/);
+    assert.doesNotMatch(source, /v1\.0\.0.*master/);
   }
 });
 
@@ -315,8 +318,8 @@ test("unix bootstrap downloads a file then execs it instead of running from a pi
   const bootstrap = readFileSync(path.join(root, "install.sh"), "utf8");
   assert.match(bootstrap, /metis_install\(\)/);
   assert.match(bootstrap, /mktemp/);
-  assert.match(bootstrap, /exec \/bin\/bash "\$tmp"/);
-  assert.match(bootstrap, /\/bin\/bash -c "\$\(curl/);
+  assert.match(bootstrap, /\/bin\/bash "\$tmp"/);
+  assert.match(bootstrap, /\/bin\/bash/);
   assert.doesNotMatch(bootstrap, /\| bash -s/);
 });
 
@@ -545,8 +548,8 @@ test("installers merge a previous .env on replace and upgrade", () => {
 
 test("README documents the bootstrap one-liner rather than curling platform scripts into bash", () => {
   const readme = readFileSync(path.join(root, "README.md"), "utf8");
-  assert.match(readme, /\/bin\/bash -c "\$\(curl -fsSL https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis\/master\/install\.sh\)"/);
-  assert.match(readme, /irm https:\/\/raw\.githubusercontent\.com\/f1shyondrugs\/metis\/master\/install\.ps1 \| iex/);
+  assert.match(readme, /\/bin\/bash -c "\$\(curl -fsSL https:\/\/github\.com\/f1shyondrugs\/metis-ai\/releases\/latest\/download\/metis-install\.sh\)"/);
+  assert.match(readme, /irm https:\/\/github\.com\/f1shyondrugs\/metis-ai\/releases\/latest\/download\/metis-install\.ps1 \| iex/);
   assert.doesNotMatch(readme, /install\/linux\.sh \| bash/);
   assert.doesNotMatch(readme, /install\/macos\.sh \| bash/);
   assert.doesNotMatch(readme, /install\/windows\.ps1 \| iex/);
@@ -556,13 +559,13 @@ test("unix bootstrap routes uninstall to the platform uninstaller", () => {
   const bootstrap = readFileSync(path.join(root, "install.sh"), "utf8");
   const published = readFileSync(path.join(installerDir, "install.sh"), "utf8");
   for (const source of [bootstrap, published]) {
-    assert.match(source, /uninstall --yes --keep-data/);
+    assert.match(source, /forward_args/);
     assert.match(source, /\[\[ "\$\{1:-\}" == "uninstall" \]\]/);
-    assert.match(source, /install\/macos\.sh "\$@"/);
-    assert.match(source, /install\/linux\.sh "\$@"/);
+    assert.match(source, /install\/macos\.sh metis-macos\.sh "\$\{forward_args\[@\]\}"/);
+    assert.match(source, /install\/linux\.sh metis-linux\.sh "\$\{forward_args\[@\]\}"/);
   }
   const windows = readFileSync(path.join(root, "install.ps1"), "utf8");
-  assert.match(windows, /ToLowerInvariant\(\) -eq "uninstall"/);
+  assert.match(windows, /switch -Regex \(\$arg\)/);
   assert.match(windows, /install\/windows\.ps1/);
 });
 

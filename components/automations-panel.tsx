@@ -1,5 +1,7 @@
 "use client";
 
+import { RunStatus } from "@/components/run-status";
+
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Bot,
@@ -1029,7 +1031,7 @@ export function AutomationsPanel({
                     return (
                       <button key={run.id} type="button" className="automation-run-card" onClick={() => onOpenChat(run.chatId)}>
                         <span className="automation-run-topline">
-                          <span className="automation-run-dot" data-status={run.status} aria-hidden="true" />
+                          <RunStatus status={run.status} iconOnly decorative className="automation-run-indicator" />
                           <span className="automation-run-when">{formatDate(run.startedAt || run.createdAt, currentDetail.timezone)}</span>
                           <span className="automation-run-trigger">{run.trigger || (run.manual ? "manual" : "scheduled")}</span>
                         </span>

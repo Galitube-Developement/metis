@@ -263,7 +263,7 @@ export function globalFactsForScope(input: ContextScopeInput): ScopedLearnedFact
   const chat = getChat(input.chatId, input.ownerId);
   if (!chat || chat.incognito || input.includeGlobal === false) return [];
   const project = chat.projectId ? getProject(chat.projectId, input.ownerId ?? chat.ownerId) : null;
-  if (project?.memoryMode === "project_only") return [];
+  if ((chat.projectId && !project) || project?.memoryMode === "project_only") return [];
   return scopeFactsFromMemories(
     listMemories(input.ownerId ?? chat.ownerId).filter((memory) => memory.state !== "superseded" && memory.state !== "archived"),
   );
