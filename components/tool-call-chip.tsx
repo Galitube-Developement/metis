@@ -9,6 +9,7 @@ import {
   Cable,
   CalendarClock,
   Check,
+  ChevronRight,
   Code2,
   FilePenLine,
   FolderOpen,
@@ -869,7 +870,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  >
  {activityRunning || combinedThinking?.done === false ? (
  <RunStatus status="running" iconOnly decorative className="shrink-0 text-xs" />
- ) : null}
+ ) : (
+ <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
+ )}
  <span className="truncate">{groupTitle}</span>
  </button>
  {groupOpen ? (
