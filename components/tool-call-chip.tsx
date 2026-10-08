@@ -9,7 +9,6 @@ import {
   Cable,
   CalendarClock,
   Check,
-  ChevronRight,
   Code2,
   FilePenLine,
   FolderOpen,
@@ -31,7 +30,7 @@ import { AutomationCard } from "@/components/automation-card";
 import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
 import { planLooksParallelizable } from "@/lib/modes";
 import { CanvasWorkspaceCard } from "@/components/canvas-workspace-card";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 import {
   canvasFromToolPayload,
@@ -86,8 +85,6 @@ type ToolCallProps = ToolCallData & {
   onBuildPlan?: (plan: { title: string; content: string; workspaceLink?: string }, options?: { multiAgent?: boolean }) => void;
   buildDisabled?: boolean;
   onOpenRaw?: () => void;
-  autoExpand?: boolean;
-  locked?: boolean;
   nested?: boolean;
   hostnames?: Record<string, string>;
   workspaces?: Array<{ id: string; type?: string; name?: string; content?: string }>;
@@ -348,15 +345,13 @@ export const ToolCallChip = memo(function ToolCallChip({
   onBuildPlan,
   buildDisabled,
   onOpenRaw,
-  autoExpand = false,
-  locked = false,
   nested = false,
   todos,
   hostnames,
   source,
   workspaces,
 }: ToolCallProps) {
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const [userOpen, setUserOpen] = useState(false);
   const [loadedOutput, setLoadedOutput] = useState<{ url: string; payload: FullToolPayload } | null>(null);
   const [outputError, setOutputError] = useState("");
   const [outputRetry, setOutputRetry] = useState(0);
@@ -372,7 +367,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   const todoItems = todos?.length ? todos : display.todos;
   const resolvedKind = display.kind;
   const isCommand = resolvedKind === "shell";
-  const expanded = isCommand ? userOpen === true : locked ? autoExpand : userOpen ?? autoExpand;
+  const expanded = userOpen;
   useEffect(() => {
     if (!expanded || !payloadUrl || loadedOutput?.url === payloadUrl) return;
     const controller = new AbortController();
@@ -545,29 +540,17 @@ export const ToolCallChip = memo(function ToolCallChip({
     );
   }
   return (
-    <Popover open={isCommand && expanded} onOpenChange={(open) => { if (isCommand) setUserOpen(open); }}>
+    <Popover open={expanded} onOpenChange={setUserOpen}>
       <div className={cn(nested ? "my-0" : "my-0.5", "w-full min-w-0")} style={{ overflowAnchor: "none" }}>
       <div className="group flex w-full min-w-0 items-center gap-1">
-        <PopoverAnchor asChild>
+        <PopoverTrigger asChild>
         <button
           type="button"
-          className={cn(activityRowClass, "min-w-0 flex-1", isCommand && "rounded-sm focus-visible:ring-2 focus-visible:ring-ring")}
-          aria-expanded={isCommand ? expanded : undefined}
-          aria-haspopup={isCommand ? "dialog" : undefined}
-          onClick={() => {
-            if (subagentClickable && onOpenSubagent) {
-              onOpenSubagent();
-              return;
-            }
-            if (locked) return;
-            setUserOpen((open) => open === null ? !expanded : !open);
-          }}
+          className={cn(activityRowClass, "min-w-0 flex-1", "rounded-sm focus-visible:ring-2 focus-visible:ring-ring")}
         >
           {running ? (
             <RunStatus status={status} iconOnly decorative className="shrink-0 text-xs" />
-          ) : nested && !isCommand ? null : (
-            <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
-          )}
+          ) : null}
           <Icon className="size-3 shrink-0 opacity-70" />
           <span className={cn("truncate", deleteTool && "text-rose-400/80")}>{headline.title}{sourceLabel ? <span className="ml-1 text-[10px] uppercase tracking-wide opacity-50">{sourceLabel}</span> : null}</span>
           {previewText ? (
@@ -582,7 +565,7 @@ export const ToolCallChip = memo(function ToolCallChip({
             </span>
           ) : null}
         </button>
-        </PopoverAnchor>
+        </PopoverTrigger>
         {clickable ? (
           <button
             type="button"
@@ -639,55 +622,35 @@ export const ToolCallChip = memo(function ToolCallChip({
           </button>
         ) : null}
       </div>
-      {expanded && !isCommand ? (
-        <div className="my-1 min-w-0 max-h-72 max-w-full space-y-2 overflow-x-hidden overflow-y-auto pl-4 text-[11px] font-light leading-4 text-muted-foreground/80">
-          {input ? (
-            <section>
-              <p className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">Request</p>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono">{formatToolOutput(input)}</pre>
-            </section>
-          ) : null}
-          {kind === "edit" && diff && (diff.before !== undefined || diff.after !== undefined) ? (
-            <section>
-              <p className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">File diff</p>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono">{compactFileDiff(diff.before, diff.after)}</pre>
-            </section>
-          ) : null}
-          {result || detail ? (
-            <section>
-              <p className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">Response</p>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono">{formatToolOutput(result || detail)}</pre>
-            </section>
-          ) : null}
-          {outputStatus}
-          {!input && !(kind === "edit" && diff) && !result && !detail ? "No output available yet." : null}
-        </div>
-      ) : null}
-      {isCommand ? (
         <PopoverContent
           align="start"
           side="bottom"
           sideOffset={6}
           collisionPadding={12}
-          aria-label="Command details"
+          aria-label={isCommand ? "Command details" : "Tool details"}
           className="max-h-[min(70vh,36rem)] w-[min(42rem,calc(100vw-1.5rem))] overflow-y-auto p-3 text-xs leading-5"
         >
           {input ? (
             <section className="min-w-0">
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Command</p>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{isCommand ? "Command" : "Request"}</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground">{formatToolOutput(input)}</pre>
+            </section>
+          ) : null}
+          {kind === "edit" && diff && (diff.before !== undefined || diff.after !== undefined) ? (
+            <section className="min-w-0">
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">File diff</p>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{compactFileDiff(diff.before, diff.after)}</pre>
             </section>
           ) : null}
           {result || detail ? (
             <section className="min-w-0">
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Output</p>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{isCommand ? "Output" : "Response"}</p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>
             </section>
           ) : null}
           {outputStatus}
-          {!input && !result && !detail ? <p className="text-muted-foreground">No output available yet.</p> : null}
+          {!input && !(kind === "edit" && diff) && !result && !detail ? <p className="text-muted-foreground">No output available yet.</p> : null}
         </PopoverContent>
-      ) : null}
       </div>
     </Popover>
   );
@@ -775,7 +738,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   workspaces?: Array<{ id: string; type?: string; name?: string; content?: string }>;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const { planTools, noteTools, canvasTools, memoryTools, todoTools, regularTools, automationTools, regularEntries } = useMemo(() => {
+  const { planTools, noteTools, canvasTools, memoryTools, todoTools, automationTools, regularEntries } = useMemo(() => {
   const isTodoTool = (tool: ToolCallData) =>
     tool.kind === "todo" ||
     Boolean(tool.todos?.length) ||
@@ -795,7 +758,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   );
   const automationTools = tools.filter((tool) => isAutomationCardTool(tool));
   const regularEntries = regularTools.filter((tool) => !isAutomationCardTool(tool));
-    return { planTools, noteTools, canvasTools, memoryTools, todoTools, regularTools, automationTools, regularEntries };
+    return { planTools, noteTools, canvasTools, memoryTools, todoTools, automationTools, regularEntries };
   }, [tools, includePlans]);
   const thinkingFromActivity = (activity || [])
  .filter((entry): entry is Extract<ActivityEntry, { type: "thinking" }> => entry.type === "thinking")
@@ -810,7 +773,6 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  : undefined;
  const groupTitle = activityGroupLabel(regularEntries, combinedThinking);
   const groupOpen = userOpen ?? Boolean(live || autoExpand);
-  const lastToolId = regularTools[regularTools.length - 1]?.id;
   const renderTool = (tool: ToolCallData, nested = false) => (
     <ToolCallChip
       {...tool}
@@ -828,8 +790,6 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         void loadToolPayload(url).then(payload => onOpenRaw?.({ ...tool, ...payload, inputUrl: undefined, resultUrl: undefined }))
           .catch(() => toast.error("Could not load full tool details"));
       }}
-      autoExpand={!nested && Boolean(live || autoExpand) && tool.id === lastToolId}
-      locked={false}
     />
   );
   const renderEntry = (entry: ActivityEntry, index: number) => {
@@ -904,13 +864,12 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  <button
  type="button"
  className={activityRowClass}
+ aria-expanded={groupOpen}
  onClick={() => setUserOpen((open) => open === null ? !groupOpen : !open)}
  >
  {activityRunning || combinedThinking?.done === false ? (
  <RunStatus status="running" iconOnly decorative className="shrink-0 text-xs" />
- ) : (
- <ChevronRight className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
- )}
+ ) : null}
  <span className="truncate">{groupTitle}</span>
  </button>
  {groupOpen ? (
