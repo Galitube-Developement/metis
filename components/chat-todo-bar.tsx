@@ -1,9 +1,7 @@
 "use client";
 
-import { RunStatus } from "@/components/run-status";
-
 import { useEffect, useId, useMemo, useState } from "react";
-import { ChevronDown, ListChecks } from "lucide-react";
+import { Check, ChevronDown, Circle, CircleStop, ListChecks } from "lucide-react";
 import { currentChatTodos, newerChatTodos, type ChatTodoState } from "@/lib/chat-todos";
 
 export function ChatTodoBar({ chatId, messages, reverting = false }: {
@@ -68,7 +66,9 @@ export function ChatTodoBar({ chatId, messages, reverting = false }: {
       </button>
       {expanded ? <ol id={panelId} className="max-h-[min(30svh,16rem)] space-y-2 overflow-y-auto overscroll-contain px-4 pb-3 text-xs">
         {items.map((item, index) => <li key={item.id || `${state.toolId}-${index}`} className="flex items-start gap-2">
-          <RunStatus status={item.status || "pending"} iconOnly decorative className="mt-0.5 shrink-0 text-muted-foreground" />
+          <span aria-hidden="true" className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+            {item.status === "completed" ? <Check className="size-3.5" /> : item.status === "in_progress" ? <span className="size-1.5 rounded-full bg-current" /> : item.status === "cancelled" ? <CircleStop className="size-3.5" /> : <Circle className="size-3.5" />}
+          </span>
           <span className={`min-w-0 break-words ${["completed", "cancelled"].includes(item.status || "") ? "text-muted-foreground" : ""}`}>{item.content}<span className="sr-only"> — {item.status || "pending"}</span></span>
         </li>)}
         {error ? <li role="status" className="text-muted-foreground">Tasks may be out of date. <button type="button" className="underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setRetry(value => value + 1)}>Retry</button></li> : null}

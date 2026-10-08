@@ -4,6 +4,15 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.11 — 2026-10-08
+
+- Manage project memories in a dedicated modal and control global memory access with “Include global memory”; project-only agents cannot read or write global memories.
+- Keep the current task list visible above chat, with static dots for active tasks and checkmarks for completed tasks.
+- Animate running, queued and waiting statuses across chats and agent teams, while respecting reduced-motion preferences.
+- Protect note edits with serialized saves, draft recovery and explicit conflict resolution.
+- Improve long-chat responsiveness and synchronize project team statuses.
+- Pin release installers to the selected version, verify checksums and release manifests, and test an isolated Docker stack without touching live installations.
+
 ## v1.0.10 — 2026-10-06
 
 - Add scratchpad notes with movable, resizable text, image and file cards, plus paste and full-area drag-and-drop support.

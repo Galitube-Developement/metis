@@ -8,6 +8,7 @@ import {
   Brain,
   Cable,
   CalendarClock,
+  Check,
   ChevronRight,
   Code2,
   FilePenLine,
@@ -421,7 +422,7 @@ export const ToolCallChip = memo(function ToolCallChip({
               const active = /^(in_progress|running)$/i.test(todo.status || "");
               return (
                 <div key={todo.id ?? `${todo.content}-${index}`} className="flex min-w-0 items-start gap-2 text-xs">
-                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] transition-colors", done ? "border-emerald-400/45 bg-emerald-400/10 text-emerald-300" : active ? "border-blue-400/55 bg-blue-400/10 text-blue-300" : "border-border/65 text-muted-foreground")}><RunStatus status={todo.status || "pending"} iconOnly decorative /></span>
+                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] transition-colors", done ? "border-emerald-400/45 bg-emerald-400/10 text-emerald-300" : active ? "border-blue-400/55 bg-blue-400/10 text-blue-300" : "border-border/65 text-muted-foreground")}>{done ? <Check aria-hidden="true" className="size-2.5" /> : active ? <span aria-hidden="true" className="size-1.5 rounded-full bg-current" /> : null}</span>
                   <span className={cn("min-w-0 flex-1 leading-4", done ? "text-muted-foreground/60 line-through" : active ? "font-medium text-foreground/90" : "text-foreground/72")}>{todo.content}</span>
                 </div>
               );
