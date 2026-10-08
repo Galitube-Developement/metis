@@ -28,7 +28,12 @@ test("setup API and wizard exist for first-run onboarding", () => {
   assert.match(api, /osUsername: body\.osUsername/);
   assert.match(helper, /setup_complete/);
   assert.match(helper, /markSetupIncomplete/);
-  assert.match(api, /markSetupIncomplete/);
+  assert.match(api, /bootstrapSetupAccount/);
+  assert.match(wizard, /Operator setup token/);
+  assert.match(wizard, /data\/setup-token/);
+  assert.match(wizard, /AI_CHAT_SETUP_TOKEN/);
+  assert.match(wizard, /action: "bootstrap", setupToken/);
+  assert.match(wizard, /setSetupToken\(""\)/);
 });
 
 test("onboarding uses the update-screen hands and four real steps", () => {

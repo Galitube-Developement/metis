@@ -20,7 +20,10 @@ and connected desktop devices. Treat a deployment as privileged infrastructure.
    working tree.
 8. Keep the application-level login and share-password rate limits enabled, and
    add a distributed proxy/WAF rate limit for multi-instance deployments. Trust
-   `x-real-ip` or the **last** `X-Forwarded-For` hop, not the first hop.
+   forwarding headers only from peers explicitly listed in
+   `AI_CHAT_TRUSTED_PROXIES` (IPs/CIDRs). With no trusted proxies, the custom
+   server uses the socket peer. It walks XFF right-to-left to the first untrusted
+   hop and ignores X-Real-IP. Account/share budgets also span client addresses.
 9. Do not rely on the legacy `x-chat-password` / `x-chat-username` headers.
 
 Authentication failures use generic responses and are rate-limited by client
@@ -40,3 +43,31 @@ required.
 
 Remaining production issues are tracked in
 [`docs/PRODUCTION-AUDIT.md`](./docs/PRODUCTION-AUDIT.md).
+
+## First-run and execution isolation
+
+Run the supported custom server (`pnpm start`). Before accepting HTTP requests
+it creates a 256-bit setup token in `CHAT_DATA_DIR/setup-token` with private
+operator permissions (0600 on Unix, restricted DACL on Windows). Read the file
+locally and enter it in first-run setup, or configure a random
+`AI_CHAT_SETUP_TOKEN` of 32–1024 characters. The token is never served or logged.
+SQLite consumes it atomically with the first account. Logout revokes the current
+server session; signing in rotates a presented session. Password changes revoke
+all sessions for that account.
+
+Root agents default to disabled, including root installations. Explicit
+`AI_CHAT_ALLOW_ROOT_AGENTS=true` permits only Host-Admin root execution within
+its root home. Install native services from a dedicated unprivileged account.
+Nonadmins require distinct unprivileged OS identities and private, nonoverlapping
+workspaces. Creation, mapping changes and every execution reject unsafe mappings,
+shared service identities, privileged groups and access to other workspaces or
+service secrets/data. Unix checks effective filesystem access under the target
+UID/GID, including ACLs. Existing unsafe mappings fail closed. Windows nonadmin
+agent execution is blocked until restricted tokens and SID/ACL isolation can be
+verified. Containers must provide separate OS identities too; a shared process
+UID is not isolation.
+
+Browser-stream WebSockets require a non-null exact allowed Origin, before cookie
+authentication. Same-origin and `AI_CHAT_PUBLIC_URL` are allowed; explicit extra
+origins use `AI_CHAT_BROWSER_ALLOWED_ORIGINS`. The unused `/api/process-a` route
+was removed. See [fix verification](docs/SECURITY-FIXES-2026-10-09.md).

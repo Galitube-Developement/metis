@@ -1,0 +1,70 @@
+MA05_PREAUTH_SYNTHETIC_OS_ACCOUNT_DISCLOSED
+(node:3550580) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MA01_ROUTE_BOOTSTRAP_201_SECOND_409
+MA05_AFTER_FIRST_USER_ANON_OS_LIST_EMPTY
+MA03_SECONDARY_NONADMIN_ROOT_SHARED_WORKSPACE
+MA03_SIGNED_NONADMIN_MCP_CROSS_USER_FILE_READ
+MA03_DIRECT_OUTSIDE_PATH_REJECTED
+MA03_SIGNED_NONADMIN_SHELL_UID0_OUTSIDE_SENTINEL_READ
+MA02_CONSTANT_10X401_429_ROTATING_12X401
+MAH3_LOGOUT_OLD_COOKIE_VALID_LOGIN_NEW_RANDOM_TOKEN
+Process A failed APICallError [AI_APICallError]: synthetic provider refuses generation
+    at <anonymous> (/root/metis-ai/node_modules/.pnpm/@ai-sdk+provider-utils@5.0.23_zod@4.4.3/node_modules/@ai-sdk/provider-utils/dist/index.js:3552:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async postToApi (/root/metis-ai/node_modules/.pnpm/@ai-sdk+provider-utils@5.0.23_zod@4.4.3/node_modules/@ai-sdk/provider-utils/dist/index.js:3240:28)
+    at async postJsonToApi (/root/metis-ai/node_modules/.pnpm/@ai-sdk+provider-utils@5.0.23_zod@4.4.3/node_modules/@ai-sdk/provider-utils/dist/index.js:3181:7)
+    at async _OpenAIResponsesBatchLanguageModel.doGenerate (/root/metis-ai/node_modules/.pnpm/@ai-sdk+openai@4.0.33_zod@4.4.3/node_modules/@ai-sdk/openai/dist/index.js:6371:9)
+    at async retryWithExponentialBackoffInternal (/root/metis-ai/node_modules/.pnpm/@ai-sdk+provider-utils@5.0.23_zod@4.4.3/node_modules/@ai-sdk/provider-utils/dist/index.js:3459:12)
+    at async generateObject (/root/metis-ai/node_modules/.pnpm/ai@7.0.55_zod@4.4.3/node_modules/ai/dist/index.js:13021:28)
+    at async Object.POST (/root/metis-security-recheck-vhMGfU/app/api/process-a/route.ts:26:24)
+    at async main (/root/metis-security-recheck-vhMGfU/recheck.ts:85:18) {
+  cause: undefined,
+  url: 'http://127.0.0.1:35245/v1/responses',
+  requestBodyValues: {
+    model: 'audit-model',
+    input: [ [Object] ],
+    temperature: 0.8,
+    top_p: undefined,
+    max_output_tokens: undefined,
+    text: { format: [Object] },
+    conversation: undefined,
+    max_tool_calls: undefined,
+    metadata: undefined,
+    parallel_tool_calls: undefined,
+    previous_response_id: undefined,
+    store: undefined,
+    user: undefined,
+    instructions: undefined,
+    service_tier: undefined,
+    include: undefined,
+    prompt_cache_key: undefined,
+    prompt_cache_options: undefined,
+    prompt_cache_retention: undefined,
+    safety_identifier: undefined,
+    top_logprobs: undefined,
+    truncation: undefined,
+    tools: undefined,
+    tool_choice: undefined
+  },
+  statusCode: 400,
+  responseHeaders: {
+    connection: 'keep-alive',
+    'content-type': 'application/json',
+    date: 'Thu, 08 Oct 2026 21:57:35 GMT',
+    'keep-alive': 'timeout=5',
+    'transfer-encoding': 'chunked'
+  },
+  responseBody: '{"error":{"message":"synthetic provider refuses generation","type":"invalid_request_error"}}',
+  isRetryable: false,
+  data: {
+    error: {
+      message: 'synthetic provider refuses generation',
+      type: 'invalid_request_error'
+    }
+  },
+  [Symbol(vercel.ai.error)]: true,
+  [Symbol(vercel.ai.error.AI_APICallError)]: true
+}
+MA04_UNAUTH_ROUTE_LOCAL_PROVIDER_CALLED_ONCE_NO_REAL_BILLING
+AUDIT_RECHECK_PASS

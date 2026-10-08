@@ -32,12 +32,14 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    "next-env.d.ts",
-    ".next-b/types/**/*.ts"
+    "next-env.d.ts"
   ],
   "exclude": [
     "node_modules",
-    "data/provider-sessions"
+    "data/provider-sessions",
+    ".next",
+    ".next-*/**",
+    "tmp",
+    "docs/security-audit-2026-10-08-evidence"
   ]
 }
