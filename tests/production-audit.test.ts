@@ -67,19 +67,19 @@ test("nested transaction() uses a savepoint instead of throwing", () => {
   assert.equal(row.count, 1);
 });
 
-test("requestClientAddress prefers x-real-ip and otherwise the last XFF hop", () => {
+test("requestClientAddress ignores unverified forwarding headers", () => {
   const spoofed = new Request("http://localhost", {
     headers: {
       "x-forwarded-for": "1.2.3.4, 10.0.0.1",
       "x-real-ip": "10.0.0.1",
     },
   });
-  assert.equal(requestClientAddress(spoofed), "10.0.0.1");
+  assert.equal(requestClientAddress(spoofed), "unknown");
 
   const lastHop = new Request("http://localhost", {
     headers: { "x-forwarded-for": "8.8.8.8, 10.1.1.1" },
   });
-  assert.equal(requestClientAddress(lastHop), "10.1.1.1");
+  assert.equal(requestClientAddress(lastHop), "unknown");
 });
 
 test("listChatsForUser reads chat_list instead of json_extract on chats.data", () => {

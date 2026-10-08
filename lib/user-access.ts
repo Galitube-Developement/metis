@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import { hostUserFromInfo, windowsOsUserListScript } from "@/lib/windows-os-users";
@@ -8,7 +8,6 @@ import { config } from "@/lib/config";
 import {
   assertExecutionUid,
  hostPlatform,
-  isHostAdminUsername,
   isInsideWorkspace,
   isRootWorkspace,
   listAssignablePosixUsers,
@@ -44,11 +43,6 @@ type AccessRow = {
   gid?: number;
 };
 
-type UserRow = {
-  id: string;
-  username: string;
-  isAdmin?: number;
-};
 
 export function lookupPosixUser(username: string): PosixIdentity | undefined {
   try {
@@ -162,69 +156,158 @@ export function getUserAccess(userId?: string): UserAccess {
   return { userId: userId.trim(), workspaceRoot: path.resolve(config.agentCwd) };
 }
 
+/** Root is a host-admin opt-in, never an account-order/username fallback. */
+function explicitlyAuthorizedHostAdmin(userId: string) {
+  const row = getDatabase().prepare("SELECT is_admin AS isAdmin FROM users WHERE id = ?")
+    .get(userId) as { isAdmin: number } | undefined;
+  return Number(row?.isAdmin) === 1;
+}
+
+function canonicalWorkspace(workspace: string) {
+  // Existing directories only: resolve symlinks before checking ownership/overlap.
+  return realpathSync(path.resolve(workspace));
+}
+
+/** Also used by role updates, so demotion cannot leave a privileged mapping. */
+export function assertSafeUserAccess(userId: string, workspaceRoot: string, identity?: HostOsUser,
+  options: { isAdmin?: boolean; execution?: boolean } = {}) {
+  const admin = options.isAdmin ?? explicitlyAuthorizedHostAdmin(userId);
+  if (!getDatabase().prepare("SELECT id FROM users WHERE id = ?").get(userId)) {
+    throw new Error("Agent execution requires an existing authenticated account.");
+  }
+  if (!identity) {
+    if (admin && !options.execution) return; // Admin may configure a blocked account.
+    throw new Error("This account has no valid OS user mapping; an isolated unprivileged identity is required.");
+  }
+  if (identity.uid === 0) {
+    assertExecutionUid(0, { allowRoot: config.allowRootAgents && admin, workspaceRoot, home: identity.home });
+    // Preserve the explicit root admin's running access even when legacy unsafe
+    // rows exist. Those rows are rejected independently at their execution guard.
+    if (options.execution) return;
+  }
+  if (!admin && hostPlatform() === "win32") {
+    // A name/profile is not proof of a restricted token, SID uniqueness or ACLs.
+    // Until a Windows token/ACL verifier is integrated, fail closed.
+    throw new Error("Windows nonadmin isolation requires verified restricted SID/token and workspace ACLs.");
+  }
+  if (hostPlatform() !== "win32") {
+    assertExecutionUid(identity.uid, { allowRoot: config.allowRootAgents && admin, workspaceRoot, home: identity.home });
+    if (!Number.isInteger(identity.gid) || Number(identity.gid) < 0) throw new Error("Invalid OS group mapping.");
+  }
+  const others = getDatabase().prepare(
+    `SELECT u.id AS userId, a.workspace_root AS workspaceRoot, a.os_username AS osUsername, a.uid, a.gid
+     FROM users u LEFT JOIN user_workspace_access a ON a.user_id = u.id WHERE u.id <> ?`,
+  ).all(userId) as AccessRow[];
+  let workspace = path.resolve(workspaceRoot);
+  try { workspace = canonicalWorkspace(workspaceRoot); } catch (error) { if (!admin) throw error; }
+  for (const other of others) {
+    const otherIdentity = other.osUsername ? lookupHostOsUser(other.osUsername) : undefined;
+    if ((other.osUsername && other.osUsername.toLowerCase() === identity.username.toLowerCase())
+      || (identity.uid !== undefined && (other.uid === identity.uid || otherIdentity?.uid === identity.uid))) {
+      throw new Error("OS identity is already mapped to another account.");
+    }
+    const otherWorkspace = other.workspaceRoot || config.agentCwd;
+    let resolved = path.resolve(otherWorkspace);
+    try { resolved = canonicalWorkspace(otherWorkspace); } catch { /* Still reject lexical overlap. */ }
+    if (isInsideWorkspace(resolved, workspace) || isInsideWorkspace(workspace, resolved)) {
+      throw new Error("Workspace must be distinct from every other account (including nested or symlink paths).");
+    }
+  }
+  if (admin) return;
+  if (identity.uid === process.getuid?.() || identity.gid === 0 || identity.uid === 65534) {
+    throw new Error("Nonadmin execution cannot use the service identity or a privileged group.");
+  }
+  if (Number(identity.uid) < (hostPlatform() === "darwin" ? 501 : 1000)) {
+    throw new Error("Nonadmin execution requires a dedicated regular OS account, not a system identity.");
+  }
+  const info = statSync(workspace);
+  if (!info.isDirectory() || info.uid !== identity.uid || (info.mode & 0o077) !== 0) {
+    throw new Error("Nonadmin workspace must be owned by its OS identity and private (0700, no shared ACL access).");
+  }
+  const groups = runHostCommand("id", ["-Gn", identity.username]).trim().split(/\s+/);
+  if (!groups[0] || groups.some((group) => ["root", "sudo", "wheel", "admin", "docker", "lxd", "disk", "shadow"].includes(group))) {
+    throw new Error("Cannot verify an unprivileged OS identity/group membership.");
+  }
+  const groupIds = runHostCommand("id", ["-G", identity.username]).trim().split(/\s+/).map(Number);
+  if (!groupIds.length || groupIds.some((gid) => !Number.isInteger(gid) || gid <= 0)) {
+    throw new Error("Cannot verify unprivileged supplementary groups.");
+  }
+  // Per-user sudoers grants can exist without membership in sudo/wheel.
+  // Missing sudo is harmless; unavailable/ambiguous policy checks fail closed.
+  try {
+    execFileSync("sudo", ["-n", "-l", "-U", identity.username], { encoding: "utf8",
+      env: { NODE_ENV: "production", PATH: process.env.PATH, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 10_000 });
+    throw new Error("OS identity has sudo privileges.");
+  } catch (error) {
+    const failure = error as { code?: string; status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
+    const denied = failure.status === 1 && `${failure.stdout || ""}${failure.stderr || ""}`.includes("not allowed to run sudo");
+    if (failure.code !== "ENOENT" && !denied) throw new Error("Cannot verify an unprivileged OS identity: sudo policy permits access or is unavailable.");
+  }
+  // Verify effective access, including POSIX ACLs, rather than assuming chmod
+  // on the workspace protects separate shared data/session/config directories.
+  const protectedPaths = [...new Set([config.databasePath, config.dataDir, config.mcpStateDir,
+    path.join(config.root, ".env"), path.join(config.root, ".env.local"),
+    path.join(config.installDir, ".env"), currentHostOsUser()?.home,
+    ...others.map((other) => other.workspaceRoot || config.agentCwd)].filter((value): value is string => Boolean(value)))];
+  try {
+    const result = execFileSync(process.execPath, ["-e", `
+      const fs = require('node:fs');
+      const input = JSON.parse(process.argv[1]);
+      if (process.getuid() === 0) {
+        process.initgroups(input.username, input.gid);
+        process.setgid(input.gid); process.setuid(input.uid);
+      }
+      if (process.getuid() !== input.uid || process.getgid() !== input.gid) process.exit(2);
+      fs.accessSync(input.workspace, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+      for (const file of input.paths) {
+        for (const mode of [fs.constants.R_OK, fs.constants.W_OK]) {
+          try { fs.accessSync(file, mode); process.exit(3); } catch (error) {
+            if (!['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+          }
+        }
+      }
+      // Read-only code sharing is allowed; writable installation directories
+      // would permit replacing config/code even when individual files are private.
+      for (const directory of input.codeDirectories) {
+        try { fs.accessSync(directory, fs.constants.W_OK); process.exit(3); } catch (error) {
+          if (!['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+        }
+      }
+      process.stdout.write('ISOLATED');
+    `, JSON.stringify({ username: identity.username, uid: identity.uid, gid: identity.gid,
+      workspace, paths: protectedPaths, codeDirectories: [config.root, config.installDir] })], { encoding: "utf8", cwd: workspace,
+      env: { NODE_ENV: "production" }, stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 10_000 });
+    if (result !== "ISOLATED") throw new Error("Unverified isolation");
+  } catch {
+    throw new Error("OS isolation verification failed: workspace access or shared DB/config/service directories are unsafe.");
+  }
+}
+
 export function getUserExecutionIdentity(userId?: string): UserExecutionIdentity | undefined {
+  if (!userId?.trim()) return undefined;
+  userId = userId.trim();
   const access = getUserAccess(userId);
-  if (!access.osUsername && config.allowRootAgents && isRootWorkspace(access.workspaceRoot)) {
-    return {
-      username: "root",
-      uid: 0,
-      gid: 0,
-      home: "/root",
-      workspaceRoot: access.workspaceRoot,
-    };
+  let identity = access.osUsername ? lookupHostOsUser(access.osUsername) : undefined;
+  if (!identity && !access.osUsername && hostPlatform() !== "win32"
+    && config.allowRootAgents && explicitlyAuthorizedHostAdmin(userId)) {
+    const root = lookupHostOsUser("root");
+    if (root?.uid === 0 && isRootWorkspace(access.workspaceRoot, root.home)) identity = root;
   }
-  if (!access.osUsername) return undefined;
-  const posix = lookupHostOsUser(access.osUsername);
-  const uid = access.uid ?? posix?.uid;
-  const gid = access.gid ?? posix?.gid;
-  if (uid === 0 && config.allowRootAgents && isRootWorkspace(access.workspaceRoot, posix?.home || access.home)) {
-    return {
-      username: access.osUsername,
-      uid,
-      gid: gid ?? 0,
-      home: posix?.home || access.home,
-      workspaceRoot: access.workspaceRoot,
-    };
-  }
-  if (hostPlatform() === "win32") {
-    return posix ? { username: posix.username, home: posix.home || access.home, workspaceRoot: access.workspaceRoot } : undefined;
-  }
- if (uid === undefined || gid === undefined || uid <= 0) return undefined;
- return {
-    username: access.osUsername,
-    uid,
-    gid,
-    home: posix?.home || access.home,
-    workspaceRoot: access.workspaceRoot,
-  };
+  if (!identity) return undefined;
+  // Persisted numeric metadata must never override the host's current identity.
+  if (hostPlatform() !== "win32" && ((access.uid != null && access.uid !== identity.uid)
+    || (access.gid != null && access.gid !== identity.gid))) return undefined;
+  assertSafeUserAccess(userId, access.workspaceRoot, identity, { execution: true });
+  return { username: identity.username, uid: identity.uid, gid: identity.gid,
+    home: identity.home, workspaceRoot: access.workspaceRoot };
 }
 
 export function requireUserExecutionIdentity(userId?: string): UserExecutionIdentity {
-  if (config.docker) {
-    const access = getUserAccess(userId);
-    return {
-      username: process.env.USER?.trim() || "metis",
-      uid: process.getuid?.() ?? 1000,
-      gid: process.getgid?.() ?? 1000,
-      home: process.env.HOME || config.dockerWorkspace,
-      workspaceRoot: access.workspaceRoot,
-    };
-  }
-  const account = userId
-    ? getDatabase().prepare("SELECT username FROM users WHERE id = ?").get(userId) as { username?: string } | undefined
-    : undefined;
-  if (account?.username) {
-    provisionMissingAccountAccess(userId!, account.username);
-  }
+  // No Docker/service-identity bypass, and no execution-time writes/repair of
+  // legacy unsafe mappings. Provisioning is an explicit management operation.
   const identity = getUserExecutionIdentity(userId);
-  if (!identity) {
-    throw new Error("This account has no valid OS user mapping. Provision a workspace with scripts/provision-user.ts.");
-  }
- if (identity.uid !== undefined) assertExecutionUid(identity.uid, {
-    allowRoot: config.allowRootAgents,
-    workspaceRoot: identity.workspaceRoot,
-    home: identity.home,
-  });
+  if (!identity) throw new Error("This account has no valid OS user mapping. Provision an isolated workspace with scripts/provision-user.ts.");
   return identity;
 }
 
@@ -235,17 +318,7 @@ export function adminUserCount() {
 }
 
 export function isHostAdmin(userId?: string | null) {
-  if (!userId?.trim()) return false;
-  const user = getDatabase().prepare(
-    "SELECT id, username, is_admin AS isAdmin FROM users WHERE id = ?",
-  ).get(userId.trim()) as UserRow | undefined;
-  if (!user?.username) return false;
-  if (Number(user.isAdmin) === 1) return true;
-  if (isHostAdminUsername(user.username, process.env)) return true;
-  const first = getDatabase().prepare(
-    "SELECT username FROM users ORDER BY created_at ASC LIMIT 1",
-  ).get() as { username?: string } | undefined;
-  return isHostAdminUsername(user.username, {}, first?.username);
+  return Boolean(userId?.trim() && explicitlyAuthorizedHostAdmin(userId.trim()));
 }
 
 export function inferOsUsernameForWorkspace(workspaceRoot = config.agentCwd): string | undefined {
@@ -282,36 +355,39 @@ export function ensureUserAccess(
   workspaceRoot: string,
   osUsername?: string,
 ) {
-  const identity = osUsername ? lookupHostOsUser(osUsername) : undefined;
-  if (osUsername && !identity) {
-    throw new Error(`OS user ${osUsername} does not exist on this host.`);
+  const db = getDatabase();
+  db.exec("SAVEPOINT user_access_mapping");
+  try {
+    const identity = osUsername ? lookupHostOsUser(osUsername) : undefined;
+    if (osUsername && !identity) {
+      throw new Error(`OS user ${osUsername} does not exist on this host.`);
+    }
+    assertSafeUserAccess(userId, workspaceRoot, identity);
+    db.prepare(
+      `INSERT INTO user_workspace_access
+         (user_id, workspace_root, os_username, uid, gid, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         workspace_root = excluded.workspace_root,
+         os_username = excluded.os_username,
+         uid = excluded.uid,
+         gid = excluded.gid,
+         updated_at = excluded.updated_at`,
+    ).run(
+      userId,
+      path.resolve(workspaceRoot),
+      osUsername ?? null,
+      hostPlatform() === "win32" ? null : identity?.uid ?? null,
+      hostPlatform() === "win32" ? null : identity?.gid ?? null,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    db.exec("RELEASE user_access_mapping");
+  } catch (error) {
+    db.exec("ROLLBACK TO user_access_mapping");
+    db.exec("RELEASE user_access_mapping");
+    throw error;
   }
-  if (hostPlatform() !== "win32" && identity?.uid !== undefined) {
-    assertExecutionUid(identity.uid, {
-      allowRoot: config.allowRootAgents,
-      workspaceRoot,
-      home: identity.home,
-    });
-  }
-  getDatabase().prepare(
-    `INSERT INTO user_workspace_access
-       (user_id, workspace_root, os_username, uid, gid, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       workspace_root = excluded.workspace_root,
-       os_username = excluded.os_username,
-       uid = excluded.uid,
-       gid = excluded.gid,
-       updated_at = excluded.updated_at`,
-  ).run(
-    userId,
-    path.resolve(workspaceRoot),
-    osUsername ?? null,
-    hostPlatform() === "win32" ? null : identity?.uid ?? null,
-    hostPlatform() === "win32" ? null : identity?.gid ?? null,
-    new Date().toISOString(),
-    new Date().toISOString(),
-  );
 }
 
 export function provisionAccountAccess(userId: string, username: string) {
@@ -324,44 +400,17 @@ export function provisionAccountAccess(userId: string, username: string) {
   return true;
 }
 
-/**
- * Repairs access created by older account flows without requiring a shell
- * command. Root is only selected for an explicitly allowed /root workspace;
- * otherwise an identically named non-root OS account is used when available.
- */
+/** Explicit provisioning helper; execution never calls this or mutates access. */
 export function provisionMissingAccountAccess(userId: string, username: string) {
   const access = getUserAccess(userId);
-  const current = access.osUsername ? lookupHostOsUser(access.osUsername) : undefined;
-  if (current && (hostPlatform() === "win32" || (current.uid !== undefined && current.uid > 0) || (config.allowRootAgents && isRootWorkspace(access.workspaceRoot, current.home)))) {
-    if (hostPlatform() === "win32" && (access.uid != null || access.gid != null)) {
-      ensureUserAccess(userId, access.workspaceRoot, current.username);
-    }
-    return true;
+  if (access.osUsername) {
+    const current = lookupHostOsUser(access.osUsername);
+    assertSafeUserAccess(userId, access.workspaceRoot, current, { execution: true });
+    return Boolean(current);
   }
-
-  if (hostPlatform() === "win32" && access.osUsername) return false;
-  if (hostPlatform() === "win32") {
-    const first = getDatabase().prepare("SELECT id FROM users ORDER BY created_at ASC, rowid ASC LIMIT 1").get() as { id: string } | undefined;
-    if (first?.id === userId) {
-      const defaultUser = inferOsUsernameForWorkspace(access.workspaceRoot);
-      if (defaultUser) { ensureUserAccess(userId, access.workspaceRoot, defaultUser); return true; }
-    }
+  if (explicitlyAuthorizedHostAdmin(userId)) {
+    const inferred = inferOsUsernameForWorkspace(access.workspaceRoot);
+    if (inferred) { ensureUserAccess(userId, access.workspaceRoot, inferred); return true; }
   }
-
-  if (config.allowRootAgents && isRootWorkspace(access.workspaceRoot)) {
-    ensureUserAccess(userId, access.workspaceRoot, "root");
-    return true;
-  }
-
-  const matching = lookupHostOsUser(username);
-  if (matching && (hostPlatform() === "win32" || (matching.uid !== undefined && matching.uid > 0))) {
-    ensureUserAccess(userId, access.workspaceRoot, matching.username);
-    return true;
-  }
-  const inferred = hostPlatform() === "win32" ? undefined : inferOsUsernameForWorkspace(access.workspaceRoot);
-  if (inferred) {
-    ensureUserAccess(userId, access.workspaceRoot, inferred);
-    return true;
-  }
-  return false;
+  return provisionAccountAccess(userId, username);
 }

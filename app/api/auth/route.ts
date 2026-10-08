@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { authenticateUser, CHAT_COOKIE } from "@/lib/auth";
+import { authenticateUser, CHAT_COOKIE, revokeRequestSession } from "@/lib/auth";
+import { requestIsSecure } from "@/lib/request-network";
 import { config } from "@/lib/config";
 import { consumeRateLimit, requestClientAddress, resetRateLimit } from "@/lib/rate-limit";
 
@@ -14,13 +15,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  if (!body || typeof body !== "object" ||
+      (body.username !== undefined && (typeof body.username !== "string" || body.username.length > 128)) ||
+      typeof body.password !== "string" || body.password.length > 4096) {
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 400 });
+  }
   const username = body.username?.trim() || config.chatUsername;
   const address = requestClientAddress(req);
   const rateLimitUsername = username.toLowerCase().slice(0, 128);
   const ipLimit = consumeRateLimit(`auth:ip:${address}`, 30, 15 * 60 * 1000);
-  const userLimit = consumeRateLimit(`auth:user:${address}:${rateLimitUsername}`, 10, 15 * 60 * 1000);
-  if (!ipLimit.allowed || !userLimit.allowed) {
-    const retryAfterSeconds = Math.max(ipLimit.retryAfterSeconds, userLimit.retryAfterSeconds);
+  const userLimit = consumeRateLimit(`auth:user:${rateLimitUsername}`, 10, 15 * 60 * 1000);
+  const globalLimit = consumeRateLimit("auth:global", 300, 15 * 60 * 1000);
+  if (!ipLimit.allowed || !userLimit.allowed || !globalLimit.allowed) {
+    const retryAfterSeconds = Math.max(ipLimit.retryAfterSeconds, userLimit.retryAfterSeconds, globalLimit.retryAfterSeconds);
     return NextResponse.json(
       { error: "Too many login attempts. Please try again later." },
       { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
@@ -40,14 +47,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
   }
   resetRateLimit(`auth:ip:${address}`);
-  resetRateLimit(`auth:user:${address}:${rateLimitUsername}`);
+  resetRateLimit(`auth:user:${rateLimitUsername}`);
+  revokeRequestSession(req);
 
-  const proto = req.headers.get("x-forwarded-proto") || "http";
   const res = NextResponse.json({ ok: true });
   res.cookies.set(CHAT_COOKIE, result.token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: proto === "https",
+    secure: requestIsSecure(req),
     path: "/",
     maxAge: result.maxAge,
   });
@@ -55,12 +62,12 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const proto = req.headers.get("x-forwarded-proto") || "http";
+  revokeRequestSession(req);
   const res = NextResponse.json({ ok: true });
   res.cookies.set(CHAT_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: proto === "https",
+    secure: requestIsSecure(req),
     path: "/",
     maxAge: 0,
   });

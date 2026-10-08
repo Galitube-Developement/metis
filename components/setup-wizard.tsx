@@ -31,6 +31,7 @@ export function SetupWizard({
   const [step, setStep] = useState<SetupStep>(hasUsers ? "people" : "welcome");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const [makeAdmin, setMakeAdmin] = useState(false);
   const [osUsername, setOsUsername] = useState("");
   const [platform, setPlatform] = useState<OsPlatform>("linux");
@@ -97,7 +98,7 @@ export function SetupWizard({
       const response = await fetch("/api/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "bootstrap", username, password, osUsername: osUsername.trim() || undefined }),
+        body: JSON.stringify({ action: "bootstrap", setupToken, username, password, osUsername: osUsername.trim() || undefined }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -106,6 +107,7 @@ export function SetupWizard({
       if (!response.ok) throw new Error(body.error || "Could not create account.");
       const created = { id: body.user?.id || "admin", username: username.trim(), isAdmin: true };
       setUsers([created]);
+      setSetupToken("");
       setUsername("");
       setPassword("");
     } catch (cause) {
@@ -155,13 +157,21 @@ export function SetupWizard({
   }
 
   async function finish() {
-    await fetch("/api/setup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "complete" }),
-    }).catch(() => undefined);
-    try { window.sessionStorage.removeItem(SETUP_STEP_STORAGE_KEY); } catch { /* ignore */ }
-    onFinished();
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete" }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Could not finish setup.");
+      try { window.sessionStorage.removeItem(SETUP_STEP_STORAGE_KEY); } catch { /* ignore */ }
+      onFinished();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not finish setup.");
+    } finally { setBusy(false); }
   }
 
   return (
@@ -199,7 +209,7 @@ export function SetupWizard({
           </li>
         ))}
       </ol>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
 
       {step === "welcome" ? (
         <Button type="button" className="h-11 min-h-11 rounded-xl" onClick={() => goToStep("people")}>
@@ -222,7 +232,19 @@ export function SetupWizard({
             <p className="text-sm text-muted-foreground">No accounts yet. Create the first admin to continue.</p>
           )}
 
-          <form onSubmit={(event) => void (users.length ? addPerson(event) : createFirstAdmin(event))} className="grid gap-4">
+          <form onSubmit={(event) => void (hasUsers || users.length ? addPerson(event) : createFirstAdmin(event))} className="grid gap-4">
+            {!hasUsers && !users.length ? (
+              <label className="grid gap-1 text-sm">
+                Operator setup token
+                <Input type="password" value={setupToken} onChange={(event) => setSetupToken(event.target.value)}
+                  autoComplete="off" spellCheck={false} required aria-describedby="setup-token-help" />
+                <span id="setup-token-help" className="text-xs font-normal text-muted-foreground">
+                  Ask the server operator for the one-time token from the installation’s data/setup-token
+                  file (or setup-token inside CHAT_DATA_DIR), or their configured AI_CHAT_SETUP_TOKEN.
+                  Server access is required. The token is consumed when the first account is created.
+                </span>
+              </label>
+            ) : null}
             <label className="grid gap-1 text-sm">
               {users.length ? "Username" : "Admin username"}
               <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus required minLength={3} />
@@ -276,7 +298,7 @@ export function SetupWizard({
       ) : null}
 
       {step === "ready" ? (
-        <Button type="button" className="h-11 min-h-11 rounded-xl" onClick={() => void finish()}>
+        <Button type="button" className="h-11 min-h-11 rounded-xl" disabled={busy} onClick={() => void finish()}>
           Enter Metis <ArrowRight className="size-4" />
         </Button>
       ) : null}

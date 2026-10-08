@@ -187,13 +187,19 @@ Options:
   --docker                Install with Docker Compose
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
+  --allow-root-agents     Explicitly permit root agents (default: false; unsafe)
   --dry-run               Collect configuration and print the plan, then exit
   -h, --help              Show this help
+
+Security: use a dedicated unprivileged service user. For multiuser deployments,
+use separate OS users for agent isolation; application accounts alone do not
+separate operating-system permissions. Root agents require explicit opt-in.
 EOF
 }
 
 non_interactive=0
 dry_run=0
+allow_root_agents=false
 install_dir="$DEFAULT_DIR"
 data_dir=""
 data_dir_set=0
@@ -277,11 +283,16 @@ while [[ $# -gt 0 ]]; do
     --docker) force_docker=1; shift ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
+    --allow-root-agents) allow_root_agents=true; shift ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (use --help for usage)" ;;
   esac
 done
+
+if [[ "$allow_root_agents" == true ]]; then
+  printf 'Warning: --allow-root-agents permits agents with root privileges. Prefer a dedicated unprivileged service user; use separate OS users for multiuser isolation.\n' >&2
+fi
 
 if (( force_docker && force_native )); then
   die "Use either --docker or --native, not both."
@@ -780,12 +791,7 @@ adopt_env_stash "$install_dir"
   write_env_line METIS_WORKSPACE "$agent_cwd"
   write_env_line METIS_DATA_DIR "$data_dir"
   write_env_line AI_CHAT_BIND "$ai_chat_host"
-  if (( use_docker == 0 )); then
-    uid_now="$(id -u 2>/dev/null || echo 1)"
-    if [[ "$uid_now" == "0" || "$agent_cwd" == /root || "$agent_cwd" == /root/* || "$agent_cwd" == /var/root || "$agent_cwd" == /var/root/* ]]; then
-      printf 'AI_CHAT_ALLOW_ROOT_AGENTS=true\n'
-    fi
-  fi
+  write_env_line AI_CHAT_ALLOW_ROOT_AGENTS "$allow_root_agents"
   if (( use_docker )); then
     printf 'METIS_DOCKER=1\n'
     write_env_line AGENT_CWD "/workspace"
@@ -964,6 +970,8 @@ if [[ "$ai_chat_host" == "0.0.0.0" ]]; then
 fi
 printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: %s\n' \
   "$public_url" "$install_dir/.env"
+printf 'Security: prefer a dedicated unprivileged service user and separate OS users for multiuser agent isolation.\n'
+printf 'First setup requires the setup token from the local file: %s\nRead it locally; do not publish it or copy it into logs.\n' "$data_dir/setup-token"
 if (( use_docker )); then
   printf 'Apply: %s\n' "$install_dir/reload.sh"
 fi

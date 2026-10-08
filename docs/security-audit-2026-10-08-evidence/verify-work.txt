@@ -1,0 +1,24 @@
+verify_work — 2026-10-08 UTC / 2026-10-09 Europe/Berlin
+verified=4 total=4 allVerified=true
+VERIFIED Gepinnter isolierter Audit: Findings, Root-MCP-Ausführung und 19 Regressionen (exit 0)
+  command: cd /root/metis-ai && bash docs/security-audit-2026-10-08-evidence/run.sh
+  output: AUDIT_REVISION=b431efb2632462828e1a7e468932a7e76a50e198
+  output: MA03_SIGNED_NONADMIN_MCP_CROSS_USER_FILE_READ
+  output: MA03_DIRECT_OUTSIDE_PATH_REJECTED
+  output: MA03_SIGNED_NONADMIN_SHELL_UID0_OUTSIDE_SENTINEL_READ
+  output: MA04_UNAUTH_ROUTE_LOCAL_PROVIDER_CALLED_ONCE_NO_REAL_BILLING
+  output: MA05_PREAUTH_SYNTHETIC_OS_ACCOUNT_DISCLOSED
+  output: MAH3_LOGOUT_OLD_COOKIE_VALID_LOGIN_NEW_RANDOM_TOKEN
+  output: # pass 19
+  output: AUDIT_ISOLATED_REPRODUCTION_PASS
+  evidence: /root/metis-security-recheck-ae3oap/evidence
+VERIFIED Gesicherte Audit-Artefakte sind unverändert (exit 0)
+  command: cd /root/metis-ai && sha256sum -c docs/security-audit-2026-10-08-evidence/SHA256SUMS
+  output: recheck.ts, identity-variants.ts, run.sh, runtime-metadata.json, regressions.txt: OK
+VERIFIED Performance-Produktdateien behalten b431efb-Inhalt (exit 0)
+  command: cd /root/metis-ai && git diff --exit-code b431efb2632462828e1a7e468932a7e76a50e198 -- lib/db-jobs.ts lib/sqlite.ts lib/worker-scheduler.ts lib/run-event-stream.ts app/api/runs/route.ts scripts/benchmark-performance.ts scripts/benchmark-run-stream.ts tests/performance-persistence.test.ts tests/run-event-stream.test.ts tests/worker-scheduler.test.ts && echo PERFORMANCE_SOURCE_PRESERVED
+  output: PERFORMANCE_SOURCE_PRESERVED
+VERIFIED Aktiver Lauf: GPT-6.1-Sol ohne explizites High-Argument (exit 0)
+  command: cd /root/metis-ai && python3 docs/security-audit-2026-10-08-evidence/runtime-metadata.py bef1aa28-9f19-4f4b-bfde-069d4c9224b0
+  output: {"jobId":"bef1aa28-9f19-4f4b-bfde-069d4c9224b0","model":["gpt-6.1-sol"],"explicitReasoningEffort":[]}
+The ledger confirms these bounded claims; it does not confirm High, WIP fixes, production state or native Windows/macOS/Docker isolation.

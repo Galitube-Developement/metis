@@ -109,6 +109,14 @@ export async function getAuthenticatedUser(req?: Request): Promise<User | null> 
   return session && new Date(session.expiresAt).getTime() > Date.now() ? session : null;
 }
 
+export function revokeRequestSession(req: Request) {
+  const token = req.headers.get("cookie")?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(CHAT_COOKIE + "="))
+    ?.slice(CHAT_COOKIE.length + 1);
+  if (token) getDatabase().prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash(token));
+}
+
 export async function getAuthenticatedUserId(req?: Request): Promise<string | null> {
   return (await getAuthenticatedUser(req))?.id ?? null;
 }

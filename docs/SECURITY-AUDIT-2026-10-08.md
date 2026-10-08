@@ -9,6 +9,10 @@
 
 > Dieser Bericht dokumentiert ausschließlich. Es wurden **keine Produkt-Fixes** implementiert.
 
+> **Nachprüfung des ursprünglichen Produktstands:** [SECURITY-AUDIT-2026-10-08-RECHECK.md](./SECURITY-AUDIT-2026-10-08-RECHECK.md) prüft `b431efb`. Ihre Status-/Reichweitenangaben sind maßgeblich: MA-03 bis zur Root-MCP-Shell mit künstlichen Markern bestätigt; pauschale Nicht-Root-, Docker-, Logout- und Host-RCE-Aussagen unten werden dort korrigiert. Dieser Erstbericht bleibt als historischer Beleg erhalten.
+
+> **Umgesetzte Fixes:** [SECURITY-FIXES-2026-10-09.md](./SECURITY-FIXES-2026-10-09.md) beschreibt den behobenen Kandidaten, Regressionen, Betriebsänderungen und verbleibende Plattformgrenzen.
+
 ---
 
 ## 1. Architektur & Angriffsflächen
@@ -216,7 +220,7 @@ export async function GET(req: Request) {
 }
 ```
 
-- **Beobachtet:** Testinstanz gab unauthentifiziert `cora, f1shy312, lotb, trynocs` samt `/home/<user>` zurück.
+- **Beobachtet:** Die ursprüngliche Testinstanz gab unauthentifiziert lokale Benutzernamen samt Home-Pfaden zurück; konkrete Hostkonten sind hier anonymisiert. Die Nachprüfung verwendet ausschließlich eine künstliche OS-Benutzerliste.
 - **Auswirkung:** Enumeration lokaler Konten/Pfade im Onboarding-Fenster; nützlich für Folgeangriffe (zusammen mit MA-01).
 - **Fix-Vorschläge:** OS-User-Liste erst nach Loopback-Bootstrap/Token bzw. nur für authentifizierte Host-Admins zurückgeben.
 - **Regressionstest:** Test, der prüft, dass `osUsers` bei nicht-Loopback/unauth leer ist.

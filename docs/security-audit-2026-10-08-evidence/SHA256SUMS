@@ -1,0 +1,9 @@
+6ffb8c517ecd94990e09288dd3f3e6e67673bc21adb0c4509793f4b955341255  docs/security-audit-2026-10-08-evidence/recheck.ts
+c7e3fdae3cffe50a5b898da4dfab2c23f4ae1a816da5acd501bc3859ffbaa344  docs/security-audit-2026-10-08-evidence/identity-variants.ts
+d95b4cbc0d81ef33c40314730b423f7e5a94a45b5170236f35f58c59fd8acc53  docs/security-audit-2026-10-08-evidence/run.sh
+994ccffda03e3c6923c44c385b1b715fdc5a5cecc7a5f52cec4851b2d73c6b64  docs/security-audit-2026-10-08-evidence/runtime-metadata.py
+4b98c7e7cde958fec13fe084f15961f4b55cc10fab8d9989e9255504201dca8a  docs/security-audit-2026-10-08-evidence/runtime-metadata.json
+c5050e4f500d5990a14a3ef6515f96ea3f647ddfa2722064d890d5e2bae3b0d7  docs/security-audit-2026-10-08-evidence/recheck.txt
+66468e459cc6bb58956b79c57afa03ec7a761203fa098af1ef2b1acfec069dac  docs/security-audit-2026-10-08-evidence/regressions.txt
+f4b434923d8fd288f94426c8ae8f012cbc9ebd86ccaa9f10d889d4ca6a8f9cce  docs/security-audit-2026-10-08-evidence/summary.txt
+4e6193d04402d8323b868abba8727943b8f8bb2bae089f5c7c560c335b3d652b  docs/security-audit-2026-10-08-evidence/variants.txt

@@ -8,6 +8,10 @@ import { WebSocketServer } from "ws";
 if (!globalThis.AsyncLocalStorage) {
   globalThis.AsyncLocalStorage = AsyncLocalStorage;
 }
+const {
+  initializeRequestNetwork, stampRequestNetwork, browserStreamOriginAllowed,
+} = await import("./lib/request-network.ts");
+initializeRequestNetwork();
 const { default: next } = await import("next");
 const { getAuthenticatedUser, passwordMatches } = await import("./lib/auth.ts");
 const { updateChat } = await import("./lib/db-store.ts");
@@ -350,6 +354,13 @@ remoteClientWebsocketServer.on("connection", (socket, request) => {
   socket.on("error", () => clearTimeout(timer));
 });
 
+const { initializeSetupToken } = await import("./lib/setup-token.ts");
+const setupAccess = initializeSetupToken();
+if (setupAccess.required) {
+  console.log(setupAccess.tokenFile
+    ? `[setup] First account requires the operator token from ${setupAccess.tokenFile}.`
+    : "[setup] First account requires the operator-configured AI_CHAT_SETUP_TOKEN.");
+}
 await nextApp.prepare();
 startUpdateScheduler();
 
@@ -365,6 +376,7 @@ browserCleanupTimer.unref?.();
 
 const server = http.createServer(async (request, response) => {
   try {
+    stampRequestNetwork(request);
     const url = streamUrl(request);
     if (url.pathname === "/__internal/browser-engine") {
       await handleBrowserEngine(request, response);
@@ -400,6 +412,12 @@ server.on("upgrade", async (request, socket, head) => {
     return;
   }
   try {
+    if (!browserStreamOriginAllowed(request)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    stampRequestNetwork(request);
     const context = await authenticate(request, url);
     if (!context) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");

@@ -1,0 +1,9 @@
+(node:3550620) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MA03_ROOT_DISABLED_FAIL_CLOSED
+(node:3550644) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MA03_SIMULATED_NONROOT_SECONDARY_INFERRED_SHARED_UID
+(node:3550658) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+MA03_DOCKER_CONTRACT_SHARED_PROCESS_UID_WORKSPACE

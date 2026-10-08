@@ -40,8 +40,10 @@ environment.
 - Review shell, filesystem, Docker, systemd, and remote desktop tools before
   enabling them in a public deployment.
 - Optional and remote MCP servers are disabled by default.
-- Application login rate limits must use a trustworthy client IP (`x-real-ip`
-  or the last XFF hop).
+- Configure `AI_CHAT_TRUSTED_PROXIES` with only controlled reverse-proxy peer
+  IPs/CIDRs (for local Nginx: `127.0.0.1,::1`). Otherwise forwarding headers are
+  ignored and login/share limits use the actual socket peer. Exclude direct
+  public access to the backend and make the proxy overwrite forwarding headers.
 - The legacy `x-chat-password` / `x-chat-username` path is off unless
   `CHAT_LEGACY_HEADER_AUTH=true`.
 
@@ -64,3 +66,24 @@ Live units (`metis-ai`, `metis-ai-worker`, `metis-ai-mcp`) must **not** be
 stopped as a side effect of a test or docs change. Restart only on explicit
 operator request. P1-5 cgroup limits are live since 11 Sep 2026 16:33 CEST:
 app 2G/512, worker 6G/1024, mcp 1G/256.
+
+## Secure first-run and upgrades
+
+Read `CHAT_DATA_DIR/setup-token` locally for the first account. No token is
+returned by HTTP or printed in logs. An explicit random `AI_CHAT_SETUP_TOKEN`
+may be supplied instead. Existing accounts do not need a new bootstrap token.
+If all accounts are deleted after bootstrap, the consumed token remains invalid;
+restore/recover accounts through operator access rather than reopening setup.
+
+Native Unix installers default to `AI_CHAT_ALLOW_ROOT_AGENTS=false`; the
+`--allow-root-agents` flag is explicit consent for Host-Admins only. Existing
+explicit env values survive updates. Prefer an unprivileged installation/service
+account, and separate OS users with private workspaces for untrusted app users.
+Review old mappings before upgrading: unsafe nonadmin mappings now reject
+creation/updates/execution; Windows nonadmin runs fail closed. An app role alone
+does not provide an OS sandbox.
+
+Use `pnpm start`/`tsx server.mjs` for socket identity and WebSockets. Direct
+`next dev`/`next start` cannot provide authenticated socket metadata and use a
+conservative shared rate-limit bucket. For multiple app processes add a shared
+proxy/WAF limiter; the in-process counters are bounded but are not distributed.

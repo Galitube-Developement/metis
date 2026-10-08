@@ -1,0 +1,128 @@
+TAP version 13
+# Subtest: native Linux settings updates run linux.sh non-interactively
+ok 1 - native Linux settings updates run linux.sh non-interactively
+  ---
+  duration_ms: 2.169592
+  type: 'test'
+  ...
+# Subtest: native commit updates omit --version so the installer selects the requested dev commit
+ok 2 - native commit updates omit --version so the installer selects the requested dev commit
+  ---
+  duration_ms: 0.220616
+  type: 'test'
+  ...
+# Subtest: native commit plans pin the selected SHA with --commit
+ok 3 - native commit plans pin the selected SHA with --commit
+  ---
+  duration_ms: 0.231586
+  type: 'test'
+  ...
+# Subtest: Docker settings updates run docker.sh with the release tag
+ok 4 - Docker settings updates run docker.sh with the release tag
+  ---
+  duration_ms: 0.213736
+  type: 'test'
+  ...
+# Subtest: macOS and Windows plans use the platform installer files
+ok 5 - macOS and Windows plans use the platform installer files
+  ---
+  duration_ms: 0.217296
+  type: 'test'
+  ...
+# Subtest: copied installer scripts stay in dataDir, not systemd PrivateTmp
+ok 6 - copied installer scripts stay in dataDir, not systemd PrivateTmp
+  ---
+  duration_ms: 0.216926
+  type: 'test'
+  ...
+# Subtest: systemd-run environment carries Node and pnpm from an existing install
+ok 7 - systemd-run environment carries Node and pnpm from an existing install
+  ---
+  duration_ms: 0.524162
+  type: 'test'
+  ...
+# Subtest: installer logs detect the HOME unbound failure
+ok 8 - installer logs detect the HOME unbound failure
+  ---
+  duration_ms: 0.365343
+  type: 'test'
+  ...
+# Subtest: installer logs detect a finished native install
+ok 9 - installer logs detect a finished native install
+  ---
+  duration_ms: 0.517571
+  type: 'test'
+  ...
+# (node:3550677) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: owner-scoped stores fail closed for another owner and legacy-unowned rows
+ok 10 - owner-scoped stores fail closed for another owner and legacy-unowned rows
+  ---
+  duration_ms: 825.769695
+  type: 'test'
+  ...
+# (node:3550678) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: fresh schema and legacy title-lock migration survive repeated process startup
+ok 11 - fresh schema and legacy title-lock migration survive repeated process startup
+  ---
+  duration_ms: 1055.653566
+  type: 'test'
+  ...
+# Subtest: event queries seek the run index, preserve owner isolation and replay every page
+ok 12 - event queries seek the run index, preserve owner isolation and replay every page
+  ---
+  duration_ms: 652.972905
+  type: 'test'
+  ...
+# Subtest: workspace containment rejects path escape
+ok 13 - workspace containment rejects path escape
+  ---
+  duration_ms: 2.267
+  type: 'test'
+  ...
+# Subtest: passwd parser extracts posix identity
+ok 14 - passwd parser extracts posix identity
+  ---
+  duration_ms: 1.455095
+  type: 'test'
+  ...
+# Subtest: root uids are rejected for agent execution
+ok 15 - root uids are rejected for agent execution
+  ---
+  duration_ms: 1.452665
+  type: 'test'
+  ...
+# Subtest: root execution requires explicit configuration and a root workspace
+ok 16 - root execution requires explicit configuration and a root workspace
+  ---
+  duration_ms: 0.54398
+  type: 'test'
+  ...
+# Subtest: host admin usernames come from env or the first account
+ok 17 - host admin usernames come from env or the first account
+  ---
+  duration_ms: 0.53484
+  type: 'test'
+  ...
+# Subtest: listAssignablePosixUsers keeps login shells and optional root
+ok 18 - listAssignablePosixUsers keeps login shells and optional root
+  ---
+  duration_ms: 15.85509
+  type: 'test'
+  ...
+# Subtest: host identity parsers preserve platform-specific identity fields
+ok 19 - host identity parsers preserve platform-specific identity fields
+  ---
+  duration_ms: 0.621029
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2234.016876

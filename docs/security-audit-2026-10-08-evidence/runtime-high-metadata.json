@@ -1,0 +1,10 @@
+{
+  "jobId": "8458fd94-08d0-4db1-a7d9-cf1d3e21b179",
+  "model": [
+    "gpt-6.1-sol"
+  ],
+  "explicitReasoningEffort": [
+    "model_reasoning_effort=\"high\""
+  ],
+  "verifiedAt": "2026-10-08T22:04:00.659952+00:00"
+}

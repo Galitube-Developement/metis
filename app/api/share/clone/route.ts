@@ -1,6 +1,6 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { cloneChatByShareId } from "@/lib/db-store";
-import { consumeRateLimit, requestClientAddress, resetRateLimit } from "@/lib/rate-limit";
+import { consumeSharePasswordLimit } from "@/lib/share-rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +19,11 @@ export async function POST(req: Request) {
 
   const ownerId = await getAuthenticatedUserId(req);
   if (!ownerId) return Response.json({ error: "A user session is required." }, { status: 401 });
-  const rateLimitKey = `share-clone:${requestClientAddress(req)}:${body.id || ""}`;
-  const rateLimit = consumeRateLimit(rateLimitKey, 10, 15 * 60 * 1000);
+  if (!body || typeof body.id !== "string" || body.id.length > 128 ||
+      (body.password !== undefined && (typeof body.password !== "string" || body.password.length > 4096))) {
+    return Response.json({ error: "Invalid share credentials" }, { status: 400 });
+  }
+  const rateLimit = consumeSharePasswordLimit(req, body.id);
   if (!rateLimit.allowed) {
     return Response.json(
       { error: "Too many password attempts. Please try again later." },
@@ -31,6 +34,6 @@ export async function POST(req: Request) {
   if (result.status !== "ok") {
     return Response.json({ error: "This shared chat is unavailable or requires a password." }, { status: 404 });
   }
-  resetRateLimit(rateLimitKey);
+  rateLimit.reset();
   return Response.json({ chat: result.chat }, { status: 201 });
 }
