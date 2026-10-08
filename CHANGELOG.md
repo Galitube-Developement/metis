@@ -4,6 +4,11 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.12 — 2026-10-08
+
+- Restore the rotating disclosure arrow on grouped activity summaries such as commands, files and edits so their expand/collapse action stays visible.
+- Keep individual tool details in consistent popovers without disclosure arrows.
+
 ## v1.0.11 — 2026-10-08
 
 - Manage project memories in a dedicated modal and control global memory access with “Include global memory”; project-only agents cannot read or write global memories.
