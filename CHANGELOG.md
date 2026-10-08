@@ -8,6 +8,7 @@ publish releases.
 
 - Manage project memories in a dedicated modal and control global memory access with “Include global memory”; project-only agents cannot read or write global memories.
 - Keep the current task list visible above chat, with static dots for active tasks and checkmarks for completed tasks.
+- Open file, edit, terminal and other tool details in consistent popovers; remove rotating disclosure arrows from tool rows and activity groups.
 - Animate running, queued and waiting statuses across chats and agent teams, while respecting reduced-motion preferences.
 - Protect note edits with serialized saves, draft recovery and explicit conflict resolution.
 - Improve long-chat responsiveness and synchronize project team statuses.
