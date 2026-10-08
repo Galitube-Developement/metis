@@ -13,6 +13,13 @@ cleanup() {
   result=$?
   if (( result != 0 )); then compose logs --tail=60 >&2 || true; fi
   compose down --remove-orphans >/dev/null 2>&1 || true
+  # Containers can create root-owned fixture directories on non-root CI hosts.
+  # Only hand the disposable smoke directory back to its original owner.
+  if [[ "$(id -u)" != "0" ]]; then
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+      --mount "type=bind,src=$work_dir,dst=/smoke-cleanup" "$image" \
+      -c 'chown -R "$1:$2" /smoke-cleanup' -- "$(id -u)" "$(id -g)"
+  fi
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
