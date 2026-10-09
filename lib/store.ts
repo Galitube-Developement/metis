@@ -1,3 +1,4 @@
+import { normalizeStoredQuestions } from "./question-contract";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -307,20 +308,7 @@ export type BrowserContext = {
   updatedAt: string;
 };
 
-export type PendingChatQuestion = {
-  questionId: string;
-  runId?: string;
-  jobId?: string;
-  version?: number;
-  expiresAt?: string;
-  status?: "waiting_for_user" | "answered" | "cancelled" | "expired";
-  questions: Array<{
-    id: string;
-    question: string;
-    multiple?: boolean;
-    options?: Array<{ label: string; value?: string }>;
-  }>;
-};
+export type PendingChatQuestion = import("./question-contract").PendingChatQuestion;
 
 export type ChatRunStatus =
   | "idle"
@@ -926,44 +914,8 @@ export function updateChat(
   if (patch.pendingQuestion === null) {
     delete chat.pendingQuestion;
   } else if (patch.pendingQuestion) {
-    const questions = patch.pendingQuestion.questions
-      .filter(
-        (question) =>
-          question &&
-          typeof question.id === "string" &&
-          typeof question.question === "string",
-      )
-      .slice(0, 10)
-      .map((question) => ({
-        id: question.id.slice(0, 200),
-        question: question.question.slice(0, 4_000),
-        ...(question.multiple ? { multiple: true } : {}),
-        ...(question.options
-          ? {
-              options: question.options
-                .filter(
-                  (option) =>
-                    option &&
-                    typeof option.label === "string" &&
-                    (option.value === undefined ||
-                      typeof option.value === "string"),
-                )
-                .slice(0, 20)
-                .map((option) => ({
-                  label: option.label.slice(0, 500),
-                  ...(option.value !== undefined
-                    ? { value: option.value.slice(0, 500) }
-                    : {}),
-                })),
-            }
-          : {}),
-      }));
-    if (questions.length > 0) {
-      chat.pendingQuestion = {
-        questionId: patch.pendingQuestion.questionId.slice(0, 200),
-        questions,
-      };
-    }
+    const questions = normalizeStoredQuestions(patch.pendingQuestion.questions);
+    if (questions.length > 0) chat.pendingQuestion = { ...patch.pendingQuestion, questions };
   }
   return saveChat(chat);
 }

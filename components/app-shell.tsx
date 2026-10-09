@@ -1,5 +1,8 @@
 "use client";
 
+import { QuestionForm } from "@/components/question-form";
+import { normalizeStoredQuestions, initialQuestionAnswers, restoreQuestionDraft, type PendingChatQuestion as PendingQuestion, type QuestionAnswers } from "@/lib/question-contract";
+
 import { RunStatus } from "@/components/run-status";
 
 import {
@@ -345,35 +348,6 @@ function MetricSparkline({ values, color }: { values: number[]; color: string })
   const max = Math.max(1, ...safe);
   const points = safe.map((value, index) => `${(index / Math.max(1, safe.length - 1)) * 100},${36 - (Math.max(0, value) / max) * 32}`).join(" ");
   return <svg viewBox="0 0 100 36" preserveAspectRatio="none" className="h-12 w-full overflow-visible"><polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-}
-
-type AgentQuestion = {
-  id: string;
-  question: string;
-  multiple?: boolean;
-  options?: Array<{ label: string; value?: string }>;
-};
-
-type PendingQuestion = {
-  questionId: string;
-  runId?: string;
-  jobId?: string;
-  version?: number;
-  expiresAt?: string;
-  status?: "waiting_for_user" | "answered" | "cancelled" | "expired";
-  questions: AgentQuestion[];
-};
-
-function selectedQuestionValues(answer: string): string[] {
-  if (!answer) return [];
-  try {
-    const parsed = JSON.parse(answer);
-    return Array.isArray(parsed)
-      ? parsed.filter((value): value is string => typeof value === "string")
-      : [answer];
-  } catch {
-    return [answer];
-  }
 }
 
 function formatToolPayload(value?: string) {
@@ -2008,6 +1982,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [questionCustom, setQuestionCustom] = useState<string[]>([]);
   const [questionCustomActive, setQuestionCustomActive] = useState<boolean[]>([]);
   const [answeringQuestion, setAnsweringQuestion] = useState(false);
+  const [questionError, setQuestionError] = useState<string | null>(null);
+  const [questionFieldErrors, setQuestionFieldErrors] = useState<Record<string, string>>({});
   const [paneKey, setPaneKey] = useState(0);
   const [pendingFiles, setVisiblePendingFiles] = useState<PendingFile[]>([]);
   const pendingByChatRef = useRef(new Map<string, PendingFile[]>());
@@ -2529,6 +2505,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             browserUrl,
             browserUrlUpdatedAt: browserUrlUpdatedAtRef.current || undefined,
             extraFields: {
+              questionDraftId: pendingQuestion?.questionId,
               questionCustom,
               questionAnswers,
               questionCustomActive,
@@ -2564,6 +2541,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     questionCustom,
     questionAnswers,
     questionCustomActive,
+    pendingQuestion?.questionId,
   ]);
 
   useEffect(() => {
@@ -4092,9 +4070,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     if (source === "server") composerPersistChatRef.current = id;
     const extra = session.extraFields || {};
-    if (Array.isArray(extra.questionCustom)) setQuestionCustom(extra.questionCustom as string[]);
-    if (Array.isArray(extra.questionAnswers)) setQuestionAnswers(extra.questionAnswers as string[]);
-    if (Array.isArray(extra.questionCustomActive)) setQuestionCustomActive(extra.questionCustomActive as boolean[]);
     setReferenceMenu(null);
     setReferences([]);
     setMessages(snap.messages);
@@ -4129,9 +4104,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     );
     pendingQuestionIdRef.current = snap.pendingQuestion?.questionId ?? null;
     setPendingQuestion(snap.pendingQuestion ?? null);
-    setQuestionAnswers(snap.pendingQuestion?.questions.map(() => "") ?? []);
-    setQuestionCustom(snap.pendingQuestion?.questions.map(() => "") ?? []);
-    setQuestionCustomActive(snap.pendingQuestion?.questions.map(() => false) ?? []);
+    const questionDraft = restoreQuestionDraft(snap.pendingQuestion, extra);
+    setQuestionAnswers(questionDraft.answers);
+    setQuestionCustom(questionDraft.custom);
+    setQuestionCustomActive(questionDraft.customActive);
+    setQuestionError(null);
+    setQuestionFieldErrors({});
     setPaneKey((k) => k + 1);
   }, [acceptServerSnapshot, clearUnread, modelParamsByModel, setBusySynced, setInput, workspaceDefaultCwd]);
 
@@ -4515,9 +4493,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               inputUpdatedAtRef.current = session.inputUpdatedAt || "";
               if (composerPersistChatRef.current !== id) composerDirtyUntilRef.current = 0;
               const extra = session.extraFields || {};
-              if (Array.isArray(extra.questionCustom)) setQuestionCustom(extra.questionCustom as string[]);
-              if (Array.isArray(extra.questionAnswers)) setQuestionAnswers(extra.questionAnswers as string[]);
-              if (Array.isArray(extra.questionCustomActive)) setQuestionCustomActive(extra.questionCustomActive as boolean[]);
+              const questionDraft = restoreQuestionDraft(next.pendingQuestion, extra);
+              setQuestionAnswers(questionDraft.answers);
+              setQuestionCustom(questionDraft.custom);
+              setQuestionCustomActive(questionDraft.customActive);
             }
             composerPersistChatRef.current = id;
             pendingQuestionIdRef.current = next.pendingQuestion?.questionId ?? null;
@@ -4951,11 +4930,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           data.chat.pendingQuestion &&
           data.chat.pendingQuestion.questionId !== previousQuestionId
         ) {
-          setQuestionAnswers(data.chat.pendingQuestion.questions.map(() => ""));
-          setQuestionCustom(data.chat.pendingQuestion.questions.map(() => ""));
-          setQuestionCustomActive(
-            data.chat.pendingQuestion.questions.map(() => false),
-          );
+          setQuestionAnswers(restoreQuestionDraft(data.chat.pendingQuestion, data.chat.sessionState?.extraFields).answers);
+          setQuestionCustom(restoreQuestionDraft(data.chat.pendingQuestion, data.chat.sessionState?.extraFields).custom);
+          setQuestionCustomActive(restoreQuestionDraft(data.chat.pendingQuestion, data.chat.sessionState?.extraFields).customActive);
         }
         setBusySynced(
           runtimeRef.current.has(chatId) ||
@@ -6400,42 +6377,35 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     addPendingFiles(imageFiles);
   }
 
-  async function submitQuestionAnswers() {
+  async function submitQuestionAnswers(result: QuestionAnswers) {
     if (!pendingQuestion || answeringQuestion) return;
-    const answers = questionAnswers.map((answer, index) =>
-      questionCustomActive[index] ? questionCustom[index] || "" : answer,
-    );
-    if (answers.some((answer) => !answer.trim())) {
-      toast.error("Please answer every question");
-      return;
-    }
+    const submittingQuestion = pendingQuestion;
+    const submittingChatId = activeChatIdRef.current;
     setAnsweringQuestion(true);
+    setQuestionError(null);
+    setQuestionFieldErrors({});
     try {
       const res = await fetch("/api/chat/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionId: pendingQuestion.questionId,
-          answers,
-          version: pendingQuestion.version,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId: submittingQuestion.questionId, values: result.values, version: submittingQuestion.version }),
       });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; fieldErrors?: Record<string, string>; summary?: string };
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (pendingQuestionIdRef.current === submittingQuestion.questionId) setQuestionFieldErrors(data.fieldErrors || {});
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      pendingQuestionIdRef.current = null;
-      setPendingQuestion(null);
-      if (activeChatIdRef.current) {
-        setAttentionChatIds((current) =>
-          current.filter((id) => id !== activeChatIdRef.current),
-        );
+      if (data.summary && submittingChatId === activeChatIdRef.current) {
+        const messageId = `question-answer-${submittingQuestion.questionId}`;
+        setMessages(current => current.some(message => message.id === messageId) ? current : [...current, { id: messageId, role: "user", content: data.summary!, createdAt: new Date().toISOString() }]);
       }
+      if (pendingQuestionIdRef.current === submittingQuestion.questionId) {
+        pendingQuestionIdRef.current = null;
+        setPendingQuestion(null);
+      }
+      if (submittingChatId) setAttentionChatIds(current => current.filter(id => id !== submittingChatId));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Answer failed");
-    } finally {
-      setAnsweringQuestion(false);
-    }
+      if (pendingQuestionIdRef.current === submittingQuestion.questionId) setQuestionError(error instanceof Error ? error.message : "Answer failed. Try again.");
+    } finally { setAnsweringQuestion(false); }
   }
 
   async function submitApprovalDecision(decision: ApprovalDecisionValue) {
@@ -7609,42 +7579,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             typeof payload.questionId === "string" &&
             Array.isArray(payload.questions)
           ) {
-            const questions = payload.questions
-              .map((item) => {
-                if (!item || typeof item !== "object") return null;
-                const value = item as {
-                  id?: unknown;
-                  question?: unknown;
-                  multiple?: unknown;
-                  options?: unknown;
-                };
-                if (typeof value.question !== "string") return null;
-                const options = Array.isArray(value.options)
-                  ? value.options
-                      .map((option) => {
-                        if (!option || typeof option !== "object") return null;
-                        const candidate = option as { label?: unknown; value?: unknown };
-                        if (typeof candidate.label !== "string") return null;
-                        return {
-                          label: candidate.label,
-                          ...(typeof candidate.value === "string"
-                            ? { value: candidate.value }
-                            : {}),
-                        };
-                      })
-                      .filter((option): option is { label: string; value?: string } => Boolean(option))
-                  : undefined;
-                return {
-                  id:
-                    typeof value.id === "string"
-                      ? value.id
-                      : `question-${Math.random().toString(36).slice(2)}`,
-                  question: value.question,
-                  ...(value.multiple === true ? { multiple: true } : {}),
-                  ...(options?.length ? { options } : {}),
-                };
-              })
-              .filter((question): question is AgentQuestion => Boolean(question));
+            const questions = normalizeStoredQuestions(payload.questions);
             if (questions.length > 0) {
               const isSameQuestion = pendingQuestionIdRef.current === payload.questionId;
               if (activeChatIdRef.current === chatId) {
@@ -7655,6 +7590,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               notifiedQuestionRef.current = payload.questionId;
               if (activeChatIdRef.current === chatId) {
                 setPendingQuestion({
+                  title: typeof payload.title === "string" ? payload.title : undefined,
+                  description: typeof payload.description === "string" ? payload.description : undefined,
+                  submitLabel: typeof payload.submitLabel === "string" ? payload.submitLabel : undefined,
+                  responseTemplate: typeof payload.responseTemplate === "string" ? payload.responseTemplate : undefined,
+                  columns: payload.columns === 2 ? 2 : 1,
                   questionId: payload.questionId,
                   runId: typeof payload.runId === "string" ? payload.runId : undefined,
                   jobId: typeof payload.jobId === "string" ? payload.jobId : undefined,
@@ -7664,7 +7604,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   questions,
                 });
                 if (!isSameQuestion) {
-                  setQuestionAnswers(questions.map(() => ""));
+                  setQuestionAnswers(initialQuestionAnswers(questions));
+                  setQuestionError(null);
+                  setQuestionFieldErrors({});
                   setQuestionCustom(questions.map(() => ""));
                   setQuestionCustomActive(questions.map(() => false));
                 }
@@ -10794,163 +10736,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                 ) : null}
                 {pendingQuestion ? (
-                  <section className="space-y-4 rounded-2xl border border-primary/30 bg-primary/[0.06] p-4 shadow-sm">
-                    <div>
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-medium text-foreground">
-                        Agent needs your input
-                        </p>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          className="h-7 text-muted-foreground"
-                          disabled={answeringQuestion}
-                          onClick={() => void cancelPendingQuestion()}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Answer every question to continue. Take your time — this stays open.
-                      </p>
-                    </div>
-                    {pendingQuestion.questions.map((question, index) => {
-                      const customSelected = questionCustomActive[index] === true;
-                      const selected = questionAnswers[index];
-                      const selectedValues = selectedQuestionValues(selected);
-                      return (
-                        <div key={question.id} className="space-y-2">
-                          <p className="text-sm leading-relaxed">
-                            {index + 1}. {question.question}
-                          </p>
-                          {question.multiple ? (
-                            <p className="text-xs text-muted-foreground">
-                              Select one or more options.
-                            </p>
-                          ) : null}
-                          <div className="grid grid-cols-1 gap-2">
-                            {(question.options ?? []).map((option) => {
-                              const value = option.value || option.label;
-                              const isSelected = question.multiple
-                                ? selectedValues.includes(value)
-                                : selected === value;
-                              return (
-                                <button
-                                  key={`${question.id}-${value}`}
-                                  type="button"
-                                  disabled={answeringQuestion}
-                                  aria-pressed={!customSelected && isSelected}
-                                  className={cn(
-                                    "min-h-11 w-full min-w-0 rounded-lg border px-3 py-2.5 text-left text-sm whitespace-normal break-words transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50",
-                                    !customSelected && isSelected
-                                      ? "border-primary bg-primary/15 text-foreground"
-                                      : "border-border/60 bg-background/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                                  )}
-                                  onClick={() => {
-                                    setQuestionAnswers((answers) => {
-                                      const next = [...answers];
-                                      if (question.multiple) {
-                                        const values = selectedQuestionValues(next[index]);
-                                        const nextValues = values.includes(value)
-                                          ? values.filter((item) => item !== value)
-                                          : [...values, value];
-                                        next[index] = nextValues.length
-                                          ? JSON.stringify(nextValues)
-                                          : "";
-                                      } else {
-                                        next[index] = value;
-                                      }
-                                      return next;
-                                    });
-                                    setQuestionCustomActive((active) => {
-                                      const next = [...active];
-                                      next[index] = false;
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  {option.label}
-                                </button>
-                              );
-                            })}
-                            <button
-                              type="button"
-                              disabled={answeringQuestion}
-                              aria-pressed={customSelected}
-                              className={cn(
-                                "min-h-11 w-full min-w-0 rounded-lg border px-3 py-2.5 text-left text-sm whitespace-normal break-words transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50",
-                                customSelected
-                                  ? "border-primary bg-primary/15 text-foreground"
-                                  : "border-border/60 bg-background/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                              )}
-                              onClick={() => {
-                                setQuestionCustomActive((active) => {
-                                  const next = [...active];
-                                  next[index] = true;
-                                  return next;
-                                });
-                                setQuestionAnswers((answers) => {
-                                  const next = [...answers];
-                                  next[index] = "";
-                                  return next;
-                                });
-                              }}
-                            >
-                              Custom…
-                            </button>
-                          </div>
-                          {customSelected ? (
-                            <Textarea
-                              autoFocus={pendingQuestion.questions.length === 1}
-                              aria-label={question.question}
-                              disabled={answeringQuestion}
-                              value={questionCustom[index] ?? ""}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                setQuestionCustom((custom) => {
-                                  const next = [...custom];
-                                  next[index] = value;
-                                  return next;
-                                });
-                                setQuestionAnswers((answers) => {
-                                  const next = [...answers];
-                                  next[index] = value;
-                                  return next;
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if (
-                                  event.key === "Enter" &&
-                                  !event.shiftKey &&
-                                  pendingQuestion.questions.length === 1
-                                ) {
-                                  event.preventDefault();
-                                  void submitQuestionAnswers();
-                                }
-                              }}
-                              placeholder="Type your answer…"
-                              className="min-h-16 resize-y bg-background/60 text-sm"
-                            />
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={
-                          answeringQuestion ||
-                          questionAnswers.length !== pendingQuestion.questions.length ||
-                          questionAnswers.some((answer) => !answer.trim())
-                        }
-                        onClick={() => void submitQuestionAnswers()}
-                      >
-                        {answeringQuestion ? "Sending…" : "Continue"}
-                      </Button>
-                    </div>
-                  </section>
+                  <QuestionForm
+                    key={pendingQuestion.questionId}
+                    form={pendingQuestion} answers={questionAnswers}
+                    custom={questionCustom} customActive={questionCustomActive}
+                    disabled={answeringQuestion} error={questionError} fieldErrors={questionFieldErrors}
+                    onAnswersChange={(next) => { setQuestionAnswers(next); setQuestionError(null); setQuestionFieldErrors({}); }}
+                    onCustomChange={(next) => { setQuestionCustom(next); setQuestionError(null); setQuestionFieldErrors({}); }}
+                    onCustomActiveChange={setQuestionCustomActive}
+                    onSubmit={(result) => void submitQuestionAnswers(result)}
+                    onCancel={() => void cancelPendingQuestion()}
+                  />
                 ) : null}
                 <div ref={bottomRef} />
               </div>
