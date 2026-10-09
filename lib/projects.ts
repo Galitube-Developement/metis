@@ -87,6 +87,7 @@ function rowToProject(row: unknown): Project | null {
   name: clip(parsed.name, 80) || "Untitled project",
   mode: parsed.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: parsed.mode === "agents" && parsed.allowAgentManagement === true,
+  hideChatsFromAll: parsed.hideChatsFromAll === true,
   icon: PROJECT_ICONS.includes(parsed.icon as (typeof PROJECT_ICONS)[number]) ? parsed.icon : "folder",
   color: /^#[0-9a-f]{6}$/i.test(parsed.color || "") ? String(parsed.color) : PROJECT_COLORS[0],
   instructions: clip(parsed.instructions, 20_000),
@@ -155,6 +156,7 @@ export function createProject(input: {
   name: clip(input.name, 80) || "New project",
   mode: input.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: false,
+  hideChatsFromAll: false,
   icon: PROJECT_ICONS.includes((input.icon || "") as (typeof PROJECT_ICONS)[number]) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
   color: /^#[0-9a-f]{6}$/i.test(input.color || "") ? String(input.color) : PROJECT_COLORS[count % PROJECT_COLORS.length],
   instructions: clip(input.instructions, 20_000),
@@ -172,7 +174,7 @@ export function createProject(input: {
 
 export function updateProject(
  id: string,
- patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement">>,
+ patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement" | "hideChatsFromAll">>,
  ownerId?: string,
 ): Project | null {
  return transaction(() => {
@@ -188,6 +190,7 @@ export function updateProject(
    ...(patch.memoryMode === "project_only" || patch.memoryMode === "default" ? { memoryMode: patch.memoryMode } : {}),
    ...(patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
    ...(typeof patch.allowAgentManagement === "boolean" ? { allowAgentManagement: current.mode === "agents" && patch.allowAgentManagement } : {}),
+   ...(typeof patch.hideChatsFromAll === "boolean" ? { hideChatsFromAll: patch.hideChatsFromAll } : {}),
    updatedAt: timestamp,
   };
   return writeProject(next);

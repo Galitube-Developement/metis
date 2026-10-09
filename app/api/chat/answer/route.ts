@@ -4,6 +4,7 @@ import { queueUserInputResume } from "@/lib/db-jobs";
 import { appendMessage, getChat, updateChat } from "@/lib/db-store";
 
 import { normalizeQuestionAnswers, QuestionValidationError } from "@/lib/question-contract";
+import { questionAnswerAnchor } from "@/lib/question-transcript";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,15 @@ export async function POST(req: Request) {
   }
   const resolved = resolveQuestion(questionId, input, userId, version);
   if (!resolved) return Response.json({ error: "This form is no longer available. Refresh the chat." }, { status: 409 });
-  if (resolved.summary) appendMessage(resolved.chatId, { id: `question-answer-${questionId}`, role: "user", content: resolved.summary }, userId);
+  const answerId = `question-answer-${questionId}`;
+  const chat = getChat(resolved.chatId, userId);
+  if (resolved.summary && !chat?.messages.some(message => message.id === answerId)) {
+    appendMessage(resolved.chatId, {
+      id: answerId, role: "user", content: resolved.summary,
+      questionAnswer: { questionId, ...questionAnswerAnchor(chat?.messages ?? [], questionId) },
+    }, userId);
+  }
+  const answerMessage = getChat(resolved.chatId, userId)?.messages.find(message => message.id === answerId);
   if (resolved.jobId) {
     queueUserInputResume({
       jobId: resolved.jobId,
@@ -62,5 +71,6 @@ export async function POST(req: Request) {
     status: resolved.status,
     values: resolved.values,
     summary: resolved.summary,
+    message: answerMessage,
   });
 }
