@@ -1,5 +1,5 @@
 import { getChatByShareId } from "@/lib/db-store";
-import { consumeRateLimit, requestClientAddress, resetRateLimit } from "@/lib/rate-limit";
+import { consumeSharePasswordLimit } from "@/lib/share-rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +25,11 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const rateLimitKey = `share:${requestClientAddress(req)}:${body.id || ""}`;
-  const rateLimit = consumeRateLimit(rateLimitKey, 10, 15 * 60 * 1000);
+  if (!body || typeof body.id !== "string" || body.id.length > 128 ||
+      (body.password !== undefined && (typeof body.password !== "string" || body.password.length > 4096))) {
+    return Response.json({ error: "Invalid share credentials" }, { status: 400 });
+  }
+  const rateLimit = consumeSharePasswordLimit(req, body.id);
   if (!rateLimit.allowed) {
     return Response.json(
       { error: "Too many password attempts. Please try again later." },
@@ -38,6 +41,6 @@ export async function POST(req: Request) {
   if (result.status === "password_required") {
     return Response.json({ error: "Incorrect password", share: result.share }, { status: 401 });
   }
-  resetRateLimit(rateLimitKey);
+  rateLimit.reset();
   return Response.json({ chat: result.chat });
 }

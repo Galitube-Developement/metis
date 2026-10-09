@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
 import { authenticateUser, CHAT_COOKIE, getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { createManagedUser, patchManagedUser } from "@/lib/admin-users";
-import { getSetupStatus, markSetupComplete, markSetupIncomplete } from "@/lib/setup";
+import { patchManagedUser } from "@/lib/admin-users";
+import { bootstrapSetupAccount, SetupBootstrapError, getSetupStatus, markSetupComplete } from "@/lib/setup";
 import { isHostAdmin, inferOsUsernameForWorkspace, listHostOsUsers } from "@/lib/user-access";
 import { hostPlatform } from "@/lib/user-isolation";
 import { config } from "@/lib/config";
+import { requestIsSecure } from "@/lib/request-network";
+import { consumeRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function sessionCookie(res: NextResponse, token: string, maxAge: number, req: Request) {
-  const proto = req.headers.get("x-forwarded-proto") || "http";
   res.cookies.set(CHAT_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: proto === "https",
+    secure: requestIsSecure(req),
     path: "/",
     maxAge,
   });
@@ -24,7 +25,7 @@ function sessionCookie(res: NextResponse, token: string, maxAge: number, req: Re
 export async function GET(req: Request) {
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
   const status = getSetupStatus(ownerId);
-  const canListOsUsers = status.needed && (!status.hasUsers || (ownerId && isHostAdmin(ownerId)));
+  const canListOsUsers = Boolean(ownerId && isHostAdmin(ownerId));
   return Response.json({
     ...status,
     platform: hostPlatform(),
@@ -36,34 +37,44 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as {
+  const parsed: unknown = await req.json().catch(() => null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "Invalid setup request." }, { status: 400 });
+  }
+  const body = parsed as {
+    setupToken?: unknown;
     action?: string;
     username?: string;
     password?: string;
     osUsername?: string | null;
   };
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "Invalid setup request" }, { status: 400 });
+  }
   const action = body.action || "";
 
   if (action === "bootstrap") {
-    const status = getSetupStatus();
-    if (status.hasUsers) {
-      return Response.json({ error: "Setup already has an account." }, { status: 409 });
+    // Global bucket: spoofed proxy/address headers cannot bypass this limiter.
+    const limit = consumeRateLimit("setup:bootstrap", 10, 60_000);
+    if (!limit.allowed) {
+      return Response.json({ error: "Too many setup attempts." }, {
+        status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) },
+      });
     }
     try {
-      const user = createManagedUser({
-        username: body.username || "",
-        password: body.password || "",
-        isAdmin: true,
-        osUsername: body.osUsername?.trim() || undefined,
+      const user = bootstrapSetupAccount({
+        setupToken: body.setupToken,
+        username: typeof body.username === "string" ? body.username : "",
+        password: typeof body.password === "string" ? body.password : "",
+        osUsername: typeof body.osUsername === "string" ? body.osUsername.trim() || undefined : undefined,
       });
-      markSetupIncomplete();
       const session = authenticateUser(user.username, body.password || "");
       if (!session) return Response.json({ error: "Could not sign in after setup." }, { status: 500 });
       const res = NextResponse.json({ ok: true, user, ...getSetupStatus(user.id) }, { status: 201 });
       return sessionCookie(res, session.token, session.maxAge, req);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not create account.";
-      return Response.json({ error: message }, { status: 400 });
+      return Response.json({ error: cause instanceof SetupBootstrapError ? message : "Could not create account." }, { status: cause instanceof SetupBootstrapError ? cause.status : 400 });
     }
   }
 

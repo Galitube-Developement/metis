@@ -1,0 +1,329 @@
+{
+  "baselineCommit": "b97e22889505f342d647806bef5cecca8d097b5c",
+  "measurements": [
+    {
+      "variant": "before",
+      "iteration": 1,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 25.857010000000002,
+        "startup": {
+          "firstBackfillMs": 166.330148,
+          "repeated": {
+            "p50": 111.18507499999998,
+            "p95": 123.94111600000002
+          }
+        },
+        "eventReadMs": {
+          "p50": 1.40295100000003,
+          "p95": 2.1694610000004104
+        },
+        "coldChatPageMs": {
+          "p50": 5.149932000000263,
+          "p95": 7.027328000000125
+        },
+        "scheduler": {
+          "reactions": 24024,
+          "retainedHeapBytes": 3024768,
+          "wallMs": 1174.9511060000004,
+          "cpuUserMs": 100.537,
+          "cpuSystemMs": 17.717,
+          "eventLoopP95Ms": 10.543103
+        }
+      }
+    },
+    {
+      "variant": "after",
+      "iteration": 1,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 24.333049000000017,
+        "startup": {
+          "firstBackfillMs": 99.90612200000001,
+          "repeated": {
+            "p50": 3.531093999999996,
+            "p95": 4.671739000000002
+          }
+        },
+        "eventReadMs": {
+          "p50": 0.1141579999998612,
+          "p95": 0.21587700000009136
+        },
+        "coldChatPageMs": {
+          "p50": 4.827236999999968,
+          "p95": 7.710538999999699
+        },
+        "scheduler": {
+          "reactions": 48,
+          "retainedHeapBytes": 75368,
+          "wallMs": 1140.588926,
+          "cpuUserMs": 121.584,
+          "cpuSystemMs": 8.118,
+          "eventLoopP95Ms": 10.403839
+        }
+      }
+    },
+    {
+      "variant": "before",
+      "iteration": 2,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 21.769791999999995,
+        "startup": {
+          "firstBackfillMs": 188.98822300000003,
+          "repeated": {
+            "p50": 100.26220499999997,
+            "p95": 102.63243300000002
+          }
+        },
+        "eventReadMs": {
+          "p50": 1.4149509999997463,
+          "p95": 2.0507219999999506
+        },
+        "coldChatPageMs": {
+          "p50": 5.568925000000036,
+          "p95": 7.496771000000081
+        },
+        "scheduler": {
+          "reactions": 24024,
+          "retainedHeapBytes": 3033072,
+          "wallMs": 1146.8084420000005,
+          "cpuUserMs": 110.183,
+          "cpuSystemMs": 12.939,
+          "eventLoopP95Ms": 10.420223
+        }
+      }
+    },
+    {
+      "variant": "after",
+      "iteration": 2,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 35.08908600000001,
+        "startup": {
+          "firstBackfillMs": 106.67699800000003,
+          "repeated": {
+            "p50": 4.357672999999977,
+            "p95": 5.410847999999987
+          }
+        },
+        "eventReadMs": {
+          "p50": 0.12111800000002404,
+          "p95": 0.21333700000013778
+        },
+        "coldChatPageMs": {
+          "p50": 5.478687999999693,
+          "p95": 8.364008999999896
+        },
+        "scheduler": {
+          "reactions": 48,
+          "retainedHeapBytes": 84112,
+          "wallMs": 1146.8469510000004,
+          "cpuUserMs": 136.054,
+          "cpuSystemMs": 0,
+          "eventLoopP95Ms": 10.510335
+        }
+      }
+    },
+    {
+      "variant": "before",
+      "iteration": 3,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 26.11525400000005,
+        "startup": {
+          "firstBackfillMs": 207.138505,
+          "repeated": {
+            "p50": 109.06198400000005,
+            "p95": 134.75068399999998
+          }
+        },
+        "eventReadMs": {
+          "p50": 1.9896840000001248,
+          "p95": 2.2322110000000066
+        },
+        "coldChatPageMs": {
+          "p50": 5.540716999999859,
+          "p95": 8.050173000000086
+        },
+        "scheduler": {
+          "reactions": 24024,
+          "retainedHeapBytes": 3033072,
+          "wallMs": 1144.2280089999995,
+          "cpuUserMs": 119.563,
+          "cpuSystemMs": 6.617,
+          "eventLoopP95Ms": 10.395647
+        }
+      }
+    },
+    {
+      "variant": "after",
+      "iteration": 3,
+      "measurement": {
+        "environment": {
+          "node": "v22.16.0",
+          "platform": "linux",
+          "arch": "x64",
+          "cpu": "AMD EPYC-Milan Processor",
+          "cpuCount": 8
+        },
+        "fixture": {
+          "chats": 32,
+          "messagesPerChat": 251,
+          "transcriptBytes": 54321068,
+          "events": 10000,
+          "currentJobEvents": 10,
+          "concurrentStubJobs": 24,
+          "polls": 1000
+        },
+        "freshStartMs": 27.084811000000002,
+        "startup": {
+          "firstBackfillMs": 99.40035,
+          "repeated": {
+            "p50": 5.014973999999995,
+            "p95": 5.679913999999997
+          }
+        },
+        "eventReadMs": {
+          "p50": 0.13949800000000323,
+          "p95": 0.28573600000027
+        },
+        "coldChatPageMs": {
+          "p50": 6.491154000000279,
+          "p95": 10.711819000000105
+        },
+        "scheduler": {
+          "reactions": 48,
+          "retainedHeapBytes": 84176,
+          "wallMs": 1181.9952460000004,
+          "cpuUserMs": 131.591,
+          "cpuSystemMs": 21.523,
+          "eventLoopP95Ms": 10.715135
+        }
+      }
+    }
+  ],
+  "streamBefore": {
+    "unreadQueries": 3,
+    "queriesAfterCancel": 2,
+    "status": 200
+  },
+  "streamAfter": {
+    "unreadQueries": 0,
+    "queriesAfterCancel": 0,
+    "status": 200
+  },
+  "validation": {
+    "ledger": {
+      "verified": 5,
+      "total": 5,
+      "allVerified": true
+    },
+    "focusedTests": {
+      "pass": 17,
+      "fail": 0
+    },
+    "suite": {
+      "tests": 838,
+      "initialPass": 825,
+      "initialFail": 4,
+      "skipped": 9,
+      "environmentRecheckPass": 14,
+      "environmentRecheckFail": 0,
+      "baselineSameEnvironmentFailures": 4
+    },
+    "buildId": "SPijJCboHJ0P-pLg62VJV",
+    "uiViewports": [
+      [
+        1440,
+        900
+      ],
+      [
+        390,
+        844
+      ],
+      [
+        768,
+        1024
+      ]
+    ],
+    "stubStreamSteps": 60,
+    "stubStreamDurationSeconds": 120,
+    "uiUploadBytes": 1000000
+  }
+}

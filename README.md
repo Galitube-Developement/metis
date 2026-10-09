@@ -203,6 +203,7 @@ macOS use Bash options; Windows uses PowerShell named parameters.
 | No prompts | `--non-interactive` | `--non-interactive` | `-NonInteractive` | off |
 | Native (no Docker) | default | `--native` | `-Native` | default on every platform |
 | Docker Compose | `--docker` | `--docker` | `-Docker` | opt-in |
+| Allow root agents (Host-Admins only) | `--allow-root-agents` | `--allow-root-agents` | — | off |
 | Dry run | `--dry-run` | `--dry-run` | `-DryRun` | off |
 | Skip runtime installation | — | — | `-SkipRuntimeInstall` | off |
 | Show help | `--help` or `-h` | `--help` or `-h` | `-Help` | — |
@@ -213,7 +214,8 @@ and invoke it with `-File`. `-SkipRuntimeInstall` only skips Windows' automatic 
 it still verifies that the required tools are available.
 
 The installer uses safe defaults for machine-specific values and does not create
-the first user; complete account setup in the first-run UI. Review downloaded scripts before
+the first user; read the operator token from `DATA_DIR/setup-token` locally and
+enter it in the first-run UI. The app creates this private file before listening. Review downloaded scripts before
 executing them in security-sensitive environments. The repository source can be
 overridden with `METIS_AI_REPO_URL`.
 

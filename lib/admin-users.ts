@@ -4,6 +4,8 @@ import { getDatabase } from "@/lib/sqlite";
 import { config } from "@/lib/config";
 import {
   adminUserCount,
+  assertSafeUserAccess,
+  lookupHostOsUser,
   ensureUserAccess,
   getUserAccess,
   inferOsUsernameForWorkspace,
@@ -115,23 +117,33 @@ export function patchManagedUser(
 ) {
   const current = userRow(id);
   if (!current) throw new Error("User not found.");
-  if (typeof input.isAdmin === "boolean") {
-    if (!input.isAdmin && Number(current.isAdmin) === 1 && adminUserCount() <= 1) {
-      throw new Error("The last admin cannot be demoted.");
+  const db = getDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (typeof input.isAdmin === "boolean") {
+      if (!input.isAdmin && Number(current.isAdmin) === 1 && adminUserCount() <= 1) {
+        throw new Error("The last admin cannot be demoted.");
+      }
+      db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(input.isAdmin ? 1 : 0, id);
     }
-    getDatabase().prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(input.isAdmin ? 1 : 0, id);
-  }
-  if (typeof input.password === "string") {
-    if (input.password.length < 8) throw new Error("Password must contain at least 8 characters.");
-    getDatabase().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(input.password), id);
-  }
-  if (typeof input.workspaceRoot === "string" || input.osUsername !== undefined) {
+    if (typeof input.password === "string") {
+      if (input.password.length < 8) throw new Error("Password must contain at least 8 characters.");
+      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(input.password), id);
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
+    }
     const access = getUserAccess(id);
-    const workspace = resolveManagedWorkspaceRoot(input.workspaceRoot ?? access.workspaceRoot);
-    const osUsername = input.osUsername === undefined
-      ? access.osUsername
-      : input.osUsername?.trim() || undefined;
-    ensureUserAccess(id, workspace, osUsername);
+    if (typeof input.workspaceRoot === "string" || input.osUsername !== undefined) {
+      const workspace = resolveManagedWorkspaceRoot(input.workspaceRoot ?? access.workspaceRoot);
+      const osUsername = input.osUsername === undefined ? access.osUsername : input.osUsername?.trim() || undefined;
+      ensureUserAccess(id, workspace, osUsername);
+    } else if (typeof input.isAdmin === "boolean") {
+      assertSafeUserAccess(id, access.workspaceRoot,
+        access.osUsername ? lookupHostOsUser(access.osUsername) : undefined);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
   const next = userRow(id);
   if (!next) throw new Error("User not found.");

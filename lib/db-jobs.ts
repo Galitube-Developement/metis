@@ -700,6 +700,33 @@ export function releaseUserInputWait(jobId: string) {
   });
 }
 
+/** Safe diagnostic snapshot: lease tokens are compared but never returned. */
+export function jobLeaseDiagnostics(id: string) {
+  const db = getDatabase();
+  const lease = db.prepare(
+    "SELECT worker_id, lease_token, expires_at, updated_at FROM job_leases WHERE job_id = ?",
+  ).get(id) as { worker_id: string; lease_token: string; expires_at: string; updated_at: string } | undefined;
+  const checkedAt = iso();
+  const expectedWorkerId = process.env.AI_CHAT_WORKER_ID?.trim();
+  const expectedToken = process.env.AI_CHAT_JOB_LEASE_TOKEN?.trim();
+  const workerMatches = lease && expectedWorkerId ? lease.worker_id === expectedWorkerId : null;
+  const tokenMatches = lease && expectedToken ? lease.lease_token === expectedToken : null;
+  return {
+    checkedAt,
+    jobStatus: getJob(id)?.status ?? null,
+    leaseState: !lease ? "missing" : workerMatches === false ? "worker_mismatch"
+      : tokenMatches === false ? "token_mismatch"
+        : lease.expires_at <= checkedAt ? "expired" : "active",
+    expectedWorkerId: expectedWorkerId ?? null,
+    actualWorkerId: lease?.worker_id ?? null,
+    workerMatches,
+    tokenMatches,
+    expiresAt: lease?.expires_at ?? null,
+    lastRenewedAt: lease?.updated_at ?? null,
+    expiredForMs: lease ? Math.max(0, Date.now() - Date.parse(lease.expires_at)) : null,
+  };
+}
+
 export function touchJob(id: string) {
   const current = getJob(id);
   if (!current || !["running", "waiting_input", "waiting_for_user"].includes(current.status)) return current;
@@ -985,25 +1012,25 @@ export function listRunEvents(
   userId: string | undefined,
   after = 0,
   jobId?: string,
+  limit = 500,
 ) {
+  // Keep equality predicates visible to SQLite so the existing
+  // (chat_id, job_id, id) index can seek directly into this run.
+  const params: Array<string | number> = [chatId, after];
+  if (jobId !== undefined) params.push(jobId);
+  if (userId !== undefined) params.push(userId);
+  params.push(Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 500);
   const rows = getDatabase()
     .prepare(
       `SELECT id, id as sequence, job_id as jobId, chat_id as chatId, event, data, created_at as createdAt
      FROM run_events
      WHERE chat_id = ? AND id > ?
-       AND (? IS NULL OR job_id = ?)
-       AND (? IS NULL OR user_id = ?)
+       ${jobId !== undefined ? "AND job_id = ?" : ""}
+       ${userId !== undefined ? "AND user_id = ?" : ""}
      ORDER BY id ASC
-     LIMIT 500`,
+     LIMIT ?`,
     )
-    .all(
-      chatId,
-      after,
-      jobId ?? null,
-      jobId ?? null,
-      userId ?? null,
-      userId ?? null,
-    ) as Array<Record<string, unknown>>;
+    .all(...params) as Array<Record<string, unknown>>;
   return rows.map((row) => ({
     ...row,
     id: Number(row.id),

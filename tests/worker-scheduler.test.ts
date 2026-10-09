@@ -73,3 +73,28 @@ test("bounded concurrency waits at capacity", async () => {
   resolveJob();
   await job;
 });
+
+test("long-running provider stubs acquire one settlement observer across repeated polls", async () => {
+  let reactions = 0;
+  let finish!: () => void;
+  const job = new Promise<void>(resolve => { finish = resolve; });
+  const then = job.then.bind(job);
+  job.then = ((...args: Parameters<typeof job.then>) => { reactions++; return then(...args); }) as typeof job.then;
+  const active = new Set([job]);
+  for (let i = 0; i < 100; i++) assert.equal(await waitForSchedulerTick(active, 2, 0), "capacity-poll");
+  assert.equal(reactions, 1);
+  const waiting = waitForSchedulerTick(active, 1, 60_000);
+  finish();
+  assert.equal(await waiting, "slot-freed");
+});
+
+test("parallel scheduler waiters observe completion and rejection without swallowing failures", async () => {
+  let fail!: (reason: Error) => void;
+  const job = new Promise<void>((_, reject) => { fail = reject; });
+  const active = new Set([job]);
+  const first = waitForSchedulerTick(active, 2, 60_000);
+  const second = waitForSchedulerTick(active, 1, 60_000);
+  const checks = [assert.rejects(first, /stub failure/), assert.rejects(second, /stub failure/)];
+  fail(new Error("stub failure"));
+  await Promise.all(checks);
+});

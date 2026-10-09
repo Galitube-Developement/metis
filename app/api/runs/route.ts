@@ -9,6 +9,7 @@ import {
 } from "@/lib/db-jobs";
 import { appendMessageInTransaction, getChat } from "@/lib/db-store";
 import { SSE_HEADERS } from "@/lib/sse";
+import { createRunEventStream } from "@/lib/run-event-stream";
 import { saveAttachments, type IncomingAttachment } from "@/lib/uploads";
 import { isModelAllowed } from "@/lib/model-access";
 import { stripRemovedModelParams } from "@/lib/model-params";
@@ -28,88 +29,27 @@ export async function GET(req: Request) {
     const after = Number(search.get("after") || "0");
     if (chatId && search.get("events") === "1") {
       if (search.get("stream") === "1") {
-        const encoder = new TextEncoder();
-        let cursor = Number.isFinite(after) ? after : 0;
-        let stopped = false;
-        const stream = new ReadableStream<Uint8Array>({
-          async start(controller) {
-            const send = (event: string, data: unknown, id?: number) => {
-              if (stopped) return;
-              const payload = id && data && typeof data === "object"
-                ? { ...(data as Record<string, unknown>), sequence: id }
-                : data;
-              controller.enqueue(
-                encoder.encode(
-                  `${id ? `id: ${id}\n` : ""}event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`,
-                ),
-              );
-            };
-            const deadline = Date.now() + 30 * 60 * 1000;
-            let lastHeartbeat = Date.now();
-            const snapshotRequested = search.get("mode") === "snapshot";
-            // stream=1 always delivers text/thinking. Snapshot-only is opt-in so a
-            // device-id mismatch cannot hide the live answer on the tab that sent it.
-            const snapshotOnly = snapshotRequested;
-            const skipDelta = new Set(["text", "thinking"]);
-            while (Date.now() < deadline) {
-              const events = listRunEvents(
-                chatId!,
-                userId,
-                cursor,
-                jobId,
-              ) as Array<{ id: number; event: string; data: unknown }>;
-              for (const event of events) {
-                cursor = event.id;
-                if (snapshotOnly && skipDelta.has(event.event)) continue;
-                send(event.event, event.data, event.id);
-                if (event.event === "done" || event.event === "error") {
-                  stopped = true;
-                  controller.close();
-                  return;
-                }
-              }
-              // run_events is a live transport cache, not the durable source of
-              // truth. If a busy SQLite writer forced one event to be dropped,
-              // synthesize the terminal event from the durable job row so the
-              // client never waits forever or reports a false stream failure.
-              if (jobId) {
-                const currentJob = getJob(jobId);
-                if (currentJob?.status === "completed" || currentJob?.status === "cancelled") {
-                  send("done", { status: currentJob.status });
-                  stopped = true;
-                  controller.close();
-                  return;
-                }
-                if (currentJob?.status === "error" || currentJob?.status === "interrupted") {
-                  send("error", {
-                    message: currentJob.error || (currentJob.status === "interrupted"
-                      ? "Agent run interrupted."
-                      : "Agent run failed."),
-                  });
-                  stopped = true;
-                  controller.close();
-                  return;
-                }
-              }
-              if (Date.now() - lastHeartbeat >= 15_000) {
-                if (!stopped)
-                  controller.enqueue(encoder.encode(": heartbeat\n\n"));
-                lastHeartbeat = Date.now();
-              }
-              await new Promise((resolve) => setTimeout(resolve, 500));
+        const stream = createRunEventStream({
+          after: Number.isFinite(after) ? after : 0,
+          signal: req.signal,
+          // Full deltas are the default; snapshot-only remains opt-in.
+          snapshotOnly: search.get("mode") === "snapshot",
+          read: (cursor, limit) => listRunEvents(chatId, userId, cursor, jobId, limit) as Array<{ id: number; event: string; data: unknown }>,
+          terminal: () => {
+            if (!jobId) return null;
+            const currentJob = getJob(jobId);
+            // The fallback must obey the same chat/user boundary as replay.
+            if (!currentJob || currentJob.chatId !== chatId || currentJob.userId !== userId) return null;
+            if (currentJob.status === "completed" || currentJob.status === "cancelled") {
+              return { event: "done", data: { status: currentJob.status } };
             }
-            if (!stopped) {
-              // This is only an SSE connection window ending, not an agent
-              // failure. The browser can reconnect with its last event id.
-              send("status", {
-                status: "reconnect",
-                message: "Event stream window ended; reconnecting.",
-              });
-              controller.close();
+            if (currentJob.status === "error" || currentJob.status === "interrupted") {
+              return { event: "error", data: {
+                message: currentJob.error || (currentJob.status === "interrupted"
+                  ? "Agent run interrupted." : "Agent run failed."),
+              } };
             }
-          },
-          cancel() {
-            stopped = true;
+            return null;
           },
         });
         return new Response(stream, { headers: SSE_HEADERS });

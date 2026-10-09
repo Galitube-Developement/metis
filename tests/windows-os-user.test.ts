@@ -61,19 +61,21 @@ test("Windows account creation binds only the first user by default and rolls ba
     assert.equal(identity.home, "D:\\Profiles\\actual-name");
     assert.equal(identity.uid, undefined);
 
-    const second = createManagedUser({ username: "another", password: "password1" });
-    assert.equal(second.osUsername, undefined);
-    assert.throws(() => requireUserExecutionIdentity(second.id), /no valid OS user mapping/);
-    const explicit = createManagedUser({ username: "mapped", password: "password1", osUsername: "alternate" });
+    assert.throws(() => createManagedUser({ username: "another", password: "password1" }), /no valid OS user mapping/);
+    assert.throws(() => createManagedUser({ username: "mapped", password: "password1", osUsername: "alternate" }), /Windows nonadmin isolation/);
+    const separate = dir + "-second-admin";
+    const explicit = createManagedUser({ username: "mapped", password: "password1", osUsername: "alternate", isAdmin: true, workspaceRoot: separate });
     assert.equal(requireUserExecutionIdentity(explicit.id).username, "alternate");
 
-    // Old installs can have uid/gid=-1. Repair their numeric metadata without changing the OS account.
+    // Existing sentinel numeric metadata remains ignored on Windows; execution
+    // neither repairs a missing mapping nor replaces a stale explicit one.
     getDatabase().prepare("UPDATE user_workspace_access SET uid=-1, gid=-1 WHERE user_id=?").run(explicit.id);
     assert.equal(requireUserExecutionIdentity(explicit.id).username, "alternate");
-    assert.equal(getUserAccess(explicit.id).uid, undefined);
     ensureUserAccess(first.id, dir);
-    assert.equal(requireUserExecutionIdentity(first.id).username, "installer", "repair missing first-account mapping");
-    ensureUserAccess(explicit.id, dir, "hostowner");
+    assert.throws(() => requireUserExecutionIdentity(first.id), /no valid OS user mapping/);
+    ensureUserAccess(first.id, dir, "installer");
+    assert.equal(requireUserExecutionIdentity(first.id).username, "installer");
+    ensureUserAccess(explicit.id, separate, "hostowner");
     assert.equal(requireUserExecutionIdentity(explicit.id).username, "hostowner");
     getDatabase().prepare("UPDATE user_workspace_access SET os_username='missing-explicit' WHERE user_id=?").run(explicit.id);
     assert.throws(() => requireUserExecutionIdentity(explicit.id), /no valid OS user mapping/);
