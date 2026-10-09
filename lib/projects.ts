@@ -86,6 +86,7 @@ function rowToProject(row: unknown): Project | null {
   ...(typeof parsed.ownerId === "string" ? { ownerId: parsed.ownerId } : {}),
   name: clip(parsed.name, 80) || "Untitled project",
   mode: parsed.mode === "agents" ? "agents" : "chat",
+  allowAgentManagement: parsed.mode === "agents" && parsed.allowAgentManagement === true,
   icon: PROJECT_ICONS.includes(parsed.icon as (typeof PROJECT_ICONS)[number]) ? parsed.icon : "folder",
   color: /^#[0-9a-f]{6}$/i.test(parsed.color || "") ? String(parsed.color) : PROJECT_COLORS[0],
   instructions: clip(parsed.instructions, 20_000),
@@ -153,6 +154,7 @@ export function createProject(input: {
   ...(input.ownerId ? { ownerId: input.ownerId } : {}),
   name: clip(input.name, 80) || "New project",
   mode: input.mode === "agents" ? "agents" : "chat",
+  allowAgentManagement: false,
   icon: PROJECT_ICONS.includes((input.icon || "") as (typeof PROJECT_ICONS)[number]) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
   color: /^#[0-9a-f]{6}$/i.test(input.color || "") ? String(input.color) : PROJECT_COLORS[count % PROJECT_COLORS.length],
   instructions: clip(input.instructions, 20_000),
@@ -170,7 +172,7 @@ export function createProject(input: {
 
 export function updateProject(
  id: string,
- patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds">>,
+ patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement">>,
  ownerId?: string,
 ): Project | null {
  return transaction(() => {
@@ -185,6 +187,7 @@ export function updateProject(
    ...(patch.instructions !== undefined ? { instructions: clip(patch.instructions, 20_000) } : {}),
    ...(patch.memoryMode === "project_only" || patch.memoryMode === "default" ? { memoryMode: patch.memoryMode } : {}),
    ...(patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
+   ...(typeof patch.allowAgentManagement === "boolean" ? { allowAgentManagement: current.mode === "agents" && patch.allowAgentManagement } : {}),
    updatedAt: timestamp,
   };
   return writeProject(next);

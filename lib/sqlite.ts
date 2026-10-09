@@ -629,6 +629,11 @@ export function getDatabase(): DatabaseSync {
     "CREATE INDEX IF NOT EXISTS pending_approvals_job_status ON pending_approvals(job_id, status)",
   );
   migrateLegacy(database);
+  // Upgrade unanswered questions in place, including those published by an
+  // older worker that is still running during a rolling application deploy.
+  database.exec(
+    "UPDATE pending_questions SET expires_at = NULL, data = json_remove(data, '$.expiresAt') WHERE status = 'waiting_for_user' AND expires_at IS NOT NULL",
+  );
   database.exec(`
     CREATE TABLE IF NOT EXISTS chat_list (
       id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,

@@ -38,7 +38,11 @@ export async function PATCH(req: Request, { params }: Params) {
       instructions?: string;
       memoryMode?: "default" | "project_only";
       disabledSkillIds?: string[];
+      allowAgentManagement?: boolean;
     };
+    if (body.allowAgentManagement !== undefined && typeof body.allowAgentManagement !== "boolean") {
+      return Response.json({ error: "allowAgentManagement must be a boolean" }, { status: 400 });
+    }
     const { mode: _ignoredMode, ...patch } = body;
     const project = updateProject(id, patch, ownerId);
     if (!project) return Response.json({ error: "Not found" }, { status: 404 });

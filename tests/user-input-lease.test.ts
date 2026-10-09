@@ -163,3 +163,50 @@ test("resolving one request does not release another pending request in the same
     assert.equal(jobs.releaseUserInputWait(f.job.id)?.status, "running");
   } finally { jobs.updateJob(f.job.id, { status: "cancelled" }); }
 });
+
+test("questions have no deadline and legacy overdue questions remain answerable", async () => {
+  const f = fixture();
+  const pending = questions.createPendingQuestion([{ question: "Continue tomorrow?" }], f.chat.id, f.owner.id);
+  try {
+    const db = sqlite.getDatabase();
+    const row = db.prepare("SELECT expires_at FROM pending_questions WHERE question_id = ?")
+      .get(pending.questionId) as { expires_at: string | null };
+    assert.equal(row.expires_at, null);
+    assert.equal(questions.getPendingQuestion(pending.questionId, f.owner.id)?.expiresAt, undefined);
+    // Simulate a question saved by an older version whose deadline passed.
+    const overdue = "2000-01-01T00:00:00.000Z";
+    db.prepare("UPDATE pending_questions SET expires_at = ?, data = json_set(data, '$.expiresAt', ?) WHERE question_id = ?")
+      .run(overdue, overdue, pending.questionId);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(questions.getPendingQuestion(pending.questionId, f.owner.id)?.status, "waiting_for_user");
+    assert.equal(questions.resolveQuestion(pending.questionId, ["Yes"], "foreign-owner"), false);
+    assert.equal(questions.resolveQuestion(pending.questionId, ["Yes"], f.owner.id, 99), false);
+    assert.ok(questions.resolveQuestion(pending.questionId, ["Yes"], f.owner.id, pending.version));
+    assert.deepEqual(await pending.promise, ["Yes"]);
+  } finally { pending.stop(); jobs.updateJob(f.job.id, { status: "cancelled" }); }
+});
+
+test("an indefinitely open question can still be cancelled explicitly", async () => {
+  const f = fixture();
+  const pending = questions.createPendingQuestion([{ question: "Continue?" }], f.chat.id, f.owner.id);
+  try {
+    assert.ok(questions.cancelQuestion(pending.questionId, f.owner.id));
+    assert.deepEqual(await pending.promise, ["[The question was cancelled.]"]);
+    assert.equal(questions.resolveQuestion(pending.questionId, ["Yes"], f.owner.id), false);
+  } finally { pending.stop(); jobs.updateJob(f.job.id, { status: "cancelled" }); }
+});
+
+test("restart recovery preserves old unanswered approvals", async () => {
+  const f = fixture();
+  try {
+    const old = "2000-01-01T00:00:00.000Z";
+    sqlite.getDatabase().prepare("UPDATE pending_approvals SET created_at = ?, heartbeat_at = ? WHERE id = ?")
+      .run(old, old, f.approvalId);
+    jobs.updateJob(f.job.id, { status: "running" });
+    jobs.recoverStaleJobs(0);
+    assert.equal(approvals.getApproval(f.approvalId, f.owner.id)?.status, "waiting_for_user");
+    assert.equal(jobs.getJob(f.job.id)?.status, "waiting_input");
+    assert.equal((await f.decide("allow")).status, 200);
+    assert.equal(approvals.getApproval(f.approvalId, f.owner.id)?.decision, "allow");
+  } finally { jobs.updateJob(f.job.id, { status: "cancelled" }); }
+});

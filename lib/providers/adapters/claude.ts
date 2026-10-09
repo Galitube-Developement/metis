@@ -1,5 +1,4 @@
 import {
-  approvalLimits,
   createApproval,
   getApproval,
   heartbeatApproval,
@@ -171,12 +170,6 @@ async function waitForClaudeApproval(
       if (Date.now() - lastHeartbeatAt >= 2_000) {
         heartbeatApproval(approvalId);
         lastHeartbeatAt = Date.now();
-      }
-      if (Date.now() - createdAt >= approvalLimits().timeoutMs) {
-        // The waiting runner owns the timeout. Resolving durably prevents a
-        // duplicate UI request from approving an already-expired action.
-        resolveApproval(approvalId, "deny", context.job.userId);
-        return "deny";
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }

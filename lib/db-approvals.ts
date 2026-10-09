@@ -33,7 +33,6 @@ export function approvalLimits() {
     maxCommandLength: 20_000,
     maxFiles: 100,
     maxPatterns: 100,
-    timeoutMs: 30 * 60_000,
   };
 }
 
@@ -329,27 +328,4 @@ export function expireApproval(
   if (!approval || approval.status !== "waiting_for_user") return null;
   const expired = expireWaitingApproval(approval, getDatabase(), reason);
   return expired;
-}
-
-export function expireApprovals(now = Date.now()) {
-  const cutoff = new Date(now - approvalLimits().timeoutMs).toISOString();
-  const db = getDatabase();
-  const rows = db
-    .prepare(
-      `SELECT id, job_id as jobId, chat_id as chatId, owner_id as ownerId, status, title, command,
-            files_json as filesJson, created_at as createdAt, heartbeat_at as heartbeatAt,
-            resolved_at as resolvedAt, decision, session_scope as sessionScope, version
-     FROM pending_approvals
-     WHERE status = 'waiting_for_user'
-       AND COALESCE(heartbeat_at, created_at) <= ?`,
-    )
-    .all(cutoff) as unknown[];
-  return rows
-    .map((row) => {
-      const approval = mapApproval(row);
-      return approval
-        ? expireWaitingApproval(approval, db, "The approval timed out.")
-        : null;
-    })
-    .filter(Boolean);
 }

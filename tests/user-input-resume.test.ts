@@ -48,7 +48,7 @@ test("interactive MCP waits propagate cancellation and preserve durable pause st
   assert.match(gateway, /signal: extra\?\.signal/);
   assert.match(
     gateway,
-    /requestSignal\(options\.signal, INTERACTIVE_WAIT_TIMEOUT_MS \+ 60_000\)/,
+    /signal: options\.signal/,
   );
   assert.match(gateway, /await ensureRuntimeApproval\(name, args, context, options\.signal\)/);
   assert.match(questionRoute, /req\.signal\.addEventListener\("abort"/);

@@ -26,6 +26,7 @@ type ProjectHomeData = {
   id: string;
   name: string;
   mode?: "chat" | "agents";
+  allowAgentManagement?: boolean;
   icon: string;
   color: string;
   instructions: string;
@@ -174,6 +175,7 @@ export function ProjectHome({
  const [deleteOpen, setDeleteOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
  const [memorySaving, setMemorySaving] = useState(false);
+ const [agentManagementSaving, setAgentManagementSaving] = useState(false);
  const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
  const togglePanel = (id: ProjectHomePanel) => {
   setActivePanel((current) => (current === id ? null : id));
@@ -227,6 +229,29 @@ export function ProjectHome({
   if (response.ok) {
    window.dispatchEvent(new Event("metis:projects-changed"));
    load();
+  }
+ }
+
+ async function saveAgentManagement(allowed: boolean) {
+  if (agentManagementSaving) return;
+  setAgentManagementSaving(true);
+  setError("");
+  const generation = loadGenerationRef.current;
+  try {
+   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ allowAgentManagement: allowed }),
+   });
+   const body = await response.json().catch(() => ({})) as { project?: ProjectHomeData["project"]; error?: string };
+   if (!response.ok || !body.project) throw new Error(body.error || "Could not save agent permissions.");
+   if (generation !== loadGenerationRef.current) return;
+   setData(current => current?.project.id === body.project!.id ? { ...current, project: body.project! } : current);
+   window.dispatchEvent(new Event("metis:projects-changed"));
+  } catch (cause) {
+   if (generation === loadGenerationRef.current) setError(cause instanceof Error ? cause.message : "Could not save agent permissions.");
+  } finally {
+   setAgentManagementSaving(false);
   }
  }
 
@@ -381,7 +406,30 @@ export function ProjectHome({
    </header>
 
    {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-   {data.project.mode === "agents" ? <ProjectAgentsPanel projectId={projectId} onOpenChat={onOpenChat} /> : null}
+   {data.project.mode === "agents" ? (
+    <>
+     <section aria-labelledby="agent-permissions-heading" className="grid gap-3">
+      <h3 id="agent-permissions-heading" className="text-sm font-medium">Agent permissions</h3>
+      <div className="flex items-start justify-between gap-4">
+       <div className="min-w-0">
+        <label htmlFor="allow-agent-management" className="cursor-pointer text-sm font-medium">Allow agents to manage the team</label>
+        <p id="allow-agent-management-description" className="mt-1 text-xs leading-5 text-muted-foreground">
+         Agents can create, edit and archive agents in this project. You can always manage the team yourself.
+        </p>
+       </div>
+       <Switch
+        id="allow-agent-management"
+        checked={data.project.allowAgentManagement === true}
+        disabled={agentManagementSaving}
+        aria-describedby="allow-agent-management-description"
+        onCheckedChange={(allowed) => { void saveAgentManagement(allowed); }}
+        className="mt-0.5 shrink-0"
+       />
+      </div>
+     </section>
+     <ProjectAgentsPanel projectId={projectId} onOpenChat={onOpenChat} />
+    </>
+   ) : null}
 
    <section className="grid gap-3">
     <div className="flex items-center justify-between">
