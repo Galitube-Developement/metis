@@ -39,9 +39,13 @@ export async function PATCH(req: Request, { params }: Params) {
       memoryMode?: "default" | "project_only";
       disabledSkillIds?: string[];
       allowAgentManagement?: boolean;
+      hideChatsFromAll?: boolean;
     };
     if (body.allowAgentManagement !== undefined && typeof body.allowAgentManagement !== "boolean") {
       return Response.json({ error: "allowAgentManagement must be a boolean" }, { status: 400 });
+    }
+    if (body.hideChatsFromAll !== undefined && typeof body.hideChatsFromAll !== "boolean") {
+      return Response.json({ error: "hideChatsFromAll must be a boolean" }, { status: 400 });
     }
     const { mode: _ignoredMode, ...patch } = body;
     const project = updateProject(id, patch, ownerId);

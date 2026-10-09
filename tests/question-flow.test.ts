@@ -32,6 +32,9 @@ test("typed submission persists values, emits one readable message and preserves
     { question: "Enabled?", key: "enabled", type: "toggle" },
   ] }, chat.id, owner.id, { jobId: job.id, runId: job.id });
   jobs.updateJob(job.id, { status: "waiting_input" });
+  store.appendMessage(chat.id, { id: "form-assistant", role: "assistant", content: "Before.After.", parts: [
+    { type: "text", content: "Before." }, { type: "tool", id: "ask-call", name: "ask_user", status: "running" }, { type: "text", content: "After." },
+  ] }, owner.id);
   store.updateChat(chat.id, { pendingQuestion: { ...pending, status: "waiting_for_user" } }, owner.id);
   try {
     assert.equal((await submit(pending.questionId, { hz: 60, enabled: false }, foreignCookie)).status, 404);
@@ -41,10 +44,14 @@ test("typed submission persists values, emits one readable message and preserves
     const result = await response.json();
     assert.deepEqual(result.values, { hz: 60, enabled: false });
     assert.equal(result.summary, "Display 60 Hz. Enabled: No.");
+    assert.deepEqual(result.message.questionAnswer, { questionId: pending.questionId, assistantMessageId: "form-assistant", toolCallId: "ask-call" });
+    const firstAnswerMessage = result.message;
     assert.deepEqual(await pending.promise, ["60", "false"]);
     assert.equal(jobs.isJobLeaseActive(job.id, lease.leaseOwner!, lease.leaseToken!), true);
     assert.equal(jobs.claimNextJob({ workerId: "duplicate-worker" }), null);
-    assert.equal((await submit(pending.questionId, { hz: 60, enabled: true }, cookie, 1)).status, 200);
+    const repeated = await submit(pending.questionId, { hz: 60, enabled: true }, cookie, 1);
+    assert.equal(repeated.status, 200);
+    assert.deepEqual((await repeated.json()).message, firstAnswerMessage);
     const restored = questions.getPendingQuestion(pending.questionId, owner.id)!;
     assert.deepEqual(restored.values, { hz: 60, enabled: false });
     assert.equal(restored.title, "Diagnosis");

@@ -39,6 +39,7 @@ import {
   Gauge,
   MemoryStick,
   Network,
+  Users,
   ArrowLeft,
   ArrowRight,
   Archive,
@@ -112,6 +113,7 @@ import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
+import { projectQuestionTranscript, type QuestionAnswerReference } from "@/lib/question-transcript";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
 import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
@@ -120,6 +122,7 @@ import { ChatGoalBanner } from "@/components/chat-goal-banner";
 import { ChatTodoBar } from "@/components/chat-todo-bar";
 import { ProjectAgentActions, ProjectAgentChatHeader, useProjectChatAgents } from "@/components/project-agents-panel";
 import type { ProjectAgent } from "@/lib/project-team-types";
+import { ProjectTeamWorkspace } from "@/components/project-team-workspace";
 import { TeamAgentAvatar } from "@/components/team-agent-avatar";
 import { ProjectNav } from "@/components/project-nav";
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -417,6 +420,8 @@ type MsgAttachment = {
 type Msg = {
   contextTokenEstimate?: number;
   programEvent?: ChatProgramEvent;
+  questionAnswer?: QuestionAnswerReference;
+  transcriptSourceId?: string;
   id: string;
   role: Role;
   content: string;
@@ -635,6 +640,7 @@ type Chat = ChatIndexEntry & {
   messages: Array<{
     contextTokenEstimate?: number;
     programEvent?: ChatProgramEvent;
+    questionAnswer?: QuestionAnswerReference;
     id: string;
     role: Role;
     content: string;
@@ -680,7 +686,7 @@ type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
@@ -718,7 +724,8 @@ function normalizeWorkspaceTab(value: unknown): NonNullable<ChatSessionState["wo
     value === "terminal" ||
     value === "files" ||
     value === "browser" ||
-    value === "monitor"
+    value === "monitor" ||
+    value === "team"
     ? value
     : value === "canvas"
       ? "canvas"
@@ -1542,6 +1549,7 @@ function mapApiMessages(
       id: m.id,
       role: m.role,
       programEvent: m.programEvent,
+      questionAnswer: m.questionAnswer,
       contextTokenEstimate: m.contextTokenEstimate,
       content: legacyError ? "" : m.content,
       errorMessage: m.errorMessage || legacyError || undefined,
@@ -1673,7 +1681,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [chatsLoaded, setChatsLoaded] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
-  const projectedTranscript = useMemo(() => projectChatTranscript(messages), [messages]);
+  const projectedTranscript = useMemo(() => projectChatTranscript(projectQuestionTranscript(messages)), [messages]);
   const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set());
   const [fullyExpandedUserMessages, setFullyExpandedUserMessages] = useState<Set<string>>(new Set());
   const [replyModifierHeld, setReplyModifierHeld] = useState(false);
@@ -1758,7 +1766,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceMounted, setWorkspaceMounted] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<"canvas" | "plan" | "terminal" | "files" | "browser" | "monitor">("canvas");
+  const [workspaceTab, setWorkspaceTab] = useState<"canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team">("canvas");
   const [notesOpen, setNotesOpen] = useState(false);
   const suppressNotesRouteRef = useRef(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
@@ -6389,14 +6397,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ questionId: submittingQuestion.questionId, values: result.values, version: submittingQuestion.version }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; fieldErrors?: Record<string, string>; summary?: string };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; fieldErrors?: Record<string, string>; summary?: string; message?: Chat["messages"][number] };
       if (!res.ok) {
         if (pendingQuestionIdRef.current === submittingQuestion.questionId) setQuestionFieldErrors(data.fieldErrors || {});
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (data.summary && submittingChatId === activeChatIdRef.current) {
         const messageId = `question-answer-${submittingQuestion.questionId}`;
-        setMessages(current => current.some(message => message.id === messageId) ? current : [...current, { id: messageId, role: "user", content: data.summary!, createdAt: new Date().toISOString() }]);
+        const answerMessage = data.message ? mapApiMessages([data.message])[0] : { id: messageId, role: "user" as const, content: data.summary!, createdAt: new Date().toISOString() };
+        setMessages(current => current.some(message => message.id === messageId) ? current : [...current, answerMessage]);
       }
       if (pendingQuestionIdRef.current === submittingQuestion.questionId) {
         pendingQuestionIdRef.current = null;
@@ -6741,6 +6750,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     const selected = workspaces.find((item) => item.id === activeWorkspaceId) || workspaces[0];
+    if (isAgentChat && (workspaceTab === "team" || (!selected && (workspaceTab === "canvas" || workspaceTab === "plan")))) {
+      setWorkspaceTab("team");
+      setWorkspaceMounted(true);
+      setWorkspaceOpen(true);
+      return;
+    }
     if (selected) {
       setActiveWorkspaceId(selected.id);
       if (workspaceTab === "canvas" || workspaceTab === "plan") {
@@ -10050,7 +10065,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               Shared Notes
             </p>
           ) : isAgentChat && activeChatId && activeProjectId ? (
-            <ProjectAgentChatHeader key={activeChatId} projectId={activeProjectId} chatId={activeChatId} fallbackTitle={chatTitle} onOpenTeam={() => openProjectHome(activeProjectId)} />
+            <ProjectAgentChatHeader key={activeChatId} projectId={activeProjectId} chatId={activeChatId} fallbackTitle={chatTitle} onOpenTeam={() => { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); }} />
           ) : !isDraft && !isEmpty ? (
             <p
               className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground md:block md:text-left"
@@ -10492,7 +10507,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                   void (async () => {
                                     try {
                                       const response = await fetch(
-                                        `/api/chats/${encodeURIComponent(activeChatId)}/tool-diff?messageId=${encodeURIComponent(m.id)}&toolId=${encodeURIComponent(tool.id)}`,
+                                        `/api/chats/${encodeURIComponent(activeChatId)}/tool-diff?messageId=${encodeURIComponent(m.transcriptSourceId || m.id)}&toolId=${encodeURIComponent(tool.id)}`,
                                         { cache: "no-store" },
                                       );
                                       if (!response.ok) return;
@@ -10884,7 +10899,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
-            workspaceTab === "browser" && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
+            (workspaceTab === "browser" || workspaceTab === "team") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
             workspaceFullscreen && "fixed inset-[1%] z-50 !w-auto rounded-lg border border-border/70 shadow-xl",
             workspaceOpen ? "workspace-panel-enter" : "workspace-panel-exit",
           )}
@@ -10907,8 +10922,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           )}
           <div className="flex shrink-0 items-center gap-1 border-b border-border/30 px-2 py-1.5">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {(["canvas", "plan", "files", "terminal", "browser", "monitor"] as const)
-                .filter((tab) => tab !== "browser" || browserEnabled)
+              {(["team", "canvas", "plan", "files", "terminal", "browser", "monitor"] as const)
+                .filter((tab) => (tab !== "browser" || browserEnabled) && (tab !== "team" || isAgentChat))
                 .map((tab) => (
                 <Button
                   key={tab}
@@ -10931,16 +10946,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     "h-8 min-w-8 shrink-0 rounded-md transition-[max-width,background-color,padding] duration-200 ease-out",
                     workspaceTab === tab ? "max-w-40 gap-1.5 px-2" : "w-8 max-w-8 gap-0 overflow-visible px-0",
                   )}
-                  aria-label={tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab[0].toUpperCase() + tab.slice(1)}
+                  aria-label={tab === "team" ? "Agent overview" : tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab[0].toUpperCase() + tab.slice(1)}
                 >
-                  {tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
+                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
                   <span className={cn(
                     "overflow-hidden whitespace-nowrap text-xs transition-[max-width,opacity,transform] duration-300",
                     workspaceTab === tab
                       ? "max-w-[10rem] translate-x-0 opacity-100"
                       : "max-w-0 -translate-x-1 opacity-0",
                   )}>
-                    {tab === "canvas" ? (activeWorkspace?.type === "canvas" ? activeWorkspace.name : "Canvas") : tab === "plan" ? (activeWorkspace?.type === "plan" ? activeWorkspace.name : "Plans") : tab[0].toUpperCase() + tab.slice(1)}
+                    {tab === "team" ? "Overview" : tab === "canvas" ? (activeWorkspace?.type === "canvas" ? activeWorkspace.name : "Canvas") : tab === "plan" ? (activeWorkspace?.type === "plan" ? activeWorkspace.name : "Plans") : tab[0].toUpperCase() + tab.slice(1)}
                   </span>
                 </Button>
               ))}
@@ -10971,9 +10986,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               <X className="size-4" />
             </Button>
           </div>
-          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2.5", workspaceTab === "browser" && "max-sm:p-1.5")}>
+          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", workspaceTab === "browser" && "max-sm:p-1.5")}>
             {loadingChatId !== null && loadingChatId === activeChatId ? (
               <WorkspaceLoadingSkeleton />
+            ) : workspaceTab === "team" ? (
+              isAgentChat && activeProjectId && activeChatId ? <ProjectTeamWorkspace key={activeProjectId} projectId={activeProjectId} chatId={activeChatId} onOpenChat={(chatId) => { void loadChat(chatId).then(() => { if (activeChatIdRef.current === chatId) { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); } }); }} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open an agent chat to view its team.</div>
             ) : workspaceTab === "browser" ? (
               <div className="flex min-h-0 flex-1 flex-col gap-1.5">
                 <div className="flex h-8 shrink-0 items-end gap-1 overflow-x-auto rounded-lg border border-border/50 bg-muted/15 px-1 pt-1 max-sm:h-7">

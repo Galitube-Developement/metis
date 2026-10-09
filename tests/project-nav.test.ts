@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { filterProjectChats } from "../lib/project-chat-visibility";
+
 const navSource = readFileSync(new URL("../components/project-nav.tsx", import.meta.url), "utf8");
 const filesRoute = readFileSync(new URL("../app/api/projects/[id]/files/route.ts", import.meta.url), "utf8");
 const projectsSource = readFileSync(new URL("../lib/projects.ts", import.meta.url), "utf8");
 const projectHomeSource = readFileSync(new URL("../components/project-home.tsx", import.meta.url), "utf8");
 const notesRoute = readFileSync(new URL("../app/api/notes/route.ts", import.meta.url), "utf8");
 
-test("All project view shows chats from every project", () => {
- assert.match(navSource, /if \(!activeProjectId\) return true/);
- assert.doesNotMatch(navSource, /if \(!activeProjectId\) return !chat\.projectId/);
+test("All project view shows chats from every project by default", () => {
+ const chats = [{ id: "free" }, { id: "a", projectId: "a" }, { id: "b", projectId: "b" }];
+ assert.deepEqual(filterProjectChats(chats, [{ id: "a" }, { id: "b" }]).map(chat => chat.id), ["free", "a", "b"]);
 });
 
 test("assigned chats show a project avatar; unassigned chats do not", () => {

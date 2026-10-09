@@ -27,6 +27,7 @@ type ProjectHomeData = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
+  hideChatsFromAll?: boolean;
   icon: string;
   color: string;
   instructions: string;
@@ -175,6 +176,7 @@ export function ProjectHome({
  const [deleteOpen, setDeleteOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
  const [memorySaving, setMemorySaving] = useState(false);
+ const [chatVisibilitySaving, setChatVisibilitySaving] = useState(false);
  const [agentManagementSaving, setAgentManagementSaving] = useState(false);
  const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
  const togglePanel = (id: ProjectHomePanel) => {
@@ -229,6 +231,29 @@ export function ProjectHome({
   if (response.ok) {
    window.dispatchEvent(new Event("metis:projects-changed"));
    load();
+  }
+ }
+
+ async function saveChatVisibility(hidden: boolean) {
+  if (chatVisibilitySaving) return;
+  setChatVisibilitySaving(true);
+  setError("");
+  const generation = loadGenerationRef.current;
+  try {
+   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hideChatsFromAll: hidden }),
+   });
+   const body = await response.json().catch(() => ({})) as { project?: ProjectHomeData["project"]; error?: string };
+   if (!response.ok || !body.project) throw new Error(body.error || "Could not save chat visibility.");
+   if (generation !== loadGenerationRef.current) return;
+   setData(current => current?.project.id === body.project!.id ? { ...current, project: body.project! } : current);
+   window.dispatchEvent(new Event("metis:projects-changed"));
+  } catch (cause) {
+   if (generation === loadGenerationRef.current) setError(cause instanceof Error ? cause.message : "Could not save chat visibility.");
+  } finally {
+   setChatVisibilitySaving(false);
   }
  }
 
@@ -406,6 +431,25 @@ export function ProjectHome({
    </header>
 
    {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+   <section aria-labelledby="chat-visibility-heading" className="grid gap-3">
+    <h3 id="chat-visibility-heading" className="text-sm font-medium">Chat visibility</h3>
+    <div className="flex items-start justify-between gap-4">
+     <div className="min-w-0">
+      <label htmlFor="hide-chats-from-all" className="cursor-pointer text-sm font-medium">Display in all chats</label>
+      <p id="hide-chats-from-all-description" className="mt-1 text-xs leading-5 text-muted-foreground">
+       Show this project’s chats in All Projects. They always remain visible inside the project.
+      </p>
+     </div>
+     <Switch
+      id="hide-chats-from-all"
+      checked={data.project.hideChatsFromAll !== true}
+      disabled={chatVisibilitySaving}
+      aria-describedby="hide-chats-from-all-description"
+      onCheckedChange={(visible) => { void saveChatVisibility(!visible); }}
+      className="mt-0.5 shrink-0"
+     />
+    </div>
+   </section>
    {data.project.mode === "agents" ? (
     <>
      <section aria-labelledby="agent-permissions-heading" className="grid gap-3">

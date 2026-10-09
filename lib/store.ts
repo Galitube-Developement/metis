@@ -51,6 +51,7 @@ export type ChatMessage = {
   contextTokenEstimate?: number;
   /** UI-only program activity; the agent still receives the original transcript. */
   programEvent?: import("./chat-program-events").ChatProgramEvent;
+  questionAnswer?: import("./question-transcript").QuestionAnswerReference;
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -180,6 +181,7 @@ export type Project = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
+  hideChatsFromAll?: boolean;
   icon: string;
   color: string;
   instructions: string;
@@ -378,7 +380,7 @@ export type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
