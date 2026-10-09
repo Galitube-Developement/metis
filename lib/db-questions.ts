@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { getDatabase, transaction } from "@/lib/sqlite";
-import type { AgentQuestion, QuestionOption } from "@/lib/questions";
+import { normalizeAskUserInput, normalizeQuestionAnswers, questionSummary, type AgentQuestion, type QuestionInput, type AskUserInput, type QuestionForm, type QuestionValue } from "@/lib/question-contract";
 
 type QuestionStatus = "waiting_for_user" | "answered" | "cancelled" | "expired";
 
-type StoredQuestion = {
+type StoredQuestion = QuestionForm & {
   questionId: string;
   runId?: string;
   jobId?: string;
@@ -13,11 +13,13 @@ type StoredQuestion = {
   expiresAt?: string;
   questions: AgentQuestion[];
   answers?: string[];
+  values?: Record<string, QuestionValue>;
+  summary?: string;
 };
 
 export function questionLimits() {
   return {
-    maxQuestions: 8,
+    maxQuestions: 24,
     maxAnswerLength: 4_000,
   };
 }
@@ -40,26 +42,18 @@ function answerFallback(status: QuestionStatus, count: number) {
 }
 
 export function createPendingQuestion(
-  input: Array<{ question: string; multiple?: boolean; options?: Array<QuestionOption | string> }>,
+  input: QuestionInput[] | AskUserInput,
   chatId: string,
   userId?: string,
   context: { jobId?: string; runId?: string } = {},
 ) {
-  const questions: AgentQuestion[] = input.slice(0, 8).map((item) => ({
-    id: randomUUID(),
-    question: item.question.trim().slice(0, 2_000),
-    ...(item.multiple ? { multiple: true } : {}),
-    ...(item.options?.length ? {
-      options: item.options.slice(0, 12).map((option) =>
-        typeof option === "string"
-          ? { label: option.slice(0, 500), value: option.slice(0, 500) }
-          : option,
-      ),
-    } : {}),
-  })).filter((item) => item.question);
+  const normalized = normalizeAskUserInput(Array.isArray(input) ? { questions: input } : input);
+  const { questions: fields, ...form } = normalized;
+  const questions: AgentQuestion[] = fields.map((item) => ({ ...item, id: randomUUID(), options: item.options as AgentQuestion["options"] }));
   const questionId = randomUUID();
   const version = 1;
   const stored: StoredQuestion = {
+    ...form,
     questionId,
     ...(context.jobId ? { jobId: context.jobId } : {}),
     ...(context.runId ? { runId: context.runId } : {}),
@@ -105,6 +99,7 @@ export function createPendingQuestion(
     return answerFallback("cancelled", questions.length);
   })();
   return {
+    ...form,
     questionId,
     questions,
     version,
@@ -123,12 +118,14 @@ export type ResolvedQuestion = {
   version: number;
   status: QuestionStatus;
   answers: string[];
+  values?: Record<string, QuestionValue>;
+  summary?: string;
   heartbeatAt?: string;
 };
 
 export function resolveQuestion(
   questionId: string,
-  answers: string[],
+  answers: unknown,
   userId?: string,
   expectedVersion?: number,
 ): ResolvedQuestion | false {
@@ -149,13 +146,15 @@ export function resolveQuestion(
     const data = parseStored({ data: row.data });
     if (!data || !row.chatId) return false;
     if (data.status === "answered" && data.answers) {
-      return { questionId, chatId: row.chatId, ...(data.jobId ? { jobId: data.jobId } : {}), ...(data.runId ? { runId: data.runId } : {}), version: data.version, status: data.status, answers: data.answers, heartbeatAt: row.heartbeatAt };
+      return { questionId, chatId: row.chatId, ...(data.jobId ? { jobId: data.jobId } : {}), ...(data.runId ? { runId: data.runId } : {}), version: data.version, status: data.status, answers: data.answers, values: data.values, summary: data.summary, heartbeatAt: row.heartbeatAt };
     }
     if (expectedVersion !== undefined && expectedVersion !== (row.version || data.version)) return false;
     if (data.status !== "waiting_for_user") return false;
-    if (answers.length !== data.questions.length || answers.some((answer) => !answer.trim() || answer.length > 4_000)) return false;
-    const normalized = answers.map((answer) => answer.trim().slice(0, 4_000));
-    const updated: StoredQuestion = { ...data, answers: normalized, status: "answered", version: data.version + 1 };
+    let result;
+    try { result = normalizeQuestionAnswers(data.questions, answers); } catch { return false; }
+    const normalized = result.answers;
+    const summary = questionSummary(data, data.questions, result.values);
+    const updated: StoredQuestion = { ...data, answers: normalized, values: result.values, summary, status: "answered", version: data.version + 1 };
     const changed = db.prepare(
       `UPDATE pending_questions
        SET data = ?, version = ?, status = ?, heartbeat_at = ?
@@ -170,6 +169,8 @@ export function resolveQuestion(
       version: updated.version,
       status: updated.status,
       answers: normalized,
+      values: result.values,
+      summary,
       heartbeatAt: row.heartbeatAt,
     };
   });
@@ -189,7 +190,7 @@ function transitionQuestion(questionId: string, status: "cancelled" | "expired",
     const data = parseStored({ data: row.data });
     if (!data) return false;
     if (data.status === status && data.answers) {
-      return { questionId, chatId: row.chatId, ...(data.jobId ? { jobId: data.jobId } : {}), ...(data.runId ? { runId: data.runId } : {}), version: data.version, status, answers: data.answers, heartbeatAt: row.heartbeatAt };
+      return { questionId, chatId: row.chatId, ...(data.jobId ? { jobId: data.jobId } : {}), ...(data.runId ? { runId: data.runId } : {}), version: data.version, status, answers: data.answers, values: data.values, summary: data.summary, heartbeatAt: row.heartbeatAt };
     }
     if (data.status !== "waiting_for_user") return false;
     const updated = { ...data, status, version: data.version + 1 };
