@@ -8,7 +8,7 @@ import {
   executeEmbeddedToolFallbacks,
   toEmbeddedToolResultPayloads,
 } from "../lib/providers/embedded-tool-fallback";
-import { CORE_MCP_TOOL_ALLOWLIST, selectBridgeTools } from "../lib/mcp-bridge";
+import { CORE_MCP_TOOL_ALLOWLIST, selectBridgeTools, bridgeToolTimeoutMs } from "../lib/mcp-bridge";
 import {
   antigravityCliSettings,
   antigravityMcpConfig,
@@ -268,4 +268,17 @@ test("parseAntigravityCliChunk extracts tool lines and JSON events", () => {
   assert.equal(parsed.tools[2].todos?.[0]?.content, "Fix tools");
   assert.match(parsed.text, /Hello user/);
   assert.doesNotMatch(parsed.text, /google\.Init/);
+});
+
+
+test("tool transports wait through the advertised delegation deadline with a response margin", () => {
+ const schema = { properties: { timeoutMs: { type: "integer", maximum: 3_600_000, default: 600_000 } } };
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 3_600_000 }, schema), 3_660_000);
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 7_200_000 }, schema), 3_660_000);
+ assert.equal(bridgeToolTimeoutMs({}, schema), 660_000);
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 3_600_000, wait: false }, schema), 300_000);
+ assert.equal(bridgeToolTimeoutMs({}, {}), 300_000);
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: NaN }, schema), 300_000);
+ // The timeout follows discovery metadata rather than a provider-specific guess.
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 90_000 }, { properties: { timeoutMs: { maximum: 90_000 } } }), 300_000);
 });

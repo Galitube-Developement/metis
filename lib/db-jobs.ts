@@ -13,7 +13,6 @@ import {
   describeQueueWait,
   parseWorkerConcurrency,
 } from "@/lib/worker-scheduler";
-import { expireApprovals } from "@/lib/db-approvals";
 import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
 
 const iso = () => new Date().toISOString();
@@ -826,12 +825,6 @@ export function recoverStaleJobs(maxAgeMs = 15 * 60 * 1000) {
   const queued: AgentJob[] = [];
   const resumed: AgentJob[] = [];
   const interrupted: AgentJob[] = [];
-  const expiredApprovals = expireApprovals();
-  const expiredApprovalJobIds = new Set(
-    (expiredApprovals ?? [])
-      .map((approval) => approval?.jobId)
-      .filter((jobId): jobId is string => Boolean(jobId)),
-  );
   for (const job of jobs) {
     if (job.status === "queued") {
       queued.push(job);
@@ -860,31 +853,9 @@ export function recoverStaleJobs(maxAgeMs = 15 * 60 * 1000) {
         "SELECT question_id FROM pending_questions WHERE job_id = ? AND status = 'waiting_for_user' LIMIT 1",
       )
       .get(job.id);
-    const pendingRuntimeApproval = expiredApprovalJobIds.has(job.id)
-      ? null
-      : getDatabase()
-          .prepare(
-            "SELECT id FROM pending_approvals WHERE job_id = ? AND status = 'waiting_for_user' LIMIT 1",
-          )
-          .get(job.id);
-    if (expiredApprovalJobIds.has(job.id)) {
-      const updated = updateJob(job.id, {
-        status: "interrupted",
-        error: "The runtime approval timed out.",
-      });
-      updateChat(
-        job.chatId,
-        {
-          runStatus: "interrupted",
-          runUpdatedAt: iso(),
-          pendingApproval: null,
-          badge: "red",
-        },
-        job.userId,
-      );
-      if (updated) interrupted.push(updated);
-      continue;
-    }
+    const pendingRuntimeApproval = getDatabase()
+      .prepare("SELECT id FROM pending_approvals WHERE job_id = ? AND status = 'waiting_for_user' LIMIT 1")
+      .get(job.id);
     if (pendingQuestion || pendingRuntimeApproval) {
       updateJob(job.id, {
         status: "waiting_input",

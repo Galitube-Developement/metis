@@ -7651,6 +7651,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 pendingQuestionIdRef.current = payload.questionId;
               }
               setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
+              setChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, runStatus: "waiting_for_user" } : chat));
               notifiedQuestionRef.current = payload.questionId;
               if (activeChatIdRef.current === chatId) {
                 setPendingQuestion({
@@ -9576,9 +9577,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   ) : null}
                   {activeChatId !== c.id && (c.badge === "red" || c.pendingQuestion || c.pendingApproval || attentionChatIds.includes(c.id)) ? (
                     <span
-                      className="size-2 shrink-0 rounded-full bg-red-500"
-                      aria-label="Needs your attention"
-                      title="Needs your attention"
+                      className={cn("size-2 shrink-0 rounded-full",
+                        c.pendingQuestion || c.pendingApproval || c.runStatus === "waiting_input" || c.runStatus === "waiting_for_user"
+                          ? "bg-amber-400"
+                          : "bg-red-500",
+                      )}
+                      aria-label={c.pendingQuestion || c.pendingApproval || c.runStatus === "waiting_input" || c.runStatus === "waiting_for_user" ? "Waiting for your input" : "Needs your attention"}
+                      title={c.pendingQuestion || c.pendingApproval || c.runStatus === "waiting_input" || c.runStatus === "waiting_for_user" ? "Waiting for your input" : "Needs your attention"}
                     />
                   ) : activeChatId !== c.id && unreadChatIds.includes(c.id) ? (
                     <span
@@ -10807,10 +10812,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         </Button>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Answer every question to continue.
-                        {pendingQuestion.expiresAt
-                          ? ` Expires ${formatCompletedAt(pendingQuestion.expiresAt)}.`
-                          : ""}
+                        Answer every question to continue. Take your time — this stays open.
                       </p>
                     </div>
                     {pendingQuestion.questions.map((question, index) => {
@@ -10827,7 +10829,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               Select one or more options.
                             </p>
                           ) : null}
-                          <div className="flex flex-wrap gap-2">
+                          <div className="grid grid-cols-1 gap-2">
                             {(question.options ?? []).map((option) => {
                               const value = option.value || option.label;
                               const isSelected = question.multiple
@@ -10837,8 +10839,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                 <button
                                   key={`${question.id}-${value}`}
                                   type="button"
+                                  disabled={answeringQuestion}
+                                  aria-pressed={!customSelected && isSelected}
                                   className={cn(
-                                    "max-w-full rounded-xl border px-3 py-2 text-left text-sm whitespace-normal break-words transition-colors",
+                                    "min-h-11 w-full min-w-0 rounded-lg border px-3 py-2.5 text-left text-sm whitespace-normal break-words transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50",
                                     !customSelected && isSelected
                                       ? "border-primary bg-primary/15 text-foreground"
                                       : "border-border/60 bg-background/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
@@ -10872,8 +10876,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             })}
                             <button
                               type="button"
+                              disabled={answeringQuestion}
+                              aria-pressed={customSelected}
                               className={cn(
-                                "max-w-full rounded-xl border px-3 py-2 text-sm whitespace-normal break-words transition-colors",
+                                "min-h-11 w-full min-w-0 rounded-lg border px-3 py-2.5 text-left text-sm whitespace-normal break-words transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50",
                                 customSelected
                                   ? "border-primary bg-primary/15 text-foreground"
                                   : "border-border/60 bg-background/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
@@ -10897,6 +10903,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           {customSelected ? (
                             <Textarea
                               autoFocus={pendingQuestion.questions.length === 1}
+                              aria-label={question.question}
+                              disabled={answeringQuestion}
                               value={questionCustom[index] ?? ""}
                               onChange={(event) => {
                                 const value = event.target.value;

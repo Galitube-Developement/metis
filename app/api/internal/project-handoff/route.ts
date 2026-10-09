@@ -1,12 +1,12 @@
 import { getChat } from "@/lib/db-store";
 import { getJob, updateJob } from "@/lib/db-jobs";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
-import { cancelProjectHandoff, createProjectHandoff, getProjectAgentForChat, getProjectHandoff, listProjectAgents, syncProjectHandoffStatuses, TEAM_LIMITS } from "@/lib/project-team";
+import { cancelProjectHandoff, createProjectHandoff, manageProjectAgent, ProjectAgentManagementDenied, getProjectAgentForChat, getProjectHandoff, listProjectAgents, syncProjectHandoffStatuses, TEAM_LIMITS } from "@/lib/project-team";
 import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 1900;
+export const maxDuration = 3700;
 
 export async function POST(req: Request) {
  if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -23,6 +23,10 @@ export async function POST(req: Request) {
  const projectId = chat.projectId;
  try {
   const action = body.action || "delegate";
+  if (action === "create_agent" || action === "update_agent" || action === "archive_agent") {
+   const agent = manageProjectAgent({ ownerId, parentJobId: jobId, action, agentId: body.agentId, agent: body.agent });
+   return Response.json({ agent });
+  }
   if (action === "list") return Response.json({ agents: listProjectAgents(projectId, ownerId), handoffs: syncProjectHandoffStatuses(projectId, ownerId) });
   let handoff;
   let deduplicated = false;
@@ -63,6 +67,7 @@ export async function POST(req: Request) {
    if (current && ["running", "waiting_input", "waiting_for_user"].includes(current.status)) updateJob(jobId, { projectWaitingForHandoffId: null }, { control: true });
   }
  } catch (cause) {
+  if (cause instanceof ProjectAgentManagementDenied) return Response.json({ error: cause.message }, { status: 403 });
   return Response.json({ error: cause instanceof Error ? cause.message : "Could not assign task" }, { status: 400 });
  }
 }

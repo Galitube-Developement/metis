@@ -65,6 +65,19 @@ export function assertBridgeToolInput(
   return args;
 }
 
+// Honor the advertised tool deadline so the transport cannot interrupt a long
+// delegation before the server's timeout. Ordinary calls keep their usual bound.
+export function bridgeToolTimeoutMs(args: Record<string, unknown>, schema: Record<string, unknown>) {
+  const baseMs = 300_000;
+  if (args.wait === false) return baseMs;
+  const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  const rule = properties?.timeoutMs;
+  if (!rule || typeof rule.maximum !== "number" || !Number.isFinite(rule.maximum)) return baseMs;
+  const requested = typeof args.timeoutMs === "number" ? args.timeoutMs : rule.default;
+  if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) return baseMs;
+  return Math.max(baseMs, Math.max(0, Math.min(requested, rule.maximum)) + 60_000);
+}
+
 type GatewayProcess = {
   proc: ReturnType<typeof spawn>;
   requestId: number;
@@ -177,7 +190,7 @@ export type HttpMcpTarget = {
 type HttpMcpSession = {
   client: {
     listTools: () => Promise<{ tools?: McpBridgeTool[] }>;
-    callTool: (request: { name: string; arguments: Record<string, unknown> }) => Promise<unknown>;
+    callTool: (request: { name: string; arguments: Record<string, unknown> }, resultSchema?: undefined, options?: { timeout: number; maxTotalTimeout: number }) => Promise<unknown>;
     close: () => Promise<void>;
   };
   transport: { close?: () => Promise<void> };
@@ -334,7 +347,7 @@ export async function mcpBridgeTools(
     const bridgedExecute = async (args: Record<string, unknown>) => {
       const validatedArgs = assertBridgeToolInput(definition.name, args, schema);
       const result = await withFreshGateway(env, async (gateway) => {
-        return callGateway(gateway, "tools/call", { name: definition.name, arguments: validatedArgs }, 300_000);
+        return callGateway(gateway, "tools/call", { name: definition.name, arguments: validatedArgs }, bridgeToolTimeoutMs(validatedArgs, schema));
       });
       const record = result as { content?: Array<{ type?: string; text?: string }> };
       const text = (record?.content || [])
@@ -371,7 +384,8 @@ export async function mcpBridgeHttpTools(
     const bridgedExecute = async (args: Record<string, unknown>) => {
       const validatedArgs = assertBridgeToolInput(definition.name, args, schema);
       const result = await withHttpSession(target, async (session) => {
-        return session.client.callTool({ name: definition.name, arguments: validatedArgs });
+        const timeout = bridgeToolTimeoutMs(validatedArgs, schema);
+        return session.client.callTool({ name: definition.name, arguments: validatedArgs }, undefined, { timeout, maxTotalTimeout: timeout });
       });
       const record = result as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
       const text = (record?.content || [])

@@ -16,7 +16,6 @@ import type {
 } from "@/lib/store";
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
-export const DEFAULT_ASK_USER_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_VOICE_DURATION_SECONDS = 3_600;
 export const MAX_VOICE_BYTES = 250 * 1024 * 1024;
 export const ALLOWED_AUDIO_MIME_TYPES = new Set([

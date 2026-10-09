@@ -488,18 +488,24 @@ export function findApprovedRemoteApproval(input: {
 
 export function denyRemoteApproval(id: string, ownerId: string) {
   return getDatabase().prepare(
-    "UPDATE remote_approval_requests SET expires_at = ? WHERE id = ? AND owner_id = ? AND consumed_at IS NULL",
-  ).run(iso(), id, ownerId).changes > 0;
+    "UPDATE remote_approval_requests SET expires_at = ?, consumed_at = ? WHERE id = ? AND owner_id = ? AND consumed_at IS NULL",
+  ).run(iso(), iso(), id, ownerId).changes > 0;
 }
 
 export function approveRemoteApproval(id: string, ownerId: string) {
   const approvedAt = iso();
+  // A visible chat prompt can wait indefinitely. The one-time execution grant
+  // starts its short validity window only after the owner makes a decision.
+  const chatApproval = getDatabase().prepare(
+    "SELECT id FROM pending_approvals WHERE id = ? AND owner_id = ? AND (status = 'waiting_for_user' OR (status = 'resolved' AND decision IN ('allow', 'allow-session')))",
+  ).get(id, ownerId);
+  const grantExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const result = getDatabase().prepare(
     `UPDATE remote_approval_requests
-     SET approved_at = ?
+     SET approved_at = ?, expires_at = CASE WHEN ? THEN ? ELSE expires_at END
      WHERE id = ? AND owner_id = ? AND approved_at IS NULL AND consumed_at IS NULL
-       AND expires_at > ?`,
-  ).run(approvedAt, id, ownerId, approvedAt);
+       AND (expires_at > ? OR ?)`,
+  ).run(approvedAt, chatApproval ? 1 : 0, grantExpiresAt, id, ownerId, approvedAt, chatApproval ? 1 : 0);
   return result.changes > 0;
 }
 

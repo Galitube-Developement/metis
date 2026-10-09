@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { getDatabase, transaction } from "@/lib/sqlite";
-import { DEFAULT_ASK_USER_TIMEOUT_MS } from "@/lib/shared-context";
 import type { AgentQuestion, QuestionOption } from "@/lib/questions";
 
 type QuestionStatus = "waiting_for_user" | "answered" | "cancelled" | "expired";
@@ -11,7 +10,7 @@ type StoredQuestion = {
   jobId?: string;
   version: number;
   status: QuestionStatus;
-  expiresAt: string;
+  expiresAt?: string;
   questions: AgentQuestion[];
   answers?: string[];
 };
@@ -20,7 +19,6 @@ export function questionLimits() {
   return {
     maxQuestions: 8,
     maxAnswerLength: 4_000,
-    timeoutMs: DEFAULT_ASK_USER_TIMEOUT_MS,
   };
 }
 
@@ -45,7 +43,7 @@ export function createPendingQuestion(
   input: Array<{ question: string; multiple?: boolean; options?: Array<QuestionOption | string> }>,
   chatId: string,
   userId?: string,
-  context: { jobId?: string; runId?: string; timeoutMs?: number } = {},
+  context: { jobId?: string; runId?: string } = {},
 ) {
   const questions: AgentQuestion[] = input.slice(0, 8).map((item) => ({
     id: randomUUID(),
@@ -61,14 +59,12 @@ export function createPendingQuestion(
   })).filter((item) => item.question);
   const questionId = randomUUID();
   const version = 1;
-  const expiresAt = new Date(Date.now() + Math.max(1_000, context.timeoutMs || DEFAULT_ASK_USER_TIMEOUT_MS)).toISOString();
   const stored: StoredQuestion = {
     questionId,
     ...(context.jobId ? { jobId: context.jobId } : {}),
     ...(context.runId ? { runId: context.runId } : {}),
     version,
     status: "waiting_for_user",
-    expiresAt,
     questions,
   };
   const timestamp = new Date().toISOString();
@@ -85,7 +81,7 @@ export function createPendingQuestion(
     context.runId ?? null,
     context.jobId ?? null,
     version,
-    expiresAt,
+    null,
     stored.status,
     timestamp,
   );
@@ -101,10 +97,6 @@ export function createPendingQuestion(
       if (data.status === "cancelled" || data.status === "expired") {
         return data.answers || answerFallback(data.status, questions.length);
       }
-      if (new Date(data.expiresAt).getTime() <= Date.now()) {
-        expirePendingQuestions();
-        continue;
-      }
       getDatabase().prepare(
         "UPDATE pending_questions SET heartbeat_at = ? WHERE question_id = ? AND status = 'waiting_for_user'",
       ).run(new Date().toISOString(), questionId);
@@ -116,7 +108,6 @@ export function createPendingQuestion(
     questionId,
     questions,
     version,
-    expiresAt,
     promise,
     stop: () => {
       stopped = true;
@@ -161,7 +152,7 @@ export function resolveQuestion(
       return { questionId, chatId: row.chatId, ...(data.jobId ? { jobId: data.jobId } : {}), ...(data.runId ? { runId: data.runId } : {}), version: data.version, status: data.status, answers: data.answers, heartbeatAt: row.heartbeatAt };
     }
     if (expectedVersion !== undefined && expectedVersion !== (row.version || data.version)) return false;
-    if (data.status !== "waiting_for_user" || new Date(data.expiresAt).getTime() <= Date.now()) return false;
+    if (data.status !== "waiting_for_user") return false;
     if (answers.length !== data.questions.length || answers.some((answer) => !answer.trim() || answer.length > 4_000)) return false;
     const normalized = answers.map((answer) => answer.trim().slice(0, 4_000));
     const updated: StoredQuestion = { ...data, answers: normalized, status: "answered", version: data.version + 1 };
@@ -216,13 +207,6 @@ function transitionQuestion(questionId: string, status: "cancelled" | "expired",
       heartbeatAt: row.heartbeatAt,
     };
   });
-}
-
-export function expirePendingQuestions(now = Date.now()) {
-  const rows = getDatabase().prepare(
-    "SELECT question_id as questionId FROM pending_questions WHERE status = 'waiting_for_user' AND expires_at IS NOT NULL AND expires_at <= ?",
-  ).all(new Date(now).toISOString()) as Array<{ questionId: string }>;
-  return rows.map((row) => transitionQuestion(row.questionId, "expired")).filter(Boolean);
 }
 
 export function getPendingQuestion(questionId: string, userId?: string) {

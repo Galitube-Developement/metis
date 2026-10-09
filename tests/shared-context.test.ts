@@ -153,7 +153,7 @@ test("ask_user answers exactly once and rejects stale versions", async () => {
     [{ question: "Continue?", options: ["Yes", "No"] }],
     chatId,
     undefined,
-    { jobId: "job-test", runId: "run-test", timeoutMs: 5_000 },
+    { jobId: "job-test", runId: "run-test" },
   );
   const resolved = resolveQuestion(pending.questionId, ["Yes"], undefined, pending.version);
   assert.ok(resolved);

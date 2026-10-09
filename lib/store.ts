@@ -178,6 +178,7 @@ export type Project = {
   ownerId?: string;
   name: string;
   mode?: "chat" | "agents";
+  allowAgentManagement?: boolean;
   icon: string;
   color: string;
   instructions: string;

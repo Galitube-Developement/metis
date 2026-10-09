@@ -188,7 +188,7 @@ test("an approved ID survives a disconnected waiter and is consumed by the exact
   } finally { f.controller.abort(); await waiting; f.socket.close(); }
 });
 
-test("expired approvals cannot silently execute", async () => {
+test("explicitly denied approvals cannot silently execute", async () => {
   const f = fixture();
   const waiting = modules[6].POST(f.request());
   try {
@@ -237,4 +237,24 @@ test("parallel approval requests remain visible one after another", async () => 
     assert.equal(f.sent.length, 2);
     assert.equal(modules[5].getPendingApprovalForChat(f.chat.id, f.owner.id), null);
   } finally { f.controller.abort(); await first; if (second) await second; f.socket.close(); }
+});
+
+test("an overdue remote prompt stays open and issues a fresh single-use grant after approval", async () => {
+  const f = fixture();
+  const waiting = modules[6].POST(f.request());
+  try {
+    const id = await pendingId(f);
+    modules[10].getDatabase().prepare("UPDATE remote_approval_requests SET expires_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(modules[5].getApproval(id, f.owner.id)?.status, "waiting_for_user");
+    assert.equal(f.sent.length, 0);
+    assert.equal((await f.decide(id)).status, 200);
+    assert.equal((await waiting).status, 200);
+    assert.equal(f.sent.length, 1);
+    const remote = modules[1].getRemoteApproval(id, f.owner.id)!;
+    assert.ok(Date.parse(remote.expiresAt) > Date.now());
+    assert.ok(remote.consumedAt);
+    assert.equal(modules[1].consumeRemoteApproval({ ...f.input, id }), false);
+  } finally { f.controller.abort(); await waiting; f.socket.close(); }
 });

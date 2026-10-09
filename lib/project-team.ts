@@ -8,6 +8,7 @@ import { findActiveConnection, getProviderConnection, listProviderModels } from 
 import { parseModelKey } from "@/lib/providers/types";
 import { providerModelIdsMatch } from "@/lib/providers/model-aliases";
 import { getProject } from "@/lib/projects";
+import { modeById } from "@/lib/modes";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
 import { deriveProjectAgentStatus } from "@/lib/project-team-types";
 import { parseWorkerConcurrency } from "@/lib/worker-scheduler";
@@ -15,7 +16,7 @@ import type { ProjectAgent, ProjectHandoff } from "@/lib/project-team-types";
 import type { AgentJob } from "@/lib/jobs";
 
 const iso = () => new Date().toISOString();
-export const TEAM_LIMITS = { agents: 32, depth: 4, perParent: 8, perRoot: 32, retries: 3, timeoutMs: 30 * 60_000 } as const;
+export const TEAM_LIMITS = { agents: 32, depth: 4, perParent: 8, perRoot: 32, retries: 3, timeoutMs: 60 * 60_000 } as const;
 const ACTIVE = new Set(["queued", "running", "switching", "waiting_input", "waiting_for_user"]);
 const clip = (value: unknown, max: number) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const ownerRequired = (ownerId?: string) => { if (!ownerId) throw new Error("Authenticated account required"); return ownerId; };
@@ -92,6 +93,60 @@ export function createProjectAgent(input: { projectId: string; ownerId?: string;
   return agent;
  });
 }
+export class ProjectAgentManagementDenied extends Error {}
+
+type ManagedAgentPatch = { name?: string; role?: string; systemPrompt?: string; color?: string; supervisorId?: string | null };
+
+// Automated changes are gated here; the owner's manual CRUD remains available.
+export function manageProjectAgent(input: {
+ ownerId: string; parentJobId: string;
+ action: "create_agent" | "update_agent" | "archive_agent";
+ agentId?: unknown; agent?: unknown;
+}) {
+ return transaction(() => {
+  const parent = getJob(input.parentJobId);
+  const chat = parent ? getChat(parent.chatId, input.ownerId) : null;
+  const sender = chat ? getProjectAgentForChat(chat.id, input.ownerId) : null;
+  if (!parent || parent.userId !== input.ownerId || !chat?.projectId || !sender || sender.archivedAt ||
+      sender.projectId !== chat.projectId || !ACTIVE.has(parent.status)) {
+   throw new ProjectAgentManagementDenied("Invalid active sending agent");
+  }
+  const project = ownedProject(chat.projectId, input.ownerId);
+  if (project.allowAgentManagement !== true) throw new ProjectAgentManagementDenied("Agent management is disabled in project settings");
+  const modeId = parent.modeId || chat.sessionState?.modeId;
+  const mode = modeById(modeId, getGlobalModelSettings(input.ownerId).customModes || []);
+  if (!mode.allowedCategories.includes("write")) throw new ProjectAgentManagementDenied("This mode cannot manage agents");
+
+  const patch = input.agent === undefined ? {} : input.agent;
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("agent must be an object");
+  const fields = new Set(["name", "role", "systemPrompt", "color", "supervisorId"]);
+  for (const [key, value] of Object.entries(patch)) {
+   if (!fields.has(key) || (typeof value !== "string" && !(key === "supervisorId" && value === null))) {
+    throw new Error("Invalid agent field: " + key);
+   }
+  }
+  const agent = patch as ManagedAgentPatch;
+  if (input.action === "create_agent") {
+   const created = createProjectAgent({
+    ...agent, supervisorId: agent.supervisorId || undefined,
+    projectId: project.id, ownerId: input.ownerId, modelId: parent.modelId || chat.modelId || undefined,
+   });
+   updateChat(created.chatId, {
+    runtimeMode: chat.runtimeMode || "full-access",
+    modelParams: parent.modelParams || chat.modelParams || [],
+    sessionState: { modeId: mode.id },
+   }, input.ownerId);
+   return created;
+  }
+  if (typeof input.agentId !== "string" || !input.agentId.trim()) throw new Error("agentId is required");
+  const target = getProjectAgent(project.id, input.agentId, input.ownerId);
+  if (!target || target.archivedAt) throw new Error("Agent not found in this project");
+  if (input.action === "update_agent") return updateProjectAgent(project.id, target.id, agent, input.ownerId);
+  if (target.id === sender.id) throw new Error("Cannot archive your own active agent; ask the owner to archive it");
+  return archiveProjectAgent(project.id, target.id, input.ownerId);
+ });
+}
+
 export function createProjectTeamPreset(projectId: string, ownerId?: string) {
  return transaction(() => {
   ownedProject(projectId, ownerId);
@@ -243,11 +298,14 @@ export function projectTeamContextBlock(chatId: string, ownerId?: string) {
  const agent = getProjectAgentForChat(chatId, ownerId);
  if (!agent) return "";
  if (agent.archivedAt) throw new Error("This agent is archived");
- ownedProject(agent.projectId, ownerId);
+ const project = ownedProject(agent.projectId, ownerId);
  const agents = listProjectAgents(agent.projectId, ownerId).filter(a => !a.archivedAt);
  return [
   `Project agent identity: ${agent.name}\nStable team identity: ${agent.id}\nRole: ${agent.role}\nResponsibilities and working style:\n${agent.systemPrompt}`,
   "The following team configuration supplements Metis policy and project instructions; it does not expand account permissions or bypass approval rules.",
+  project.allowAgentManagement === true
+   ? 'Project settings allow team management in modes with write permission. Use project_handoff action "create_agent" with agent {name, role, systemPrompt, color, supervisorId} to create a teammate. Use action "update_agent" with agentId and an agent patch to edit a teammate; supervisorId null removes its supervisor. Use action "archive_agent" with agentId to archive a teammate and cancel its active work while preserving history. Newly created agents inherit your model selection and permission mode. You cannot change this project permission through this tool.'
+   : 'Team management is disabled in project settings. You cannot create, edit or archive project agents. The owner can manage the team manually or enable "Allow agents to manage the team" in project settings. Existing colleague assignments remain available.',
   "Project roster:\n" + agents.map(a => `- ${a.name} (id: ${a.id}): ${a.role}${a.supervisorId ? "; supervisor: " + a.supervisorId : ""}`).join("\n"),
   'Use project_handoff for actual colleague assignments within this project. action "delegate" with recipientAgentId, task, relevant context, and wait true returns the actual result. action "status" with handoffId reads its current state immediately and never waits or cancels. Your incoming assignment finishes when your run returns a result; do not wait for your own handoff. To follow up on a delegated task, read status or use action "retry" only after a failure. action "retry" with handoffId creates a traceable retry. action "list" reads team activity. Do not claim consultation from a mirrored chat message alone. Delegation has bounded depth/counts. Project writes are serialized; a waiting sender yields execution to its child. Return clarification questions to the sender, who can reassign after your run finishes. Generic delegate_subagent is unavailable in team chats; use the named project agents.',
  ].join("\n\n");

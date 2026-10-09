@@ -9,7 +9,6 @@ import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 1_860;
 
 type QuestionInput = {
   question?: unknown;
@@ -55,7 +54,6 @@ export async function POST(req: Request) {
       jobId,
       runId: jobId,
       version: pending.version,
-      expiresAt: pending.expiresAt,
       status: "waiting_for_user",
       questions: pending.questions,
     },
@@ -65,7 +63,6 @@ export async function POST(req: Request) {
     jobId,
     runId: jobId,
     version: pending.version,
-    expiresAt: pending.expiresAt,
     questions: pending.questions,
   });
 
