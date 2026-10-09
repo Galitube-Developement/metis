@@ -20,7 +20,6 @@ type PendingQuestion = {
   questions: AgentQuestion[];
   answers?: string[];
   resolve: (answers: string[]) => void;
-  timer: NodeJS.Timeout;
 };
 type PersistedQuestion = Pick<PendingQuestion, "questionId" | "questions" | "answers">;
 
@@ -34,7 +33,6 @@ const MAX_OPTIONS = 12;
 const MAX_QUESTION_LENGTH = 2_000;
 const MAX_OPTION_LENGTH = 500;
 const MAX_ANSWER_LENGTH = 4_000;
-const QUESTION_TIMEOUT_MS = 15 * 60 * 1000;
 
 function text(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -101,21 +99,10 @@ export function createPendingQuestion(
   const promise = new Promise<string[]>((resolve) => {
     resolvePending = resolve;
   });
-  const timer = setTimeout(() => {
-    const pending = pendingQuestions.get(questionId);
-    if (!pending) return;
-    pendingQuestions.delete(questionId);
-    pending.resolve(
-      pending.questions.map(
-        () => "[No answer received before the question timed out.]",
-      ),
-    );
-  }, QUESTION_TIMEOUT_MS);
   const pending = {
     questionId,
     questions,
     resolve: resolvePending,
-    timer,
   };
   pendingQuestions.set(questionId, pending);
   writePersisted([...readPersisted().filter((item) => item.questionId !== questionId), {
@@ -138,7 +125,6 @@ export function resolveQuestion(
   );
   if (normalized.some((answer) => !answer)) return false;
   if (pending) {
-    clearTimeout(pending.timer);
     pendingQuestions.delete(questionId);
     pending.resolve(normalized);
   }

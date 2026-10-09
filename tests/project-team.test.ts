@@ -208,6 +208,25 @@ await t.test("cancellation stops descendants, persists terminal handoffs, and pr
  assert.ok(team.listProjectAgents(f.project.id, owner).filter(a => a.id !== f.sender.id).every(a => !a.supervisorId));
  assert.throws(() => jobs.enqueueJob({ chatId: f.sender.chatId, userId: owner, message: "No" }), /active agent/);
 });
+await t.test("handoffs allow 60 minutes, cap larger requests and retain the 10-minute default", async () => {
+ const f = fixture();
+ for (const [requested, expected] of [[undefined, 600_000], [3_600_000, 3_600_000], [7_200_000, 3_600_000]] as const) {
+  const response = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Deadline " + requested, wait: false, ...(requested === undefined ? {} : { timeoutMs: requested }) }));
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  const job = jobs.getJob(result.jobId)!;
+  assert.equal(job.maxRuntimeMs, expected);
+  const duration = Date.parse(result.handoff.deadlineAt) - Date.parse(result.handoff.createdAt);
+  assert.ok(duration >= expected && duration < expected + 1_000);
+  if (expected === 3_600_000) {
+   assert.equal(team.expireProjectHandoffs(Date.parse(result.handoff.createdAt) + 30 * 60_000), 0);
+   assert.equal(jobs.getJob(job.id)?.status, "queued");
+   assert.equal(team.expireProjectHandoffs(Date.parse(result.handoff.deadlineAt) + 1), 1);
+   assert.equal(jobs.getJob(job.id)?.status, "cancelled");
+  } else team.cancelProjectHandoff(f.project.id, result.handoff.id, owner);
+ }
+ stop(f);
+});
 await t.test("timeouts cancel real queued jobs and retries retain the failed record", async () => {
  const f = fixture();
  const response = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Will time out", timeoutMs: 1000 }));
@@ -279,6 +298,107 @@ await t.test("depth, root handoff counts, and self-delegation are bounded from t
  const deep = jobs.enqueueJob({ chatId: g.agents[1].chatId, userId: owner, message: "Depth", parentJobId: g.parent.id, subagentDepth: 4, modelId: model });
  assert.throws(() => team.createProjectHandoff({ projectId: g.project.id, ownerId: owner, parentJobId: deep.id, recipientAgentId: g.agents[2].id, task: "Too deep" }), /depth limit/);
  stop(g);
+});
+
+await t.test("team management defaults off, persists per project, and never restricts the owner", async () => {
+ const f = fixture();
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, false);
+ getDatabase().prepare("UPDATE projects SET data = json_remove(data, '$.allowAgentManagement') WHERE id = ?").run(f.project.id);
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, false);
+ assert.match(team.projectTeamContextBlock(f.sender.chatId, owner), /Team management is disabled/);
+ for (const action of ["create_agent", "update_agent", "archive_agent"]) {
+  const response = await POST(request(f, { action, agentId: f.agents[1].id, agent: { name: "Denied", role: "Denied" } }));
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /disabled/);
+ }
+ assert.equal((await POST(request(f, { action: "list" }))).status, 200);
+ const delegated = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Existing delegation remains available", wait: false }));
+ assert.equal(delegated.status, 200);
+ team.cancelProjectHandoff(f.project.id, (await delegated.json()).handoff.id, owner);
+ const manual = team.createProjectAgent({ projectId: f.project.id, ownerId: owner, name: "Owner-created", role: "Manual management" });
+ assert.ok(team.updateProjectAgent(f.project.id, manual.id, { role: "Still editable" }, owner));
+ assert.ok(team.archiveProjectAgent(f.project.id, manual.id, owner));
+ projects.updateProject(f.project.id, { allowAgentManagement: true }, owner);
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, true);
+ assert.match(team.projectTeamContextBlock(f.sender.chatId, owner), /action "create_agent"/);
+ assert.equal(projects.updateProject(f.project.id, { allowAgentManagement: false }, other), null);
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, true);
+ const regular = projects.createProject({ ownerId: owner });
+ projects.updateProject(regular.id, { allowAgentManagement: true }, owner);
+ assert.equal(projects.getProject(regular.id, owner)?.allowAgentManagement, false);
+ stop(f);
+});
+await t.test("enabled management creates, edits and archives real teammates while preserving runtime policy", async () => {
+ const f = fixture();
+ projects.updateProject(f.project.id, { allowAgentManagement: true }, owner);
+ const response = await POST(request(f, { action: "create_agent", agent: { name: "Researcher", role: "Finds sources", systemPrompt: "Cite sources.", supervisorId: f.sender.id, color: "#1767ed" } }));
+ assert.equal(response.status, 200);
+ const created = (await response.json()).agent;
+ assert.equal(created.projectId, f.project.id);
+ assert.equal(team.getProjectAgent(f.project.id, created.id, owner)?.systemPrompt, "Cite sources.");
+ const childChat = store.getChat(created.chatId, owner)!;
+ assert.equal(childChat.projectId, f.project.id);
+ assert.equal(childChat.modelId, model);
+ assert.equal(childChat.runtimeMode, "approval-required");
+ assert.equal(childChat.sessionState?.modeId, "agent");
+ const edited = await POST(request(f, { action: "update_agent", agentId: created.id, agent: { name: "Archivist", role: "Archives evidence", supervisorId: null } }));
+ assert.equal(edited.status, 200);
+ assert.equal((await edited.json()).agent.supervisorId, undefined);
+ assert.equal(store.getChat(created.chatId, owner)?.title, "Archivist");
+ const active = jobs.enqueueJob({ chatId: created.chatId, userId: owner, message: "Active work", modelId: model });
+ const archived = await POST(request(f, { action: "archive_agent", agentId: created.id }));
+ assert.equal(archived.status, 200);
+ assert.equal(team.getProjectAgent(f.project.id, created.id, owner)?.status, "archived");
+ assert.equal(jobs.getJob(active.id)?.status, "cancelled");
+ assert.equal(store.getChat(created.chatId, owner)?.archived, true);
+ projects.updateProject(f.project.id, { allowAgentManagement: false }, owner);
+ assert.equal((await POST(request(f, { action: "update_agent", agentId: f.agents[1].id, agent: { role: "Revoked" } }))).status, 403);
+ assert.equal(team.getProjectAgent(f.project.id, f.agents[1].id, owner)?.role, f.agents[1].role);
+ stop(f);
+});
+await t.test("management enforces project scope, worker leases, immutable fields and read-only modes", async () => {
+ const f = fixture();
+ projects.updateProject(f.project.id, { allowAgentManagement: true }, owner);
+ const another = projects.createProject({ ownerId: owner, mode: "agents" });
+ const stranger = team.createProjectAgent({ projectId: another.id, ownerId: owner, name: "Other project", role: "Elsewhere" });
+ for (const action of ["update_agent", "archive_agent"]) {
+  assert.equal((await POST(request(f, { action, agentId: stranger.id, agent: { role: "No" } }))).status, 400);
+ }
+ assert.equal(team.getProjectAgent(another.id, stranger.id, owner)?.role, "Elsewhere");
+ assert.equal((await POST(request(f, { action: "create_agent", agent: { name: "Spoof", role: "No", projectId: another.id } }))).status, 400);
+ assert.equal((await POST(request(f, { action: "update_agent", agentId: f.sender.id, agent: { modelId: "invented-model" } }))).status, 400);
+ assert.equal((await POST(request(f, { action: "create_agent", agent: { name: "No", role: "No" } }, other))).status, 403);
+ const expiredLease = request(f, { action: "create_agent", agent: { name: "No", role: "No" } });
+ expiredLease.headers.set("x-ai-chat-lease-token", "stale");
+ assert.equal((await POST(expiredLease)).status, 401);
+ assert.equal((await POST(request(f, { action: "archive_agent", agentId: f.sender.id }))).status, 400);
+ stop(f);
+ assert.equal((await POST(request(f, { action: "create_agent", agent: { name: "Stopped", role: "No" } }))).status, 401);
+ const plan = fixture("plan");
+ projects.updateProject(plan.project.id, { allowAgentManagement: true }, owner);
+ assert.equal((await POST(request(plan, { action: "create_agent", agent: { name: "Read-only", role: "No" } }))).status, 403);
+ assert.equal((await POST(request(plan, { action: "list" }))).status, 200);
+ stop(plan);
+});
+await t.test("project settings API accepts only booleans from the authenticated project owner", async () => {
+ const { authenticateUser } = await import("../lib/auth");
+ const { PATCH } = await import("../app/api/projects/[id]/route");
+ const f = fixture();
+ const session = authenticateUser("team-owner", "test-only-password")!;
+ const otherSession = authenticateUser("other-owner", "other-password")!;
+ const patch = (value: unknown, token = session.token) => PATCH(new Request("http://test/api/projects/" + f.project.id, {
+  method: "PATCH", headers: { cookie: "ai_chat_auth=" + token, "content-type": "application/json" },
+  body: JSON.stringify({ allowAgentManagement: value }),
+ }), { params: Promise.resolve({ id: f.project.id }) });
+ assert.equal((await patch("true")).status, 400);
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, false);
+ assert.equal((await patch(true, otherSession.token)).status, 404);
+ const enabled = await patch(true);
+ assert.equal(enabled.status, 200);
+ assert.equal((await enabled.json()).project.allowAgentManagement, true);
+ assert.equal((await patch(false)).status, 200);
+ assert.equal(projects.getProject(f.project.id, owner)?.allowAgentManagement, false);
+ stop(f);
 });
 
 });

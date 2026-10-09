@@ -7,13 +7,13 @@ import { parseWorkerConcurrency } from "@/lib/worker-scheduler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 1900;
+export const maxDuration = 3700;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ACTIVE = new Set(["queued", "running", "switching", "waiting_input", "waiting_for_user"]);
 const MAX_DEPTH = 4;
 const MAX_CHILDREN = 8;
-const MAX_WAIT_MS = 30 * 60_000;
+const MAX_WAIT_MS = 60 * 60_000;
 
 export async function GET(req: Request) {
   if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) {

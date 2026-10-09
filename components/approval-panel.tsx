@@ -62,8 +62,8 @@ export function ApprovalPanel({
           ))}
         </div>
       ) : null}
-      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-        <Button type="button" size="sm" disabled={disabled} onClick={() => onDecision("allow")}>
+      <div className="mt-4 grid grid-cols-1 gap-2">
+        <Button type="button" size="sm" className="min-h-11 justify-start" disabled={disabled} onClick={() => onDecision("allow")}>
           <Check className="size-3.5" />
           Allow
         </Button>
@@ -71,13 +71,14 @@ export function ApprovalPanel({
           type="button"
           size="sm"
           variant="secondary"
+          className="min-h-11 justify-start"
           disabled={disabled}
           title="Don't ask again in this chat (prefix match)"
           onClick={() => onDecision("allow-session")}
         >
           Allow session
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => onDecision("deny")}>
+        <Button type="button" size="sm" variant="outline" className="min-h-11 justify-start" disabled={disabled} onClick={() => onDecision("deny")}>
           Deny
         </Button>
       </div>

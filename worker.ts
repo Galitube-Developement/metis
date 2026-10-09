@@ -5,7 +5,6 @@ import { writeWorkerHeartbeat } from "@/lib/worker-health";
 import { appendRunEvent, cancelChildJobs, claimNextJob, drainNextQueuedMessage, enqueueJob, getActiveParentJob, getJob, listChildJobs, reapExpiredJobLeases, recoverStaleJobs, requeueSwitchingJob, updateJob } from "@/lib/db-jobs";
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat } from "@/lib/db-store";
-import { expirePendingQuestions } from "@/lib/db-questions";
 import { expireProjectHandoffs } from "@/lib/project-team";
 import {
   claimDueAutomations,
@@ -364,7 +363,7 @@ async function main() {
   console.log(`[ai-chat-worker] started (concurrency: ${Number.isFinite(concurrency) ? concurrency : "unlimited"})`);
   void warmLiveMcp();
   const active = new Set<Promise<void>>();
-  let lastQuestionExpiry = 0;
+  let lastHandoffExpiry = 0;
   let lastQueueDrain = 0;
   while (!stopping) {
     enqueueDueAutomations();
@@ -372,23 +371,10 @@ async function main() {
       lastQueueDrain = Date.now();
       drainPersistedChatQueues();
     }
-    if (Date.now() - lastQuestionExpiry > 5_000) {
-      lastQuestionExpiry = Date.now();
+    if (Date.now() - lastHandoffExpiry > 5_000) {
+      lastHandoffExpiry = Date.now();
       expireProjectHandoffs();
-      for (const expired of expirePendingQuestions()) {
-        if (!expired) continue;
-        if (expired.jobId) updateJob(expired.jobId, { status: "interrupted", error: "The user question expired." });
-        updateChat(expired.chatId, {
-          runStatus: "interrupted",
-          pendingQuestion: null,
-          runUpdatedAt: new Date().toISOString(),
-          badge: "red",
-        });
-        if (expired.jobId) appendRunEvent(expired.jobId, expired.chatId, undefined, "status", {
-          status: "expired",
-          questionId: expired.questionId,
-        });
-      }
+
     }
     while (!stopping && active.size < concurrency) {
       const job = claimNextJob({

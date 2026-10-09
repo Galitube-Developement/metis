@@ -24,7 +24,7 @@ function runContext(input: RemoteApprovalInput) {
 export function resolveActionApproval(id: string, decision: ApprovalDecision, ownerId?: string, version?: number) {
   return transaction(() => {
     const remote = ownerId ? getRemoteApproval(id, ownerId) : null;
-    if (remote && (remote.consumedAt || Date.parse(remote.expiresAt) <= Date.now())) return null;
+    if (remote && (remote.consumedAt || (remote.approvedAt && Date.parse(remote.expiresAt) <= Date.now()))) return null;
     const resolved = resolveApproval(id, decision, ownerId, version);
     if (!resolved) return null;
     if (remote) {
@@ -111,11 +111,10 @@ export async function waitForRemoteApproval(
       releaseRemoteApproval(input, approvalId);
       return true;
     }
-    if (Date.parse(remote.expiresAt) <= Date.now()) {
-      expireApproval(approvalId, input.ownerId);
-      denyRemoteApproval(approvalId, input.ownerId);
+    if (remote.consumedAt) {
+      expireApproval(approvalId, input.ownerId, "The remote approval was denied.");
       releaseRemoteApproval(input, approvalId);
-      throw new Error("The remote approval timed out.");
+      throw new Error("The remote approval was denied.");
     }
     heartbeatApproval(approvalId);
     await new Promise<void>((resolve, reject) => {
