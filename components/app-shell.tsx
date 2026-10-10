@@ -4662,7 +4662,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }, { root, threshold: 0 });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
+  }, [accountView, activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
 
   useEffect(() => {
     if (loadingChatId || !activeChatId || !hasEarlierMessages || messages.length >= CHAT_MESSAGE_PRELOAD_MAX) return;
@@ -5701,7 +5701,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (pinFrame) window.cancelAnimationFrame(pinFrame);
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
     };
-  }, [activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId]);
+  }, [accountView, activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId]);
 
   useLayoutEffect(() => {
     const el = messagesScrollRef.current;
