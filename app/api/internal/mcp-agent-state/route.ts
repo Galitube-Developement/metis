@@ -1,6 +1,6 @@
 import { runAgentTimedWait } from "@/lib/agent-wait";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
-import { getJob, listChildJobs, listRunEvents } from "@/lib/db-jobs";
+import { cancelAgentJob, getJob, listChildJobs, listRunEvents } from "@/lib/db-jobs";
 import { getChat } from "@/lib/db-store";
 import { bearerTokenMatches } from "@/lib/security";
 
@@ -68,6 +68,7 @@ function subagentStatuses(chatId: string, userId: string | undefined, jobId: str
       title: child.subagentTitle,
       model: child.modelId,
       mode: child.modeId,
+      maxRuntimeMs: child.maxRuntimeMs,
       output: assistant?.content || "",
       error: child.error || assistant?.errorMessage,
       ...(assistant?.runMetadata && typeof assistant.runMetadata === "object"
@@ -102,6 +103,28 @@ export async function POST(req: Request) {
     agentId?: unknown;
   };
 
+  if (body.action === "cancel" || body.action === "stop") {
+    const parent = getJob(jobId);
+    if (!parent || parent.chatId !== chatId || parent.userId !== userId || !["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(parent.status)) {
+      return Response.json({ error: "Invalid active parent context" }, { status: 403 });
+    }
+    const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+    if (!agentId) return Response.json({ error: "agentId is required" }, { status: 400 });
+    // Only this run's delegated tree is addressable; never other runs or parents.
+    const pending = listChildJobs(jobId, userId);
+    const seen = new Set<string>();
+    let found = false;
+    while (pending.length) {
+      const child = pending.shift()!;
+      if (seen.has(child.id)) continue;
+      seen.add(child.id);
+      if (child.id === agentId) { found = true; break; }
+      pending.push(...listChildJobs(child.id, userId));
+    }
+    if (!found) return Response.json({ error: "Subagent not found in this run" }, { status: 404 });
+    const job = cancelAgentJob(agentId, userId, "Stopped by parent agent.");
+    return Response.json({ agentId, jobId: agentId, chatId: job?.chatId, status: job?.status, cancelled: job?.status === "cancelled" });
+  }
   if (body.action === "wait") {
     const presetMs = body.duration === "10s" ? 10_000 : body.duration === "5m" ? 5 * 60_000 : body.duration === "60s" ? 60_000 : undefined;
     const requestedMs = typeof body.durationMs === "number" && Number.isFinite(body.durationMs)

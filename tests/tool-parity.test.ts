@@ -17,6 +17,7 @@ import {
   writeAntigravitySessionFiles,
 } from "../lib/providers/official-antigravity";
 import { listProviderDefinitions } from "../lib/providers/registry";
+import { AGENT_RUNTIME_SCHEMA } from "../lib/agent-runtime-policy.mjs";
 
 test("sanitizeJsonSchema forces object + additionalProperties false", () => {
   const schema = sanitizeJsonSchema({
@@ -272,10 +273,10 @@ test("parseAntigravityCliChunk extracts tool lines and JSON events", () => {
 
 
 test("tool transports wait through the advertised delegation deadline with a response margin", () => {
- const schema = { properties: { timeoutMs: { type: "integer", maximum: 3_600_000, default: 600_000 } } };
- assert.equal(bridgeToolTimeoutMs({ timeoutMs: 3_600_000 }, schema), 3_660_000);
- assert.equal(bridgeToolTimeoutMs({ timeoutMs: 7_200_000 }, schema), 3_660_000);
- assert.equal(bridgeToolTimeoutMs({}, schema), 660_000);
+ const schema = { properties: { timeoutMs: AGENT_RUNTIME_SCHEMA } };
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 21_600_000 }, schema), 21_660_000);
+ assert.equal(bridgeToolTimeoutMs({ timeoutMs: 43_200_000 }, schema), 21_660_000);
+ assert.equal(bridgeToolTimeoutMs({}, schema), 1_860_000);
  assert.equal(bridgeToolTimeoutMs({ timeoutMs: 3_600_000, wait: false }, schema), 300_000);
  assert.equal(bridgeToolTimeoutMs({}, {}), 300_000);
  assert.equal(bridgeToolTimeoutMs({ timeoutMs: NaN }, schema), 300_000);

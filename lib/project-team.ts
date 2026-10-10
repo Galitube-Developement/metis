@@ -2,7 +2,8 @@ import type { ChatRunStatus } from "@/lib/store";
 import { createHash, randomUUID } from "node:crypto";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
 import { createChat, appendMessage, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
-import { cancelChildJobs, enqueueJob, getJob, requestJobCancel, updateJob } from "@/lib/db-jobs";
+import { cancelAgentJob, enqueueJob, getJob, requestJobCancel } from "@/lib/db-jobs";
+import { DEFAULT_AGENT_RUNTIME_MS, MAX_AGENT_RUNTIME_MS, normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import { isModelAllowed } from "@/lib/model-access";
 import { findActiveConnection, getProviderConnection, listProviderModels } from "@/lib/provider-connections";
 import { parseModelKey } from "@/lib/providers/types";
@@ -16,7 +17,7 @@ import type { ProjectAgent, ProjectHandoff } from "@/lib/project-team-types";
 import type { AgentJob } from "@/lib/jobs";
 
 const iso = () => new Date().toISOString();
-export const TEAM_LIMITS = { agents: 32, depth: 4, perParent: 8, perRoot: 32, retries: 3, timeoutMs: 60 * 60_000 } as const;
+export const TEAM_LIMITS = { agents: 32, depth: 4, perParent: 8, perRoot: 32, retries: 3, timeoutMs: MAX_AGENT_RUNTIME_MS, defaultTimeoutMs: DEFAULT_AGENT_RUNTIME_MS } as const;
 const ACTIVE = new Set(["queued", "running", "switching", "waiting_input", "waiting_for_user"]);
 const clip = (value: unknown, max: number) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const ownerRequired = (ownerId?: string) => { if (!ownerId) throw new Error("Authenticated account required"); return ownerId; };
@@ -172,6 +173,17 @@ export function updateProjectAgent(projectId: string, agentId: string, patch: { 
   return next;
  });
 }
+export function stopProjectAgent(projectId: string, agentId: string, ownerId?: string) {
+ return transaction(() => {
+  ownedProject(projectId, ownerId);
+  const agent = getProjectAgent(projectId, agentId, ownerId);
+  if (!agent || agent.archivedAt) return null;
+  const cancelledJobIds: string[] = [];
+  let job;
+  while ((job = requestJobCancel(agent.chatId, ownerId))) cancelledJobIds.push(job.id);
+  return { agent: getProjectAgent(projectId, agentId, ownerId), cancelledJobIds };
+ });
+}
 export function archiveProjectAgent(projectId: string, agentId: string, ownerId?: string) {
  return transaction(() => {
   ownedProject(projectId, ownerId);
@@ -243,7 +255,7 @@ export function createProjectHandoff(input: { projectId: string; ownerId?: strin
   if (!modelId) throw new Error("Select a model in the receiving agent\'s chat first");
   validateProjectModelSelection(ownerId, modelId);
   const id = randomUUID(), timestamp = iso();
-  const timeoutMs = Math.min(TEAM_LIMITS.timeoutMs, Math.max(1000, Number.isFinite(input.timeoutMs) ? input.timeoutMs! : 600_000));
+  const timeoutMs = normalizeAgentRuntimeMs(input.timeoutMs);
   const messageId = `handoff:${id}:assignment`;
   const prompt = `Handoff ${id} from ${sender.name} to ${recipient.name}.\nTask: ${task}${context ? "\n\nRelevant context:\n" + context : ""}\n\nReturn a concrete result for the sender. If clarification is needed, state the question in your result.`;
   const parentModeId = parent.modeId || parentChat.sessionState?.modeId || "agent";
@@ -263,9 +275,7 @@ export function cancelProjectHandoff(projectId: string, handoffId: string, owner
   if (!current) return null;
   const job = current.jobId ? getJob(current.jobId) : null;
   if (job && ACTIVE.has(job.status)) {
-   updateJob(job.id, { status: "cancelled", error: reason }, { control: true });
-   cancelChildJobs(job.id, ownerId, reason);
-   updateChat(job.chatId, { runStatus: "cancelled", runUpdatedAt: iso(), pendingApproval: null, pendingQuestion: null }, ownerId);
+   cancelAgentJob(job.id, ownerId, reason);
   }
   return getProjectHandoff(projectId, handoffId, ownerId);
  });
@@ -307,6 +317,6 @@ export function projectTeamContextBlock(chatId: string, ownerId?: string) {
    ? 'Project settings allow team management in modes with write permission. Use project_handoff action "create_agent" with agent {name, role, systemPrompt, color, supervisorId} to create a teammate. Use action "update_agent" with agentId and an agent patch to edit a teammate; supervisorId null removes its supervisor. Use action "archive_agent" with agentId to archive a teammate and cancel its active work while preserving history. Newly created agents inherit your model selection and permission mode. You cannot change this project permission through this tool.'
    : 'Team management is disabled in project settings. You cannot create, edit or archive project agents. The owner can manage the team manually or enable "Allow agents to manage the team" in project settings. Existing colleague assignments remain available.',
   "Project roster:\n" + agents.map(a => `- ${a.name} (id: ${a.id}): ${a.role}${a.supervisorId ? "; supervisor: " + a.supervisorId : ""}`).join("\n"),
-  'Use project_handoff for actual colleague assignments within this project. action "delegate" with recipientAgentId, task, relevant context, and wait true returns the actual result. action "status" with handoffId reads its current state immediately and never waits or cancels. Your incoming assignment finishes when your run returns a result; do not wait for your own handoff. To follow up on a delegated task, read status or use action "retry" only after a failure. action "retry" with handoffId creates a traceable retry. action "list" reads team activity. Do not claim consultation from a mirrored chat message alone. Delegation has bounded depth/counts. Project writes are serialized; a waiting sender yields execution to its child. Return clarification questions to the sender, who can reassign after your run finishes. Generic delegate_subagent is unavailable in team chats; use the named project agents.',
+  'Use project_handoff for actual colleague assignments within this project. action "delegate" with recipientAgentId, task, relevant context, and wait true returns the actual result. action "status" with handoffId reads its current state immediately and never waits or cancels. Your incoming assignment finishes when your run returns a result; do not wait for your own handoff. To follow up on a delegated task, read status or use action "retry" only after a failure. action "retry" with handoffId creates a traceable retry. action "list" reads team activity. Use action "cancel" or "stop" with handoffId to cancel an assignment and its descendants, or with agentId to stop a teammate’s active work without archiving them. Runs default to 30 minutes and can request timeoutMs up to 6 hours. Do not claim consultation from a mirrored chat message alone. Delegation has bounded depth/counts. Project writes are serialized; a waiting sender yields execution to its child. Return clarification questions to the sender, who can reassign after your run finishes. Generic delegate_subagent is unavailable in team chats; use the named project agents.',
  ].join("\n\n");
 }

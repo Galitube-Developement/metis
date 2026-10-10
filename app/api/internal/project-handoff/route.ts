@@ -1,12 +1,13 @@
 import { getChat } from "@/lib/db-store";
 import { getJob, updateJob } from "@/lib/db-jobs";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
-import { cancelProjectHandoff, createProjectHandoff, manageProjectAgent, ProjectAgentManagementDenied, getProjectAgentForChat, getProjectHandoff, listProjectAgents, syncProjectHandoffStatuses, TEAM_LIMITS } from "@/lib/project-team";
+import { cancelProjectHandoff, createProjectHandoff, stopProjectAgent, manageProjectAgent, ProjectAgentManagementDenied, getProjectAgentForChat, getProjectHandoff, listProjectAgents, syncProjectHandoffStatuses, TEAM_LIMITS } from "@/lib/project-team";
 import { bearerTokenMatches } from "@/lib/security";
+import { normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 3700;
+export const maxDuration = 21660;
 
 export async function POST(req: Request) {
  if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,6 +28,16 @@ export async function POST(req: Request) {
    const agent = manageProjectAgent({ ownerId, parentJobId: jobId, action, agentId: body.agentId, agent: body.agent });
    return Response.json({ agent });
   }
+  if ((action === "stop" || action === "cancel") && typeof body.agentId === "string") {
+   const target = listProjectAgents(projectId, ownerId).find(agent => agent.id === body.agentId);
+   if (!target || target.archivedAt) return Response.json({ error: "Agent not found" }, { status: 404 });
+   let ancestor: ReturnType<typeof getJob> = parent;
+   while (ancestor) {
+    if (ancestor.chatId === target.chatId) return Response.json({ error: "Cannot stop yourself or a waiting ancestor through team control" }, { status: 409 });
+    ancestor = ancestor.parentJobId ? getJob(ancestor.parentJobId) : null;
+   }
+   return Response.json(stopProjectAgent(projectId, target.id, ownerId));
+  }
   if (action === "list") return Response.json({ agents: listProjectAgents(projectId, ownerId), handoffs: syncProjectHandoffStatuses(projectId, ownerId) });
   let handoff;
   let deduplicated = false;
@@ -36,10 +47,10 @@ export async function POST(req: Request) {
    if (previous && (previous.attempt || 0) >= TEAM_LIMITS.retries) throw new Error("Project handoff retry limit reached");
    const result = createProjectHandoff({ projectId, ownerId, parentJobId: jobId, recipientAgentId: previous?.recipientAgentId || String(body.recipientAgentId || ""), task: previous?.task || String(body.task || ""), context: typeof body.context === "string" ? body.context : previous?.context, timeoutMs: body.timeoutMs, idempotencyKey: body.idempotencyKey, ...(previous ? { retryOf: previous.id } : {}), wait: body.wait !== false });
    handoff = result.handoff; deduplicated = !!result.deduplicated;
-  } else if (action === "status" || action === "cancel") {
+  } else if (action === "status" || action === "cancel" || action === "stop") {
    handoff = typeof body.handoffId === "string" ? getProjectHandoff(projectId, body.handoffId, ownerId) : null;
    if (!handoff) return Response.json({ error: "Handoff not found" }, { status: 404 });
-   if (action === "cancel") return Response.json({ handoff: cancelProjectHandoff(projectId, handoff.id, ownerId) });
+   if (action === "cancel" || action === "stop") return Response.json({ handoff: cancelProjectHandoff(projectId, handoff.id, ownerId) });
    return Response.json({ handoff, jobId: handoff.jobId, status: handoff.status, result: handoff.result, error: handoff.error });
   } else throw new Error("Unknown handoff action");
   if (body.wait === false) return Response.json({ handoff, jobId: handoff.jobId, delegated: true, deduplicated });
@@ -47,7 +58,7 @@ export async function POST(req: Request) {
   // Context and active worker lease were verified above; this is a control update.
   updateJob(jobId, { projectWaitingForHandoffId: handoff.id }, { control: true });
   try {
-   const timeoutMs = Math.min(TEAM_LIMITS.timeoutMs, Math.max(1000, Number.isFinite(body.timeoutMs) ? Number(body.timeoutMs) : 600_000));
+   const timeoutMs = normalizeAgentRuntimeMs(body.timeoutMs);
    const deadline = Math.min(Date.now() + timeoutMs, handoff.deadlineAt ? Date.parse(handoff.deadlineAt) : Infinity);
    while (["queued", "running"].includes(handoff.status)) {
     const currentParent = getJob(jobId);
