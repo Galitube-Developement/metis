@@ -225,6 +225,37 @@ export function getDatabase(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS provider_oauth_flows_owner
       ON provider_oauth_flows(owner_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS account_profiles (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      data TEXT NOT NULL,
+      share_id TEXT UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS profile_avatars (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS profile_avatars_owner ON profile_avatars(owner_id);
+    CREATE TABLE IF NOT EXISTS account_usage (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
+      cost_usd REAL,
+      PRIMARY KEY (owner_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS account_usage_owner_time ON account_usage(owner_id, completed_at);
+    CREATE TABLE IF NOT EXISTS account_usage_sync (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      PRIMARY KEY (owner_id, chat_id)
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
