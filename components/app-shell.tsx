@@ -1710,12 +1710,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [earlierMessagesError, setEarlierMessagesError] = useState(false);
   const earlierMessagesRequestRef = useRef<AbortController | null>(null);
   const earlierMessagesSentinelRef = useRef<HTMLDivElement>(null);
+  const earlierMessagesAnchorRef = useRef<{ node: HTMLElement; top: number; root: HTMLDivElement } | null>(null);
 
   useEffect(() => {
     earlierMessagesRequestRef.current?.abort();
     earlierMessagesRequestRef.current = null;
     setLoadingEarlierMessages(false);
     setEarlierMessagesError(false);
+    earlierMessagesAnchorRef.current = null;
     return () => { earlierMessagesRequestRef.current?.abort(); };
   }, [activeChatId]);
   const [chatTitle, setChatTitle] = useState("New chat");
@@ -4629,6 +4631,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]"))
         .find((node) => node.getBoundingClientRect().bottom > viewportTop);
       const anchorTop = anchor?.getBoundingClientRect().top;
+      earlierMessagesAnchorRef.current = anchor && anchorTop !== undefined ? { node: anchor, top: anchorTop, root: el } : null;
       setMessages((current) => prependMessages(current, olderMessages));
       setMessageOffset(data.messageOffset ?? nextOffset);
       setHasEarlierMessages(Boolean(data.hasEarlierMessages));
@@ -5588,6 +5591,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
     };
     const markUserScrollInput = () => {
+      earlierMessagesAnchorRef.current = null;
       userScrollInputRef.current = true;
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
       userScrollInputTimerRef.current = window.setTimeout(() => {
@@ -5595,6 +5599,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }, 180);
     };
     const pinIfStuckToBottom = () => {
+      const anchor = earlierMessagesAnchorRef.current;
+      if (anchor?.root === el && anchor.node.isConnected && userDetachedFromBottomRef.current) {
+        const nextTop = anchoredTranscriptScrollTop(el.scrollTop, anchor.node.getBoundingClientRect().top, anchor.top);
+        if (Math.abs(nextTop - el.scrollTop) > 0.5) el.scrollTop = nextTop;
+        lastMessageScrollTopRef.current = el.scrollTop;
+        return;
+      }
       if (!shouldPinOpenedChat({
         enteringChat: enteringChatRef.current,
         userDetached: userDetachedFromBottomRef.current,
@@ -5690,6 +5701,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (y > lastTouchY + 2) detachFromBottom();
       lastTouchY = y;
     };
+    const onScrollKey = (event: globalThis.KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markUserScrollInput();
+    };
+    el.addEventListener("keydown", onScrollKey);
     el.addEventListener("scroll", updateScrollState, { passive: true });
     el.addEventListener("wheel", suspendAutoScrollOnWheel, { passive: true });
     el.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -5701,6 +5716,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     observer.observe(el);
     const frame = window.requestAnimationFrame(pinIfStuckToBottom);
     return () => {
+      el.removeEventListener("keydown", onScrollKey);
       el.removeEventListener("scroll", updateScrollState);
       el.removeEventListener("wheel", suspendAutoScrollOnWheel);
       el.removeEventListener("touchstart", onTouchStart);
