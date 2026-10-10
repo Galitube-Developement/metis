@@ -68,6 +68,7 @@ import { cn } from "@/lib/utils";
 import type { MemoryItem } from "@/components/memories-panel";
 import { MicrophoneSettings } from "@/components/microphone-settings";
 import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
+import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
 import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SkillsSettings } from "@/components/skills-settings";
@@ -389,6 +390,7 @@ const SETTINGS_SECTIONS: Record<string, Array<{ id: string; label: string }>> = 
     { id: "settings-versions", label: "Versions" },
   ],
   agent: [
+    { id: "settings-agent-runtime", label: "Settings" },
     { id: "settings-skills", label: "Skills" },
     { id: "settings-modes", label: "Agent modes" },
     { id: "settings-mcp", label: "MCP servers" },
@@ -436,6 +438,7 @@ type SettingsPaneId =
   | "mcp"
   | "memories"
   | "agent-rules"
+  | "agent-settings"
   | "dictionary";
 
 const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "tab">>> = {
@@ -447,6 +450,7 @@ const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "
   "settings-mcp": "mcp",
   "settings-memories": "memories",
   "settings-agent-rules": "agent-rules",
+  "settings-agent-runtime": "agent-settings",
   "settings-dictionary": "dictionary",
 };
 
@@ -2450,6 +2454,10 @@ export function SettingsPanel({
    <SettingsFeaturePane backLabel="General" title="Dictionary" description="Manage words and phrases for voice transcription." slot="voice-dictionary" onBack={() => setSettingsPane("tab")}>
      <VoiceDictionarySettings />
    </SettingsFeaturePane>
+ ) : settingsPane === "agent-settings" ? (
+   <SettingsFeaturePane backLabel="Agent" title="Settings" description="Choose how long agents can work." slot="agent-settings" onBack={() => setSettingsPane("tab")}>
+     <AgentRuntimeSettings />
+   </SettingsFeaturePane>
  ) : settingsPane === "agent-rules" ? (
    <SettingsFeaturePane
      backLabel="Agent"
@@ -2906,6 +2914,7 @@ export function SettingsPanel({
  </TabsContent>
 <TabsContent value="agent" className="mt-0 px-6 py-6 sm:px-8 sm:py-8">
               <div className="grid gap-3 sm:grid-cols-2">
+                <SettingsTile id="settings-agent-runtime" title="Settings" meta="Runtime limits for subagents and project agents" icon={Settings2} onOpen={() => setSettingsPane("agent-settings")} />
                 <SettingsTile
                   id="settings-skills"
                   title="Skills"

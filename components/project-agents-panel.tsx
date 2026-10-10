@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 const COLORS = ["#1767ed", "#ec1746", "#f87916", "#7324d6", "#079e6c", "#e60b91"];
 const labels: Record<string, string> = { idle: "Ready", queued: "Queued", running: "Working", waiting_input: "Waiting for you", completed: "Ready", error: "Needs attention", cancelled: "Cancelled", archived: "Archived" };
 
-function useTeam(projectId: string) {
+export function useProjectTeam(projectId: string) {
  const [agents, setAgents] = useState<ProjectAgent[]>([]);
  const [handoffs, setHandoffs] = useState<ProjectHandoff[]>([]);
  const [loading, setLoading] = useState(true);
@@ -72,7 +72,7 @@ export function useProjectChatAgents(projectIds: string[]) {
 
 
 export function ProjectAgentNav({ projectId, activeChatId, onOpenChat, pinnedChatIds = [], renderActions }: { projectId: string; activeChatId?: string | null; onOpenChat: (chatId: string) => void; pinnedChatIds?: string[]; renderActions?: (agent: ProjectAgent, agents: ProjectAgent[]) => ReactNode }) {
- const team = useTeam(projectId);
+ const team = useProjectTeam(projectId);
  const [open, setOpen] = useState(false);
  useEffect(() => { const create = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail?.projectId === projectId && detail?.target === "nav") setOpen(true); }; window.addEventListener("metis:new-project-agent", create); return () => window.removeEventListener("metis:new-project-agent", create); }, [projectId]);
  return <section aria-label="Project agents" className="space-y-1">
@@ -129,7 +129,7 @@ export function ProjectAgentActions({ agent, agents, pinned, onTogglePin, onView
 }
 
 export function ProjectAgentsPanel({ projectId, onOpenChat }: { projectId: string; onOpenChat: (chatId: string) => void }) {
- const team = useTeam(projectId);
+ const team = useProjectTeam(projectId);
  const [editing, setEditing] = useState<ProjectAgent | null>(null);
  const [open, setOpen] = useState(false);
  const [removing, setRemoving] = useState<ProjectAgent | null>(null);
@@ -194,16 +194,13 @@ function TeamActivity({ projectId, agents, handoffs }: { projectId: string; agen
 }
 
 export function ProjectAgentChatHeader({ projectId, chatId, fallbackTitle, onOpenTeam }: { projectId: string; chatId: string; fallbackTitle: string; onOpenTeam: () => void }) {
- const team = useTeam(projectId);
+ const team = useProjectTeam(projectId);
  const agent = team.agents.find(a => a.chatId === chatId);
- const [activityOpen, setActivityOpen] = useState(false);
  if (!agent) return <div className="min-w-0 flex-1"><p className="truncate text-sm text-muted-foreground">{fallbackTitle}</p>{team.error ? <button type="button" className="text-xs text-destructive focus-visible:outline focus-visible:outline-ring" onClick={() => void team.load()}>Could not load agent · Retry</button> : null}</div>;
  return <div data-slot="project-agent-chat-header" className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
   <TeamAgentAvatar color={agent.color} name={agent.name} animated decorative className="size-8"/>
   <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold" title={agent.name}>{agent.name}</p><p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground"><span className="truncate" title={agent.role}>{agent.role}</span><span aria-hidden="true">·</span><span className="shrink-0"><RunStatus status={agent.status} label={labels[agent.status] || agent.status}/></span></p></div>
-  <Button variant="ghost" size="sm" className="size-11 shrink-0 p-0 sm:h-8 sm:w-auto sm:px-2" aria-label="Open agent team" onClick={onOpenTeam}><Users className="size-4 sm:hidden" aria-hidden="true"/><span className="hidden sm:inline">Team</span></Button>
-  <Button variant="ghost" size="icon-sm" className="size-11 shrink-0 md:size-8" aria-label="Team activity" onClick={() => setActivityOpen(true)}><Activity className="size-4" aria-hidden="true"/></Button>
-  <Dialog open={activityOpen} onOpenChange={setActivityOpen}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>Team activity</DialogTitle><DialogDescription>Tasks and results shared inside this project.</DialogDescription></DialogHeader><TeamActivity projectId={projectId} agents={team.agents} handoffs={team.handoffs}/></DialogContent></Dialog>
+  <Button type="button" variant="ghost" size="icon-sm" className="size-11 shrink-0 md:size-8" aria-label="Open agent overview" title="Open agent overview" onClick={onOpenTeam}><Users className="size-4" aria-hidden="true"/></Button>
  </div>;
 }
 

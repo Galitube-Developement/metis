@@ -296,6 +296,7 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "delegate_subagent",
   "project_handoff",
   "subagent_status",
+  "subagent_cancel",
   "list_recent_errors",
   "read_error_log_detail",
   "list_remote_clients",

@@ -18,6 +18,8 @@ import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
+import { ChatIcon } from "@/components/chat-icon";
+import { remarkChatIcons } from "@/lib/markdown-icons";
 import { FileEmbed } from "@/components/file-embed";
 import { parseFileEmbed, isFileUrl, mimeTypeFromFileName } from "@/lib/file-types";
 import { normalizeMath, splitStreamingMath } from "@/lib/math";
@@ -161,7 +163,12 @@ function MarkdownLink({
   return isWebUrl && href ? <LinkPreview href={href}>{link}</LinkPreview> : link;
 }
 
-const markdownComponents = { a: MarkdownLink };
+const markdownComponents = {
+  a: MarkdownLink,
+  span: ({ children, ...props }: HTMLAttributes<HTMLSpanElement> & { "data-metis-icon"?: string }) => props["data-metis-icon"]
+    ? <ChatIcon name={props["data-metis-icon"]} className="mr-1.5 inline-block size-[1.1em] align-[-0.15em] text-current" />
+    : <span {...props}>{children}</span>,
+};
 
 export interface ThinkingSegment {
   kind: "text" | "thinking";
@@ -362,7 +369,7 @@ export const Markdown = memo(function Markdown({
       <div className="markdown-body">
         {ready ? (
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
+            remarkPlugins={[remarkGfm, remarkMath, remarkChatIcons]}
             rehypePlugins={[
               [rehypeKatex, { throwOnError: false, strict: "ignore" }],
             ]}
@@ -384,7 +391,7 @@ export const Markdown = memo(function Markdown({
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkChatIcons]}
         rehypePlugins={[
           [rehypeKatex, { throwOnError: false, strict: "ignore" }],
         ]}

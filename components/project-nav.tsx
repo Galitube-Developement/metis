@@ -17,12 +17,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { PROJECT_COLORS, PROJECT_ICONS } from "@/lib/project-constants";
+import { filterProjectChats } from "@/lib/project-chat-visibility";
 import { cn } from "@/lib/utils";
 
 export type SidebarProject = {
  id: string;
  name: string;
  mode?: "chat" | "agents";
+ hideChatsFromAll?: boolean;
  icon: string;
  color: string;
  logoStoredName?: string;
@@ -134,13 +136,10 @@ export function ProjectNav({
   };
  }, [load]);
 
- const visibleChats = useMemo(() => {
-  return chats.filter((chat) => {
-   if (chat.archived) return false;
-   if (!activeProjectId) return true;
-   return chat.projectId === activeProjectId;
-  });
- }, [chats, activeProjectId]);
+ const visibleChats = useMemo(
+  () => filterProjectChats(chats, projects, activeProjectId),
+  [chats, projects, activeProjectId],
+ );
 
  async function create() {
   setCreating(true); setCreateError("");
@@ -266,7 +265,7 @@ export function ProjectNav({
      </div>
      {visibleChats.length === 0 ? (
       <p className="px-2.5 py-3 text-xs text-muted-foreground/70">
-       {activeProjectId ? "No chats in this project" : "No chats yet"}
+       {activeProjectId ? "No chats in this project" : chats.some(chat => !chat.archived) ? "No chats in All Projects. Select a project to see its chats." : "No chats yet"}
       </p>
      ) : (
       visibleChats.map((chat) => (

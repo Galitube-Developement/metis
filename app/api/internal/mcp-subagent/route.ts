@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { appendMessage, createChat, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
-import { cancelChildJobs, enqueueJob, getJob, listChildJobs, updateJob } from "@/lib/db-jobs";
+import { cancelAgentJob, enqueueJob, getJob, listChildJobs } from "@/lib/db-jobs";
+import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import { bearerTokenMatches } from "@/lib/security";
 import { parseWorkerConcurrency } from "@/lib/worker-scheduler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 3700;
+export const maxDuration = 21660;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ACTIVE = new Set(["queued", "running", "switching", "waiting_input", "waiting_for_user"]);
 const MAX_DEPTH = 4;
 const MAX_CHILDREN = 8;
-const MAX_WAIT_MS = 60 * 60_000;
 
 export async function GET(req: Request) {
   if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) {
@@ -106,10 +106,7 @@ export async function POST(req: Request) {
   const modeId = parentModeId === "agent" && requestedMode ? requestedMode : parentModeId;
 
   const wait = body.wait !== false;
-  const requestedTimeout = typeof body.timeoutMs === "number" && Number.isFinite(body.timeoutMs)
-    ? Math.floor(body.timeoutMs)
-    : 10 * 60_000;
-  const timeoutMs = Math.min(MAX_WAIT_MS, Math.max(1_000, requestedTimeout));
+  const timeoutMs = resolveAgentRuntimeMs(body.timeoutMs, preferences.agentRuntimeMs);
   const child = createChat(title, undefined, userId, modelId ? { id: modelId } : undefined);
   const parentGoal = parentChat.sessionState?.goal?.trim();
   updateChat(child.id, {
@@ -142,7 +139,7 @@ export async function POST(req: Request) {
     subagentRequired: wait,
     subagentDepth: depth,
     ...(wait === false ? { subagentAutoReview: true } : {}),
-    ...(parentJob.maxRuntimeMs ? { maxRuntimeMs: parentJob.maxRuntimeMs } : {}),
+    maxRuntimeMs: timeoutMs,
   });
 
   if (!wait) {
@@ -166,10 +163,7 @@ export async function POST(req: Request) {
   }
   const result = finalChildResult(child.id, userId);
   if (current && ACTIVE.has(current.status)) {
-    updateJob(childJob.id, { status: "cancelled", error: "Subagent timed out." });
-    // The child may already have delegated descendants while the parent was
-    // waiting. Keep timeout cancellation terminal across that subtree.
-    cancelChildJobs(childJob.id, userId, "Subagent timed out.");
+    current = cancelAgentJob(childJob.id, userId, "Subagent timed out.", "runtime_limit") || current;
     return Response.json({
       agentId: childJob.id,
       jobId: childJob.id,

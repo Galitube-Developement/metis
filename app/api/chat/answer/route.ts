@@ -1,7 +1,10 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { questionLimits, resolveQuestion } from "@/lib/db-questions";
+import { getPendingQuestion, resolveQuestion } from "@/lib/db-questions";
 import { queueUserInputResume } from "@/lib/db-jobs";
-import { getChat, updateChat } from "@/lib/db-store";
+import { appendMessage, getChat, updateChat } from "@/lib/db-store";
+
+import { normalizeQuestionAnswers, QuestionValidationError } from "@/lib/question-contract";
+import { questionAnswerAnchor } from "@/lib/question-transcript";
 
 export const runtime = "nodejs";
 
@@ -10,7 +13,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: { questionId?: unknown; answers?: unknown; version?: unknown };
+  let body: { questionId?: unknown; answers?: unknown; values?: unknown; version?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -19,34 +22,34 @@ export async function POST(req: Request) {
 
   const questionId =
     typeof body.questionId === "string" ? body.questionId.trim() : "";
-  const answers = Array.isArray(body.answers)
-    ? body.answers.filter((answer): answer is string => typeof answer === "string")
-    : [];
-  const version = typeof body.version === "number" && Number.isFinite(body.version)
-    ? Math.floor(body.version)
-    : undefined;
-  const { maxQuestions, maxAnswerLength } = questionLimits();
-  if (
-    !questionId ||
-    answers.length === 0 ||
-    answers.length > maxQuestions ||
-    answers.some((answer) => !answer.trim() || answer.length > maxAnswerLength)
-  ) {
-    return Response.json({ error: "Invalid question answers" }, { status: 400 });
-  }
+  const version = typeof body.version === "number" && Number.isInteger(body.version) ? body.version : undefined;
+  if (!questionId) return Response.json({ error: "Invalid question ID" }, { status: 400 });
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
-  const resolved = resolveQuestion(questionId, answers, userId, version);
-  if (!resolved) {
-    return Response.json(
-      { error: "Question not found or already answered" },
-      { status: 404 },
-    );
+  const pending = getPendingQuestion(questionId, userId);
+  if (!pending) return Response.json({ error: "Question not found" }, { status: 404 });
+  let input = body.values ?? body.answers;
+  if (pending.status !== "answered") {
+    try { input = normalizeQuestionAnswers(pending.questions, input).values; }
+    catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "Invalid answers", fieldErrors: error instanceof QuestionValidationError ? error.fieldErrors : {} }, { status: 400 });
+    }
   }
+  const resolved = resolveQuestion(questionId, input, userId, version);
+  if (!resolved) return Response.json({ error: "This form is no longer available. Refresh the chat." }, { status: 409 });
+  const answerId = `question-answer-${questionId}`;
+  const chat = getChat(resolved.chatId, userId);
+  if (resolved.summary && !chat?.messages.some(message => message.id === answerId)) {
+    appendMessage(resolved.chatId, {
+      id: answerId, role: "user", content: resolved.summary,
+      questionAnswer: { questionId, ...questionAnswerAnchor(chat?.messages ?? [], questionId) },
+    }, userId);
+  }
+  const answerMessage = getChat(resolved.chatId, userId)?.messages.find(message => message.id === answerId);
   if (resolved.jobId) {
     queueUserInputResume({
       jobId: resolved.jobId,
       heartbeatAt: resolved.heartbeatAt,
-      resumePrompt: `The user answered the pending question with: ${JSON.stringify(resolved.answers)}`,
+      resumePrompt: `The user answered the pending question with: ${JSON.stringify({ values: resolved.values, answers: resolved.answers, summary: resolved.summary })}`,
     });
   }
   // Release the durable UI state immediately. The MCP request will observe
@@ -66,5 +69,8 @@ export async function POST(req: Request) {
     runId: resolved.runId,
     version: resolved.version,
     status: resolved.status,
+    values: resolved.values,
+    summary: resolved.summary,
+    message: answerMessage,
   });
 }

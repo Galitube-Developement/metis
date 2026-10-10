@@ -68,6 +68,10 @@ export type AgentJob = {
   automationContext?: string;
   /** Per-run hard limit. Automations use this to support long autonomous tasks without changing normal chat limits. */
   maxRuntimeMs?: number;
+  /** Persisted execution deadline for child/project runs; retained across recovery. */
+  agentRuntimeDeadlineAt?: string;
+  /** Distinguishes automatic expiry from an explicit stop. */
+  cancellationCause?: "runtime_limit";
   resumePrompt?: string;
   resumeRequestedAt?: string;
   runId?: string;

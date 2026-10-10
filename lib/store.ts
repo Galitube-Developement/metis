@@ -1,3 +1,4 @@
+import { normalizeStoredQuestions } from "./question-contract";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -50,6 +51,7 @@ export type ChatMessage = {
   contextTokenEstimate?: number;
   /** UI-only program activity; the agent still receives the original transcript. */
   programEvent?: import("./chat-program-events").ChatProgramEvent;
+  questionAnswer?: import("./question-transcript").QuestionAnswerReference;
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -179,6 +181,7 @@ export type Project = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
+  hideChatsFromAll?: boolean;
   icon: string;
   color: string;
   instructions: string;
@@ -307,20 +310,7 @@ export type BrowserContext = {
   updatedAt: string;
 };
 
-export type PendingChatQuestion = {
-  questionId: string;
-  runId?: string;
-  jobId?: string;
-  version?: number;
-  expiresAt?: string;
-  status?: "waiting_for_user" | "answered" | "cancelled" | "expired";
-  questions: Array<{
-    id: string;
-    question: string;
-    multiple?: boolean;
-    options?: Array<{ label: string; value?: string }>;
-  }>;
-};
+export type PendingChatQuestion = import("./question-contract").PendingChatQuestion;
 
 export type ChatRunStatus =
   | "idle"
@@ -390,7 +380,7 @@ export type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
@@ -549,6 +539,8 @@ export type AgentRule = { id: string; content: string };
 
 export type GlobalModelSettings = {
   agentRules?: AgentRule[];
+  /** Account default for new subagents and project agent runs. */
+  agentRuntimeMs?: number;
   compression?: {
     enabled?: boolean;
     mode?: "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "stacked";
@@ -926,44 +918,8 @@ export function updateChat(
   if (patch.pendingQuestion === null) {
     delete chat.pendingQuestion;
   } else if (patch.pendingQuestion) {
-    const questions = patch.pendingQuestion.questions
-      .filter(
-        (question) =>
-          question &&
-          typeof question.id === "string" &&
-          typeof question.question === "string",
-      )
-      .slice(0, 10)
-      .map((question) => ({
-        id: question.id.slice(0, 200),
-        question: question.question.slice(0, 4_000),
-        ...(question.multiple ? { multiple: true } : {}),
-        ...(question.options
-          ? {
-              options: question.options
-                .filter(
-                  (option) =>
-                    option &&
-                    typeof option.label === "string" &&
-                    (option.value === undefined ||
-                      typeof option.value === "string"),
-                )
-                .slice(0, 20)
-                .map((option) => ({
-                  label: option.label.slice(0, 500),
-                  ...(option.value !== undefined
-                    ? { value: option.value.slice(0, 500) }
-                    : {}),
-                })),
-            }
-          : {}),
-      }));
-    if (questions.length > 0) {
-      chat.pendingQuestion = {
-        questionId: patch.pendingQuestion.questionId.slice(0, 200),
-        questions,
-      };
-    }
+    const questions = normalizeStoredQuestions(patch.pendingQuestion.questions);
+    if (questions.length > 0) chat.pendingQuestion = { ...patch.pendingQuestion, questions };
   }
   return saveChat(chat);
 }
