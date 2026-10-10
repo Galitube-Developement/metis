@@ -230,6 +230,10 @@ export function getDatabase(): DatabaseSync {
       data TEXT NOT NULL,
       share_id TEXT UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS account_profile_handles (
+      handle TEXT PRIMARY KEY COLLATE NOCASE CHECK(length(handle) BETWEEN 3 AND 32 AND handle = lower(handle)),
+      owner_id TEXT NOT NULL UNIQUE REFERENCES account_profiles(owner_id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS profile_avatars (
       id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
