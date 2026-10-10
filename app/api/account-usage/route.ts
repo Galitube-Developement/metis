@@ -1,5 +1,5 @@
 import { getAuthenticatedUserId } from "@/lib/auth";
-import { getAccountUsage, usageRange } from "@/lib/account-usage";
+import { getAccountUsage, getAccountModelUsage, usageRange } from "@/lib/account-usage";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
@@ -10,5 +10,12 @@ export async function GET(req: Request) {
   let range: ReturnType<typeof usageRange>;
   try { range=usageRange(url.searchParams.get("from"),url.searchParams.get("to")); }
   catch { return Response.json({error:"Choose a valid date range of up to one year."},{status:400,headers}); }
+  const modelId=url.searchParams.get("modelId"),providerId=url.searchParams.get("providerId");
+  if(modelId !== null || providerId !== null) {
+    if(!modelId || !providerId || modelId.length>512 || providerId.length>128)
+      return Response.json({error:"Choose a model and provider."},{status:400,headers});
+    const details=getAccountModelUsage(ownerId,providerId,modelId,range.from,range.to);
+    return details ? Response.json({details},{headers}) : Response.json({error:"No recorded usage for this model in this period."},{status:404,headers});
+  }
   return Response.json({usage:getAccountUsage(ownerId,range.from,range.to)},{headers});
 }

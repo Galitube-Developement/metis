@@ -9,6 +9,15 @@ export type UsageTotals = {
 };
 export type UsageDay = UsageTotals & { date: string };
 export type UsageModel = UsageTotals & { modelId: string; providerId: string };
+export type UsageBucket = { value: string | null; requests: number };
+export type UsageConfigurationCounts = {
+  context: UsageBucket[]; reasoning: UsageBucket[]; speed: UsageBucket[];
+};
+export type UsageModelDetails = UsageModel & {
+  from: string; to: string; timezone: "UTC";
+  configurations: UsageConfigurationCounts;
+  days: Array<UsageDay & { configurations: UsageConfigurationCounts }>;
+};
 export type AccountUsage = {
   from: string; to: string; timezone: "UTC"; totals: UsageTotals; days: UsageDay[];
   models: UsageModel[];

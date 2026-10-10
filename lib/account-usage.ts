@@ -1,6 +1,7 @@
 import { getDatabase, transaction } from "@/lib/sqlite";
 import type { ChatMessage } from "@/lib/store";
-import type { AccountUsage, UsageTotals, UsageDay, UsageModel } from "@/lib/account-types";
+import type { AccountUsage, UsageTotals, UsageDay, UsageModel, UsageModelDetails, UsageConfigurationCounts, UsageBucket } from "@/lib/account-types";
+import { usageConfiguration } from "@/lib/usage-configuration";
 const DAY = 86_400_000;
 const measured = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -13,13 +14,19 @@ export function recordAccountUsage(ownerId: string | undefined, message: Pick<Ch
   const tokens = measured(meta.totalProcessedTokens) ?? measured(meta.totalTokens) ??
     (input !== null || output !== null ? (input ?? 0) + (output ?? 0) : null);
   getDatabase().prepare(`INSERT INTO account_usage
-    (owner_id,message_id,model_id,provider_id,completed_at,input_tokens,output_tokens,total_tokens,cost_usd)
-    VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id,message_id) DO UPDATE SET
+    (owner_id,message_id,model_id,provider_id,completed_at,input_tokens,output_tokens,total_tokens,cost_usd,context_window,reasoning_effort,speed_mode)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id,message_id) DO UPDATE SET
     model_id=excluded.model_id,provider_id=excluded.provider_id,completed_at=excluded.completed_at,
     input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,
-    total_tokens=excluded.total_tokens,cost_usd=excluded.cost_usd`)
+    total_tokens=excluded.total_tokens,cost_usd=excluded.cost_usd,
+    context_window=COALESCE(excluded.context_window,account_usage.context_window),
+    reasoning_effort=COALESCE(excluded.reasoning_effort,account_usage.reasoning_effort),
+    speed_mode=COALESCE(excluded.speed_mode,account_usage.speed_mode)`)
     .run(ownerId, message.id, meta.modelId || "Unknown model", meta.providerId || "Unknown provider",
-      new Date(meta.completedAt).toISOString(), input, output, tokens, measured(meta.costUsd));
+      new Date(meta.completedAt).toISOString(), input, output, tokens, measured(meta.costUsd),
+      measured(meta.configuredContextWindow) || (meta.contextWindowSource !== "inferred" && meta.contextWindowSource !== "estimate" ? measured(meta.contextWindow) : null) || null,
+      typeof meta.reasoningEffort === "string" ? meta.reasoningEffort.slice(0,64) : null,
+      typeof meta.speedMode === "string" ? meta.speedMode.slice(0,64) : null);
 }
 
 /** Incremental migration from owned transcripts. Never reads the global routing telemetry. */
@@ -28,19 +35,26 @@ export function syncAccountUsage(ownerId: string) {
     const db = getDatabase();
     const rows = db.prepare(`SELECT c.id,c.created_at,c.updated_at FROM chats c
       LEFT JOIN account_usage_sync s ON s.owner_id=c.owner_id AND s.chat_id=c.id
-      WHERE c.owner_id=? AND (s.revision IS NULL OR s.revision<>c.updated_at)`).all(ownerId) as Array<{id:string;created_at:string;updated_at:string}>;
+      WHERE c.owner_id=? AND (s.revision IS NULL OR s.revision<>('model-details-v1:'||c.updated_at))`).all(ownerId) as Array<{id:string;created_at:string;updated_at:string}>;
     for (const row of rows) {
       const messages = db.prepare(`SELECT json_extract(m.value,'$.id') AS id,
-        json_extract(m.value,'$.runMetadata') AS metadata FROM chats c,json_each(c.data,'$.messages') m
+        json_extract(m.value,'$.runMetadata') AS metadata,
+        (SELECT json_extract(j.data,'$.modelParams') FROM run_events e JOIN jobs j ON j.id=e.job_id
+          WHERE e.chat_id=c.id AND e.user_id=c.owner_id AND j.user_id=c.owner_id
+            AND e.event='assistantId' AND json_extract(e.data,'$.messageId')=json_extract(m.value,'$.id')
+          ORDER BY e.id DESC LIMIT 1) AS params FROM chats c,json_each(c.data,'$.messages') m
         WHERE c.id=? AND c.owner_id=? AND json_extract(m.value,'$.role')='assistant'
-        AND json_type(m.value,'$.runMetadata')='object'`).all(row.id, ownerId) as Array<{id:string;metadata:string}>;
+        AND json_type(m.value,'$.runMetadata')='object'`).all(row.id, ownerId) as Array<{id:string;metadata:string;params:string|null}>;
       for (const message of messages) {
         const metadata = JSON.parse(message.metadata) as NonNullable<ChatMessage["runMetadata"]>;
         // A shared chat clone contains someone else's historical answers, not new consumption.
         if (Date.parse(metadata.completedAt) < Date.parse(row.created_at)) continue;
-        recordAccountUsage(ownerId, { id:message.id, role:"assistant", runMetadata:metadata });
+        recordAccountUsage(ownerId, { id:message.id, role:"assistant", runMetadata:{
+          ...usageConfiguration(message.params ? JSON.parse(message.params) : undefined),
+          ...metadata,
+        } });
       }
-      db.prepare("INSERT INTO account_usage_sync(owner_id,chat_id,revision) VALUES(?,?,?) ON CONFLICT(owner_id,chat_id) DO UPDATE SET revision=excluded.revision").run(ownerId,row.id,row.updated_at);
+      db.prepare("INSERT INTO account_usage_sync(owner_id,chat_id,revision) VALUES(?,?,?) ON CONFLICT(owner_id,chat_id) DO UPDATE SET revision=excluded.revision").run(ownerId,row.id,"model-details-v1:"+row.updated_at);
     }
   });
 }
@@ -54,7 +68,7 @@ export function usageRange(from: string | null, to: string | null, now = new Dat
   return { from:start, to:end };
 }
 const empty = (): UsageTotals => ({ requests:0,inputTokens:0,outputTokens:0,tokens:0,costUsd:null,tokenReports:0,costReports:0,inputReports:0,outputReports:0 });
-type Row = { model_id:string;provider_id:string;completed_at:string;input_tokens:number|null;output_tokens:number|null;total_tokens:number|null;cost_usd:number|null };
+type Row = { model_id:string;provider_id:string;completed_at:string;input_tokens:number|null;output_tokens:number|null;total_tokens:number|null;cost_usd:number|null;context_window:number|null;reasoning_effort:string|null;speed_mode:string|null };
 function add(target: UsageTotals, row: Row) {
   target.requests++;
   if (row.input_tokens !== null) target.inputReports++;
@@ -82,4 +96,40 @@ export function getAccountUsage(ownerId: string, from: string | null = null, to:
     add(model,row);models.set(key,model);
   }
   return {...range,timezone:"UTC",totals,days:[...days.values()],models:[...models.values()].sort((a,b)=>b.tokens-a.tokens)};
+}
+
+const emptyConfigurations = (): UsageConfigurationCounts => ({context:[],reasoning:[],speed:[]});
+function countConfiguration(buckets: UsageBucket[], value: string | null) {
+  const existing=buckets.find(bucket=>bucket.value===value);
+  if(existing) existing.requests++;
+  else buckets.push({value,requests:1});
+}
+function addConfiguration(target: UsageConfigurationCounts, row: Row) {
+  countConfiguration(target.context,row.context_window ? String(row.context_window) : null);
+  countConfiguration(target.reasoning,row.reasoning_effort || null);
+  countConfiguration(target.speed,row.speed_mode || null);
+}
+export function getAccountModelUsage(
+  ownerId: string, providerId: string, modelId: string, from: string | null = null, to: string | null = null,
+): UsageModelDetails | null {
+  const range=usageRange(from,to);
+  syncAccountUsage(ownerId);
+  const rows=getDatabase().prepare(`SELECT * FROM account_usage
+    WHERE owner_id=? AND provider_id=? AND model_id=? AND completed_at>=? AND completed_at<?
+    ORDER BY completed_at`).all(ownerId,providerId,modelId,range.from+"T00:00:00.000Z",new Date(Date.parse(range.to)+DAY).toISOString()) as Row[];
+  if(!rows.length)return null;
+  const details: UsageModelDetails={...empty(),modelId,providerId,...range,timezone:"UTC",configurations:emptyConfigurations(),days:[]};
+  const days=new Map<string,UsageModelDetails["days"][number]>();
+  for(let timestamp=Date.parse(range.from);timestamp<=Date.parse(range.to);timestamp+=DAY) {
+    const date=new Date(timestamp).toISOString().slice(0,10);
+    days.set(date,{...empty(),date,configurations:emptyConfigurations()});
+  }
+  for(const row of rows) {
+    const day=days.get(row.completed_at.slice(0,10))!;
+    add(details,row);add(day,row);
+    addConfiguration(details.configurations,row);addConfiguration(day.configurations,row);
+  }
+  for(const buckets of Object.values(details.configurations))buckets.sort((a,b)=>b.requests-a.requests);
+  details.days=[...days.values()];
+  return details;
 }
