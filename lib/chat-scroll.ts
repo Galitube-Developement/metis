@@ -63,3 +63,19 @@ export function visibleTranscriptMessages<T>(
 export function hiddenTranscriptMessageCount(total: number, visible: number) {
   return Math.max(0, total - visible);
 }
+
+// Loading older pages is independent of whether this scroll event changed the
+// bottom-pinning state. Wheel/touch input can also arrive at scrollTop === 0.
+export function shouldLoadEarlierMessages(options: {
+  scrollTop: number;
+  hasEarlierMessages: boolean;
+  loading: boolean;
+  enteringChat: boolean;
+  userDetached: boolean;
+}) {
+  return options.scrollTop < 80
+    && options.hasEarlierMessages
+    && !options.loading
+    && !options.enteringChat
+    && options.userDetached;
+}
