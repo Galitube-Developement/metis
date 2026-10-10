@@ -79,3 +79,7 @@ export function shouldLoadEarlierMessages(options: {
     && !options.enteringChat
     && options.userDetached;
 }
+
+export function anchoredTranscriptScrollTop(scrollTop: number, currentAnchorTop: number, previousAnchorTop: number) {
+  return Math.max(0, scrollTop + currentAnchorTop - previousAnchorTop);
+}

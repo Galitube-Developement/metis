@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages, hiddenTranscriptMessageCount } from "../lib/chat-scroll";
+import { pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages, hiddenTranscriptMessageCount, anchoredTranscriptScrollTop } from "../lib/chat-scroll";
 
 test("pinScrollTop lands on the last visible page", () => {
   assert.equal(pinScrollTop(2000, 600), 1400);
@@ -84,4 +84,17 @@ test("older pages do not load during chat opening, a pending request, or at the 
   assert.equal(shouldLoadEarlierMessages({ ...olderPage, loading: true }), false);
   assert.equal(shouldLoadEarlierMessages({ ...olderPage, hasEarlierMessages: false }), false);
   assert.equal(shouldLoadEarlierMessages({ ...olderPage, userDetached: false }), false);
+});
+
+test("prepending estimated-height rows preserves the visible message offset as layout settles", () => {
+  const initial = anchoredTranscriptScrollTop(0, 5705, 105);
+  assert.equal(initial, 5600);
+  const settled = anchoredTranscriptScrollTop(initial, -415, 105);
+  assert.equal(settled, 5080);
+  assert.equal(anchoredTranscriptScrollTop(settled, 105, 105), settled);
+});
+
+test("anchor correction keeps partially visible messages and never scrolls before the top", () => {
+  assert.equal(anchoredTranscriptScrollTop(1000, 750, -20), 1770);
+  assert.equal(anchoredTranscriptScrollTop(0, -100, 20), 0);
 });
