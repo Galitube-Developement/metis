@@ -18,13 +18,15 @@ function bucketLabel(metric: Metric, value: string | null) {
 
 function Distribution({dimension,buckets,requests}: {dimension:keyof UsageConfigurationCounts;buckets:UsageBucket[];requests:number}) {
   const known=buckets.filter(bucket=>bucket.value!==null);
+  const mostUsed=known.filter(bucket=>bucket.requests===known[0]?.requests).map(bucket=>bucketLabel(dimension,bucket.value)).join(" / ");
   const unknown=buckets.find(bucket=>bucket.value===null)?.requests || 0;
   return <div className="min-w-0">
     <h4 className="text-xs font-medium">{labels[dimension]}</h4>
+    {mostUsed ? <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground" title={mostUsed}>Most used: {mostUsed}</p>:null}
     {known.length ? <ul className="mt-3 max-h-40 space-y-2 overflow-y-auto pr-1">
-      {known.map((bucket,index)=><li key={bucket.value} className="text-xs">
+      {known.map(bucket=><li key={bucket.value} className="text-xs">
         <div className="flex items-center justify-between gap-3">
-          <span className="min-w-0 truncate" title={bucketLabel(dimension,bucket.value)}>{bucketLabel(dimension,bucket.value)}{index===0 && known.length>1 ? <span className="ml-2 text-[10px] text-muted-foreground">Most used</span>:null}</span>
+          <span className="min-w-0 truncate" title={bucketLabel(dimension,bucket.value)}>{bucketLabel(dimension,bucket.value)}</span>
           <span className="shrink-0 tabular-nums text-muted-foreground">{bucket.requests.toLocaleString()} · {Math.round(bucket.requests/requests*100)}%</span>
         </div>
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground/60" style={{width:bucket.requests/requests*100+"%"}} /></div>
@@ -88,7 +90,7 @@ export function ModelUsageDetails({model,from,to}: {model:UsageModel;from:string
           <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={32} tick={{fill:"var(--muted-foreground)",fontSize:10}} tickLine={false} axisLine={false}/>
           <YAxis width={40} allowDecimals={metric==="tokens"} tickFormatter={value=>compact.format(value)} tick={{fill:"var(--muted-foreground)",fontSize:10}} tickLine={false} axisLine={false}/>
           <Tooltip contentStyle={{background:"var(--popover)",border:"1px solid var(--border)",borderRadius:8,fontSize:12,color:"var(--foreground)"}} formatter={value=>Number(value).toLocaleString()} />
-          {chart.series.length>1 ? <Legend wrapperStyle={{fontSize:10}} iconType="circle" iconSize={6}/>:null}
+          {chart.series.length>1 ? <Legend wrapperStyle={{fontSize:10}} formatter={value=><span className="text-muted-foreground">{value}</span>} iconType="circle" iconSize={6}/>:null}
           {chart.series.map((series,index)=><Bar key={series.key} dataKey={series.key} name={series.label} stackId="usage" fill={colors[index]} maxBarSize={18} isAnimationActive={false}/>)}
         </BarChart>
       </ResponsiveContainer>

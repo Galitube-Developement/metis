@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, Download, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ProviderLogo } from "@/components/provider-logo";
@@ -12,7 +12,19 @@ const compact=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigi
 const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
 const format=(value:number|null,cost=false)=>value===null?"—":cost?money.format(value):value.toLocaleString();
 
+// Match the actual visible table columns, including inside narrow embedded views.
+// A desktop colSpan creates empty ghost columns when CSS hides cells on mobile.
+function subscribeModelColumns(listener: () => void) {
+  const queries=[window.matchMedia("(min-width: 640px)"),window.matchMedia("(min-width: 1024px)")];
+  queries.forEach(query=>query.addEventListener("change",listener));
+  return ()=>queries.forEach(query=>query.removeEventListener("change",listener));
+}
+function modelColumnCount() {
+  return window.matchMedia("(min-width: 1024px)").matches ? 6 : window.matchMedia("(min-width: 640px)").matches ? 4 : 3;
+}
+
 export function UsageDashboard() {
+  const columns=useSyncExternalStore(subscribeModelColumns,modelColumnCount,()=>6);
   const [range,setRange]=useState("30");
   const [from,setFrom]=useState(""),[to,setTo]=useState("");
   const [metric,setMetric]=useState<"costUsd"|"tokens"|"requests">("tokens");
@@ -110,11 +122,11 @@ export function UsageDashboard() {
               <td className="px-3 py-4 tabular-nums sm:px-4">{model.tokenReports?compact.format(model.tokens):"—"}</td>
               <td className="px-3 py-4 tabular-nums sm:px-4">{compact.format(model.requests)}</td>
               <td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.inputReports?model.inputTokens:null)}</td><td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.outputReports?model.outputTokens:null)}</td>
-            </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={6} className="bg-muted/15 px-4 py-5 sm:px-6">
+            </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={columns} className="bg-muted/15 px-4 py-5 sm:px-6">
               {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to}/>:null}
             </td></tr></Fragment>;
           })}
-          {!models.length ? <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":"No recorded usage in this period."}</td></tr>:null}
+          {!models.length ? <tr><td colSpan={columns} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":"No recorded usage in this period."}</td></tr>:null}
           </tbody>
         </table>
       </div>
