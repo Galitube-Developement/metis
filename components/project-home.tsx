@@ -374,7 +374,8 @@ export function ProjectHome({
  if (!data || data.project.id !== projectId) return <ProjectHomeSkeleton />;
 
  return (
-  <div className="project-home-scroll mx-auto flex h-full min-h-0 w-full max-w-2xl flex-col gap-6 overflow-y-auto px-4 py-5 sm:gap-8 sm:px-6 sm:py-8">
+  <div className="project-home-scroll min-h-0 w-full flex-1 overflow-y-auto">
+   <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-5 sm:gap-8 sm:px-6 sm:py-8">
    <header className="grid grid-cols-[3.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-4 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto] sm:gap-4">
     <button
      type="button"
@@ -768,6 +769,7 @@ export function ProjectHome({
     confirmLabel="Delete project"
     onConfirm={deleteProject}
    />
+   </div>
   </div>
  );
 }
