@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import test,{after} from "node:test";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
+import {tmpdir} from "node:os";
+import path from "node:path";
+const data=mkdtempSync(path.join(tmpdir(),"metis-price-feed-"));
+process.env.CHAT_DATA_DIR=data;process.env.AI_CHAT_ROOT=data;
+const originalFetch=globalThis.fetch,originalNow=Date.now;
+let now=originalNow(),calls=0;
+Date.now=()=>now;
+after(()=>{globalThis.fetch=originalFetch;Date.now=originalNow;rmSync(data,{recursive:true,force:true});});
+test("catalog refresh is shared and durable, then unavailable sources degrade without blocking usage",async()=>{
+ const {loadApiPrices}=await import("../lib/api-price-catalog");
+ globalThis.fetch=async()=>{calls++;return Response.json({openai:{models:{example:{cost:{input:2,output:8}}}}});};
+ const [first,second]=await Promise.all([loadApiPrices(),loadApiPrices()]);
+ assert.equal(calls,1);assert.equal(first?.prices[0].input,2);assert.deepEqual(second,first);
+ assert.deepEqual(JSON.parse(readFileSync(path.join(data,"api-prices.json"),"utf8")),first);
+ assert.deepEqual(await loadApiPrices(),first);assert.equal(calls,1);
+ now+=2*86400000;
+ globalThis.fetch=async()=>{calls++;throw new Error("offline");};
+ assert.deepEqual(await loadApiPrices(),first);assert.equal(calls,2);
+ assert.deepEqual(await loadApiPrices(),first);assert.equal(calls,2);
+ now+=8*86400000;
+ assert.equal(await loadApiPrices(),null);assert.equal(calls,3);
+});

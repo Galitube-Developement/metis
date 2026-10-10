@@ -1,5 +1,6 @@
 import { getAuthenticatedUserId } from "@/lib/auth";
 import { getAccountUsage, getAccountModelUsage, usageRange } from "@/lib/account-usage";
+import { loadApiPrices } from "@/lib/api-price-catalog";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
@@ -14,8 +15,10 @@ export async function GET(req: Request) {
   if(modelId !== null || providerId !== null) {
     if(!modelId || !providerId || modelId.length>512 || providerId.length>128)
       return Response.json({error:"Choose a model and provider."},{status:400,headers});
-    const details=getAccountModelUsage(ownerId,providerId,modelId,range.from,range.to);
+    const pricing=url.searchParams.get("costMode")==="estimated" ? await loadApiPrices() : null;
+    const details=getAccountModelUsage(ownerId,providerId,modelId,range.from,range.to,pricing);
     return details ? Response.json({details},{headers}) : Response.json({error:"No recorded usage for this model in this period."},{status:404,headers});
   }
-  return Response.json({usage:getAccountUsage(ownerId,range.from,range.to)},{headers});
+  const pricing=url.searchParams.get("costMode")==="estimated" ? await loadApiPrices() : null;
+  return Response.json({usage:getAccountUsage(ownerId,range.from,range.to,pricing)},{headers});
 }

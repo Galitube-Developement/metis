@@ -623,6 +623,8 @@ export function getDatabase(): DatabaseSync {
     "ALTER TABLE account_usage ADD COLUMN context_window INTEGER",
     "ALTER TABLE account_usage ADD COLUMN reasoning_effort TEXT",
     "ALTER TABLE account_usage ADD COLUMN speed_mode TEXT",
+    "ALTER TABLE account_usage ADD COLUMN cached_input_tokens INTEGER",
+    "ALTER TABLE account_usage ADD COLUMN cache_write_input_tokens INTEGER",
     "ALTER TABLE memories ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE",
     "ALTER TABLE settings ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE",
     "ALTER TABLE provider_oauth_flows ADD COLUMN user_code TEXT",

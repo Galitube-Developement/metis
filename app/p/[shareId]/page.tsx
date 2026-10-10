@@ -14,7 +14,7 @@ export default async function SharedProfilePage({params}:{params:Promise<{shareI
   const {profile,ownerId}=shared;
   const end=new Date().toISOString().slice(0,10),start=new Date(Date.parse(end)-364*86400000).toISOString().slice(0,10);
   // Only daily token totals cross the public boundary. Never serialize cost, model, owner or run data.
-  const days=profile.shareActivity?getAccountUsage(ownerId,start,end).days.map(day=>({...day,requests:0,inputTokens:0,outputTokens:0,costUsd:null,tokenReports:0,costReports:0,inputReports:0,outputReports:0})):null;
+  const days=profile.shareActivity?getAccountUsage(ownerId,start,end).days.map(day=>({...day,requests:0,inputTokens:0,outputTokens:0,costUsd:null,estimatedCostUsd:null,estimatedCostReports:0,tokenReports:0,costReports:0,inputReports:0,outputReports:0})):null;
   return <main className="min-h-dvh bg-background px-5 py-10 text-foreground sm:px-8">
     <div className="mx-auto max-w-3xl">
       <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">Metis</Link>

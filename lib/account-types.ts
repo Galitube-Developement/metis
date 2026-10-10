@@ -5,10 +5,11 @@ export type AccountProfile = {
 };
 export type UsageTotals = {
   requests: number; inputTokens: number; outputTokens: number; tokens: number;
+  estimatedCostUsd?: number | null; estimatedCostReports?: number;
   costUsd: number | null; tokenReports: number; costReports: number; inputReports: number; outputReports: number;
 };
 export type UsageDay = UsageTotals & { date: string };
-export type UsageModel = UsageTotals & { modelId: string; providerId: string };
+export type UsageModel = UsageTotals & { modelId: string; providerId: string; apiPrice?: import("./usage-cost-estimate").ApiPrice };
 export type UsageBucket = { value: string | null; requests: number };
 export type UsageConfigurationCounts = {
   context: UsageBucket[]; reasoning: UsageBucket[]; speed: UsageBucket[];
@@ -20,5 +21,5 @@ export type UsageModelDetails = UsageModel & {
 };
 export type AccountUsage = {
   from: string; to: string; timezone: "UTC"; totals: UsageTotals; days: UsageDay[];
-  models: UsageModel[];
+  models: UsageModel[]; pricing?: { sourceUrl: string; checkedAt: string };
 };

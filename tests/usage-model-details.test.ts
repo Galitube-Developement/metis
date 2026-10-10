@@ -79,7 +79,7 @@ test("versioned historical sync uses only the exact owned run's job settings and
   assert.equal(details.requests,2);
   assert.deepEqual(details.configurations.reasoning,[{value:"high",requests:1},{value:null,requests:1}]);
   assert.deepEqual(details.configurations.speed,[{value:"fast",requests:1},{value:null,requests:1}]);
-  assert.equal(db.prepare("SELECT revision FROM account_usage_sync WHERE owner_id=?").get(user.id)?.revision,"model-details-v1:"+created);
+  assert.equal(db.prepare("SELECT revision FROM account_usage_sync WHERE owner_id=?").get(user.id)?.revision,"api-value-v2:"+created);
   db.prepare("DELETE FROM chats WHERE id=?").run(chatId);
   details=getAccountModelUsage(user.id,"cursor",base.modelId,"2026-05-01","2026-05-01")!;
   assert.equal(details.requests,2);
