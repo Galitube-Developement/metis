@@ -18,6 +18,7 @@ import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
+import { parseWorkspaceFileLink } from "@/lib/workspace-file-link";
 import { ChatIcon } from "@/components/chat-icon";
 import { remarkChatIcons } from "@/lib/markdown-icons";
 import { FileEmbed } from "@/components/file-embed";
@@ -42,6 +43,7 @@ function MarkdownLink({
   children,
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const fileLocation = parseWorkspaceFileLink(href);
   const isWebUrl = Boolean(href && /^https?:\/\//i.test(href));
   const [hovered, setHovered] = useState(false);
   const [modifierHeld, setModifierHeld] = useState(false);
@@ -74,7 +76,9 @@ function MarkdownLink({
     <a
       {...props}
       href={
-        workspaceMatch
+        fileLocation
+          ? "#workspace-file"
+          : workspaceMatch
           ? `#workspace-${workspaceMatch[2]}`
           : noteMatch
             ? `#note-${noteMatch[1]}`
@@ -86,7 +90,15 @@ function MarkdownLink({
         props.className,
         sourceTitle && "inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/60 px-1.5 py-0.5 text-[11px] font-medium no-underline hover:bg-secondary",
       )}
+      title={fileLocation ? `Open ${fileLocation.path}${fileLocation.line ? ` at line ${fileLocation.line}` : ""} in workspace editor` : props.title}
+      data-workspace-file={fileLocation?.path}
       onClick={(event) => {
+        if (fileLocation) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.dispatchEvent(new CustomEvent("ai-chat:open-file", { detail: fileLocation }));
+          return;
+        }
         if (workspaceMatch) {
           event.preventDefault();
           event.stopPropagation();
@@ -212,6 +224,7 @@ export function splitThinkingBlocks(content: string): ThinkingSegment[] {
 }
 
 function transformMarkdownUrl(url: string) {
+  if (parseWorkspaceFileLink(url)) return url;
   if (/^(workspace|note|subagent|automation):\/\//i.test(url)) return url;
   return defaultUrlTransform(url);
 }

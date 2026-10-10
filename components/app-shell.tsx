@@ -1,6 +1,7 @@
 "use client";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 
+import { workspaceFileHref, parseWorkspaceFileLink, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
 import { QuestionForm } from "@/components/question-form";
 import { normalizeStoredQuestions, initialQuestionAnswers, restoreQuestionDraft, type PendingChatQuestion as PendingQuestion, type QuestionAnswers } from "@/lib/question-contract";
 
@@ -1815,6 +1816,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const sidebarRevealPinnedRef = useRef(false);
   const [remoteTerminalCwd, setRemoteTerminalCwd] = useState(workspaceDefaultCwd);
   const [remoteFileCwd, setRemoteFileCwd] = useState(workspaceDefaultCwd);
+  const [workspaceFileRequest, setWorkspaceFileRequest] = useState<WorkspaceFileRequest | null>(null);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [activeTerminalTabId, setActiveTerminalTabId] = useState<string | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
@@ -5230,6 +5232,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setWorkspaceTab(detail.type);
       setWorkspaceOpen(true);
     };
+    const openLinkedFile = (event: Event) => {
+      const detail = (event as CustomEvent<WorkspaceFileRequest>).detail;
+      if (!detail || typeof detail.path !== "string") return;
+      const location = parseWorkspaceFileLink(workspaceFileHref(detail));
+      if (!location) return;
+      setWorkspaceFileRequest((previous) => ({ ...location, id: (previous?.id || 0) + 1 }));
+      setWorkspaceTab("files");
+      setWorkspaceOpen(true);
+    };
     const openLinkedNote = (event: Event) => {
       const detail = (event as CustomEvent<{ id?: string; chatId?: string }>).detail;
       if (!detail?.id) return;
@@ -5260,12 +5271,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     window.addEventListener("ai-chat:open-browser", openLinkedUrl);
     window.addEventListener("ai-chat:open-reference", openLinkedReference);
     window.addEventListener("ai-chat:open-workspace", openLinkedWorkspace);
+    window.addEventListener("ai-chat:open-file", openLinkedFile);
     window.addEventListener("ai-chat:open-note", openLinkedNote);
     window.addEventListener("ai-chat:open-automations", openLinkedAutomation);
     return () => {
       window.removeEventListener("ai-chat:open-browser", openLinkedUrl);
       window.removeEventListener("ai-chat:open-reference", openLinkedReference);
       window.removeEventListener("ai-chat:open-workspace", openLinkedWorkspace);
+      window.removeEventListener("ai-chat:open-file", openLinkedFile);
       window.removeEventListener("ai-chat:open-note", openLinkedNote);
       window.removeEventListener("ai-chat:open-automations", openLinkedAutomation);
     };
@@ -11419,7 +11432,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 })()}
               </>
             ) : workspaceTab === "files" ? (
-              <RemoteFileEditor cwd={remoteFileCwd} onCwdChange={setRemoteFileCwd} />
+              <RemoteFileEditor cwd={remoteFileCwd} onCwdChange={setRemoteFileCwd} fileRequest={workspaceFileRequest} />
             ) : !activeWorkspace ? (
               <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
                 <div className="max-w-64 space-y-1.5">
