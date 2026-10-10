@@ -10893,7 +10893,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       {!notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
-        <div className="fixed inset-0 z-40 bg-background/55 backdrop-blur-[2px]" aria-hidden="true" />
+        <div className="fixed inset-0 z-40 bg-background/55" aria-hidden="true" />
       ) : null}
       {!notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
