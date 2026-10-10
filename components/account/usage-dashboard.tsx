@@ -10,6 +10,8 @@ import type { AccountUsage, UsageModel } from "@/lib/account-types";
 import { usageCsv } from "@/lib/account-usage-export";
 import { useUsageCostMode } from "./use-usage-cost-mode";
 import { usageCost, usageCostLabel, usageCostReports, type UsageCostMode } from "@/lib/usage-cost-view";
+import { useUsageProviderFilter } from "./use-usage-provider-filter";
+import { UsageProviderFilter } from "./usage-provider-filter";
 const compact=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:1});
 const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
 const format=(value:number|null,cost=false)=>value===null?"—":cost?money.format(value):value.toLocaleString();
@@ -28,6 +30,8 @@ function modelColumnCount() {
 export function UsageDashboard() {
   const visibleColumns=useSyncExternalStore(subscribeModelColumns,modelColumnCount,()=>6);
   const [costMode,setCostMode]=useUsageCostMode();
+  const [excludedProviders,setExcludedProviders]=useUsageProviderFilter();
+  const providerFilterKey=JSON.stringify(excludedProviders);
   const showCosts=costMode!=="hidden";
   const columns=visibleColumns-(showCosts || visibleColumns===3 ? 0:1);
   const [range,setRange]=useState("30");
@@ -41,16 +45,17 @@ export function UsageDashboard() {
   useEffect(()=>{
     if(range==="custom" && (!from || !to)) { setUsage(null);setLoading(false);return; }
     const controller=new AbortController();
-    setLoading(true);setError("");setUsage(null);
+    setLoading(true);setError("");
     const end=range==="custom"?to:new Date().toISOString().slice(0,10);
     const start=range==="custom"?from:new Date(Date.parse(end)-(Number(range)-1)*86400000).toISOString().slice(0,10);
     const query=new URLSearchParams({from:start,to:end,costMode});
+    for(const provider of JSON.parse(providerFilterKey) as string[])query.append("excludeProvider",provider);
     void fetch("/api/account-usage?"+query,{signal:controller.signal,cache:"no-store"}).then(async response=>{
       const data=await response.json();if(!response.ok)throw new Error(data.error || "Could not load usage");
-      setUsage(data.usage);
+      if(!controller.signal.aborted)setUsage(data.usage);
     }).catch(error=>{if(!controller.signal.aborted)setError(error.message);}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return ()=>controller.abort();
-  },[range,from,to,refresh,costMode]);
+  },[range,from,to,refresh,costMode,providerFilterKey]);
   const models=useMemo(()=>[...(usage?.models || [])].sort((a,b)=>{
     const key=sort==="costUsd" && !showCosts ? "tokens":sort;
     const value=key==="modelId"?a.modelId.localeCompare(b.modelId):key==="costUsd"?(usageCost(a,costMode)??-1)-(usageCost(b,costMode)??-1):(a[key]??-1)-(b[key]??-1);
@@ -63,7 +68,10 @@ export function UsageDashboard() {
     const anchor=document.createElement("a");anchor.href=url;anchor.download="metis-usage-"+usage.from+"-"+usage.to+".csv";anchor.click();URL.revokeObjectURL(url);
   }
   function sortBy(key:typeof sort){if(key===sort)setAscending(!ascending);else{setSort(key);setAscending(key==="modelId");}}
-  const totals=usage?.totals;
+  const totals=!loading && !error ? usage?.totals:undefined;
+  const providers=usage?.providers || [];
+  const activeProviderCount=providers.filter(provider=>!excludedProviders.includes(provider.id)).length;
+  const filtered=excludedProviders.length>0;
   const activeMetric=metric==="costUsd" && !showCosts ? "tokens":metric;
   const costLabel=usageCostLabel(costMode);
   const reports=totals ? usageCostReports(totals,costMode):0;
@@ -75,6 +83,7 @@ export function UsageDashboard() {
         <select id={id+"range"} aria-label="Usage date range" value={range} onChange={e=>{if(e.target.value==="custom"){setFrom(usage?.from || new Date(Date.now()-29*86400000).toISOString().slice(0,10));setTo(usage?.to || new Date().toISOString().slice(0,10));}setRange(e.target.value);}} className="h-11 rounded-lg border border-border bg-background px-3 text-sm">
           <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option><option value="custom">Custom range</option>
         </select>
+        <UsageProviderFilter providers={providers} excluded={excludedProviders} onChange={setExcludedProviders} disabled={!usage || Boolean(error)}/>
         <Button variant="outline" size="icon" className="size-11" aria-label="Refresh usage" onClick={()=>setRefresh(n=>n+1)} disabled={loading}><RefreshCw className={loading?"size-4 animate-spin":"size-4"} /></Button>
       </div>
     </div>
@@ -86,6 +95,7 @@ export function UsageDashboard() {
       </label>
       {costMode==="estimated" ? <details className="text-xs text-muted-foreground"><summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5"><Info className="size-3.5" aria-hidden="true"/> How estimates work <ChevronDown className="size-3"/></summary><p className="mt-2 max-w-2xl leading-relaxed">Recorded input and output tokens × current standard text API prices, with cache discounts when reported. This is an approximate API value, not your invoice or subscription cost. Fast / priority premiums, long-context surcharges, media pricing and non-token fees are excluded. Missing prices or token splits stay unavailable. <a href="https://models.dev" target="_blank" rel="noreferrer" className="underline underline-offset-2">Price source: models.dev</a>{usage?.pricing ? " · Checked "+new Date(usage.pricing.checkedAt).toLocaleDateString("en",{timeZone:"UTC"}):" · Price catalog unavailable."}</p></details>:null}
     </div>
+    {filtered ? <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="status"><span>{activeProviderCount} of {providers.length} recorded providers included. Totals, charts and CSV use this selection.</span><button type="button" className="min-h-9 underline underline-offset-2 hover:text-foreground" onClick={()=>setExcludedProviders([])}>Reset provider filters</button></div>:null}
     {range==="custom" ? <div className="flex flex-wrap gap-3"><label className="space-y-1 text-xs text-muted-foreground">From<Input type="date" aria-label="Usage from" value={from} onChange={e=>setFrom(e.target.value)} className="h-11" /></label><label className="space-y-1 text-xs text-muted-foreground">To<Input type="date" aria-label="Usage to" value={to} onChange={e=>setTo(e.target.value)} className="h-11" /></label></div>:null}
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p>:null}
     <section aria-label="Usage overview" aria-busy={loading} className="rounded-xl border border-border/60">
@@ -100,8 +110,8 @@ export function UsageDashboard() {
           {activeMetric==="costUsd" && totals ? <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{reports ? reports.toLocaleString()+" of "+totals.requests.toLocaleString()+" runs "+(costMode==="estimated"?"estimated":"reported")+(reports<totals.requests?" · Partial total":"") : costMode==="estimated"?"No matching prices and complete token splits for these runs.":"Your providers have not reported costs for these runs."}</p>:null}
         </div>
         <div className="h-60 min-w-0" aria-label={"Daily "+(activeMetric==="costUsd"?costLabel:activeMetric)+" chart"}>
-          {usage && !error ? <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <AreaChart data={usage.days.map(day=>({...day,tokens:day.requests && !day.tokenReports ? null:day.tokens,costUsd:day.requests?usageCost(day,costMode):0}))} margin={{top:8,right:8,bottom:0,left:0}}>
+          {usage && !error && !loading ? <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <AreaChart key={costMode+providerFilterKey} data={usage.days.map(day=>({...day,tokens:day.requests && !day.tokenReports ? null:day.tokens,costUsd:day.requests?usageCost(day,costMode):0}))} margin={{top:8,right:8,bottom:0,left:0}}>
               <defs><linearGradient id={id+"fill"} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16}/><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0}/></linearGradient></defs>
               <CartesianGrid stroke="var(--border)" vertical={false} strokeDasharray="3 5" opacity={0.6}/>
               <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={36} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
@@ -125,7 +135,7 @@ export function UsageDashboard() {
               <button type="button" className="flex min-h-9 items-center gap-1.5" onClick={()=>sortBy(key)}>{key==="costUsd"?(costMode==="estimated"?"API value":"Cost"):label}{sort===key?(ascending?<ArrowUp className="size-3" />:<ArrowDown className="size-3" />):null}</button></th>)}
             <th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Input</th><th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Output</th>
           </tr></thead>
-          <tbody>{models.map((model:UsageModel)=>{
+          <tbody>{!loading && !error ? models.map((model:UsageModel)=>{
             const key=JSON.stringify([model.providerId,model.modelId]),open=expanded===key;
             const detailId=id+"-model-"+encodeURIComponent(key);
             return <Fragment key={key}><tr className="border-b border-border/40">
@@ -142,8 +152,8 @@ export function UsageDashboard() {
             </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={columns} className="bg-muted/15 px-4 py-5 sm:px-6">
               {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to} costMode={costMode}/>:null}
             </td></tr></Fragment>;
-          })}
-          {!models.length ? <tr><td colSpan={columns} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":"No recorded usage in this period."}</td></tr>:null}
+          }):null}
+          {loading || error || !models.length ? <tr><td colSpan={columns} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":error?"Usage unavailable.":filtered?"No usage for the selected providers.":"No recorded usage in this period."}</td></tr>:null}
           </tbody>
         </table>
       </div>

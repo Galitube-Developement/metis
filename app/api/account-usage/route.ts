@@ -19,6 +19,9 @@ export async function GET(req: Request) {
     const details=getAccountModelUsage(ownerId,providerId,modelId,range.from,range.to,pricing);
     return details ? Response.json({details},{headers}) : Response.json({error:"No recorded usage for this model in this period."},{status:404,headers});
   }
+  const excludedProviders=url.searchParams.getAll("excludeProvider");
+  if(excludedProviders.length>100 || excludedProviders.some(id=>!id || id.length>128))
+    return Response.json({error:"Choose valid provider filters."},{status:400,headers});
   const pricing=url.searchParams.get("costMode")==="estimated" ? await loadApiPrices() : null;
-  return Response.json({usage:getAccountUsage(ownerId,range.from,range.to,pricing)},{headers});
+  return Response.json({usage:getAccountUsage(ownerId,range.from,range.to,pricing,excludedProviders)},{headers});
 }

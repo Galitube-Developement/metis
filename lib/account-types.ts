@@ -21,5 +21,6 @@ export type UsageModelDetails = UsageModel & {
 };
 export type AccountUsage = {
   from: string; to: string; timezone: "UTC"; totals: UsageTotals; days: UsageDay[];
+  providers?: Array<{id:string;name:string;requests:number}>;
   models: UsageModel[]; pricing?: { sourceUrl: string; checkedAt: string };
 };
