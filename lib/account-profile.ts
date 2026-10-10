@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { getDatabase } from "@/lib/sqlite";
 import type { AccountProfile } from "@/lib/account-types";
+import { ownsAvatar, cleanProfileAvatars } from "@/lib/profile-avatars";
 
 const avatarSchema = z.string().max(350_000).refine((value) => {
   if (!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(value)) return false;
@@ -15,7 +16,7 @@ const avatarSchema = z.string().max(350_000).refine((value) => {
 export const profileInput = z.object({
   displayName: z.string().trim().min(1).max(80),
   bio: z.string().max(500),
-  avatar: avatarSchema.nullable(),
+  avatar: z.union([avatarSchema, z.string().regex(/^\/api\/profile\/avatar\/[a-f0-9]{48}$/)]).nullable(),
   links: z.array(z.object({
     label: z.string().trim().min(1).max(40),
     url: z.string().trim().max(2048).url().refine(value => {
@@ -34,10 +35,12 @@ export function getAccountProfile(ownerId: string, username: string): AccountPro
 }
 export function saveAccountProfile(ownerId: string, input: unknown): AccountProfile {
   const parsed = profileInput.parse(input);
+  if (parsed.avatar?.startsWith("/api/") && !ownsAvatar(ownerId, parsed.avatar)) throw new Error("Upload your own profile picture first.");
   const row = getDatabase().prepare("SELECT share_id FROM account_profiles WHERE owner_id = ?").get(ownerId) as { share_id: string | null } | undefined;
   const shareId = parsed.sharing ? row?.share_id || randomBytes(24).toString("hex") : null;
   const { sharing: _sharing, ...data } = parsed;
   getDatabase().prepare("INSERT INTO account_profiles (owner_id, data, share_id) VALUES (?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET data=excluded.data, share_id=excluded.share_id").run(ownerId, JSON.stringify(data), shareId);
+  cleanProfileAvatars(ownerId, data.avatar);
   return { ...data, shareId };
 }
 export function getSharedProfile(shareId: string): { ownerId: string; profile: AccountProfile } | null {

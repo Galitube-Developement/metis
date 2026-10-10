@@ -230,6 +230,13 @@ export function getDatabase(): DatabaseSync {
       data TEXT NOT NULL,
       share_id TEXT UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS profile_avatars (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS profile_avatars_owner ON profile_avatars(owner_id);
     CREATE TABLE IF NOT EXISTS account_usage (
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       message_id TEXT NOT NULL,

@@ -9,8 +9,15 @@ import { Switch } from "@/components/ui/switch";
 import { ProfileAvatar } from "@/components/account/account-menu";
 import { TokenHeatmap } from "@/components/account/token-heatmap";
 import type { AccountProfile, AccountUsage } from "@/lib/account-types";
+import { MAX_PROFILE_GIF_BYTES } from "@/lib/profile-avatar-limits";
 
 async function avatarData(file:File) {
+  if(file.type === "image/gif" || /\.gif$/i.test(file.name)) {
+    if(file.size>MAX_PROFILE_GIF_BYTES) throw new Error("GIF profile pictures can be up to 50 MB.");
+    const response=await fetch("/api/profile/avatar",{method:"PUT",headers:{"Content-Type":"image/gif"},body:file});
+    const data=await response.json();if(!response.ok)throw new Error(data.error || "Could not upload GIF.");
+    return data.avatar as string;
+  }
   if(!["image/png","image/jpeg","image/webp"].includes(file.type) || file.size>5_000_000) throw new Error("Choose a PNG, JPEG or WebP image smaller than 5 MB.");
   const bitmap=await createImageBitmap(file);
   try {
@@ -63,11 +70,11 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
         {editing ? <form onSubmit={event=>{event.preventDefault();void save(draft);}} className="space-y-5 rounded-xl border border-border/60 p-5">
           <h2 className="text-base font-medium">Edit profile</h2>
           <div><label htmlFor="profile-image" className="mb-2 block text-sm">Profile picture</label>
-            <Input id="profile-image" type="file" accept="image/png,image/jpeg,image/webp" disabled={saving || uploading} className="h-11" onChange={event=>{
+            <Input id="profile-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.gif" disabled={saving || uploading} className="h-11" onChange={event=>{
               const file=event.target.files?.[0];if(!file)return;
               setUploading(true);void avatarData(file).then(avatar=>setDraft(value=>({...value,avatar}))).catch(error=>toast.error(error.message)).finally(()=>setUploading(false));event.target.value="";
-            }}/><p className="mt-2 text-xs text-muted-foreground">PNG, JPEG or WebP · up to 5 MB</p>
-            {draft.avatar ? <Button variant="ghost" type="button" size="sm" onClick={()=>setDraft({...draft,avatar:null})}>Remove picture</Button>:null}
+            }}/><p role="status" className="mt-2 text-xs text-muted-foreground">{uploading ? "Uploading picture…" : "Animated GIF up to 50 MB · PNG, JPEG or WebP up to 5 MB"}</p>
+            {draft.avatar ? <Button variant="ghost" type="button" size="sm" disabled={saving || uploading} onClick={()=>setDraft({...draft,avatar:null})}>Remove picture</Button>:null}
           </div>
           <label className="block space-y-2 text-sm">Name<Input aria-label="Profile name" value={draft.displayName} maxLength={80} required onChange={event=>setDraft({...draft,displayName:event.target.value})} className="h-11"/></label>
           <label className="block space-y-2 text-sm">Bio<Textarea aria-label="Profile bio" value={draft.bio} maxLength={500} rows={3} onChange={event=>setDraft({...draft,bio:event.target.value})}/></label>
@@ -78,7 +85,7 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
               <Button type="button" variant="ghost" size="icon" aria-label={"Remove link "+(index+1)} className="col-start-2 row-start-1 size-11 sm:col-start-auto" onClick={()=>setDraft({...draft,links:draft.links.filter((_,i)=>i!==index)})}><Trash2 className="size-4"/></Button>
             </div>)}
           </div>
-          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="h-11" disabled={saving} onClick={()=>setEditing(false)}>Cancel</Button><Button className="h-11" type="submit" disabled={saving || uploading}>{saving?"Saving…":"Save profile"}</Button></div>
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="h-11" disabled={saving || uploading} onClick={()=>setEditing(false)}>Cancel</Button><Button className="h-11" type="submit" disabled={saving || uploading}>{saving?"Saving…":"Save profile"}</Button></div>
         </form>:null}
         {activity ? <TokenHeatmap days={activity.days}/> : <div className="rounded-xl border border-border/60 p-5 text-sm text-muted-foreground" role="status">{activityError || "Loading token activity…"}</div>}
         <section className="rounded-xl border border-border/60 p-5">
