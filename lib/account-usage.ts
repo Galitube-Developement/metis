@@ -49,7 +49,7 @@ export function usageRange(from: string | null, to: string | null, now = new Dat
   const end = to || now.toISOString().slice(0,10);
   const start = from || new Date(Date.parse(end) - 29 * DAY).toISOString().slice(0,10);
   const valid = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0,10) === date;
-  if (!valid(start) || !valid(end) || start > end || Date.parse(end)-Date.parse(start) > 366 * DAY)
+  if (!valid(start) || !valid(end) || start > end || Date.parse(end)-Date.parse(start) > 365 * DAY)
     throw new Error("Choose a valid date range of up to one year.");
   return { from:start, to:end };
 }
