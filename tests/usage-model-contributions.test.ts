@@ -52,7 +52,7 @@ test("daily model aggregates are UTC-scoped, deduplicated by provider and model,
  assert.equal(usage.modelDays?.["2026-10-03"],undefined);
  for(const day of usage.days) {
   assert.ok(!("models" in day) && !("modelDays" in day));
-  const rows=usage.modelDays?.[day.date] || [];
+  const rows: UsageModel[]=usage.modelDays?.[day.date] || [];
   assert.equal(rows.reduce((sum,m)=>sum+m.tokens,0),day.tokens);
   assert.equal(rows.reduce((sum,m)=>sum+m.requests,0),day.requests);
   assert.equal(rows.reduce((sum,m)=>sum+(m.costUsd || 0),0),day.costUsd || 0);
