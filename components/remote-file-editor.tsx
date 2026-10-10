@@ -56,6 +56,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const [newName, setNewName] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(240);
+  const [explorerOpen, setExplorerOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState("");
@@ -164,6 +165,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   useEffect(() => {
     if (!fileRequest || handledFileRequestRef.current === fileRequest.id) return;
     handledFileRequestRef.current = fileRequest.id;
+    setExplorerOpen(false);
     if (fileRequest.path === selectedPath) {
       ++loadVersionRef.current;
       setLoading(false);
@@ -363,6 +365,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const editor = (
     <div className={fullscreen ? "fixed inset-[1%] z-50 flex min-h-0 flex-col gap-3 rounded-2xl border border-border bg-background p-4 shadow-2xl ring-1 ring-foreground/10 sm:p-6" : "flex min-h-0 flex-1 flex-col gap-2"}>
       <div className="flex items-center gap-2">
+        <Button type="button" size="icon-sm" variant="ghost" aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"} title={explorerOpen ? "Hide file explorer" : "Show file explorer"} aria-expanded={explorerOpen} onClick={() => setExplorerOpen((open) => !open)}><Folder className="size-3.5" /></Button>
         <Input value={cwd} onChange={(event) => onCwdChange(event.target.value)} aria-label="Remote directory" className="h-8 min-w-0 flex-1 font-mono text-xs" />
         <Button type="button" size="icon-sm" variant="ghost" onClick={() => runAfterUnsavedCheck(() => void loadDirectory(cwd))} aria-label="Refresh files">
           <LoaderCircle className={loading ? "size-3.5 animate-spin" : "size-3.5"} />
@@ -379,7 +382,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1 gap-0">
-        <div className="min-h-0 shrink-0 overflow-y-auto rounded-md border border-border/40 p-1" style={{ width: `${explorerWidth}px` }}>
+        <div hidden={!explorerOpen} className="min-h-0 shrink-0 overflow-y-auto rounded-md border border-border/40 p-1" style={{ width: `${explorerWidth}px` }}>
           {entries.map((entry) => (
             <button key={entry.path} type="button" onClick={() => void openEntry(entry)} className={`flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs hover:bg-muted/50 ${entry.path === selectedEntryPath ? "bg-muted" : ""}`}>
               {entry.directory ? <Folder className="size-3.5 text-primary" /> : <File className="size-3.5 text-muted-foreground" />}
@@ -389,11 +392,11 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
           ))}
           {!loading && entries.length === 0 ? <p className="p-2 text-xs text-muted-foreground">Directory is empty.</p> : null}
         </div>
-        <div role="separator" aria-orientation="vertical" aria-label="Resize file explorer" aria-valuemin={160} aria-valuemax={420} aria-valuenow={explorerWidth} tabIndex={0} onPointerDown={startDragging} onKeyDown={onResizeKeyDown} className="group flex w-3 shrink-0 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <div hidden={!explorerOpen} role="separator" aria-orientation="vertical" aria-label="Resize file explorer" aria-valuemin={160} aria-valuemax={420} aria-valuenow={explorerWidth} tabIndex={0} onPointerDown={startDragging} onKeyDown={onResizeKeyDown} className="group flex w-3 shrink-0 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <span className={`h-full w-px bg-border/50 transition-colors group-hover:bg-primary/60 ${dragging ? "bg-primary" : ""}`} />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="New file…" className="h-8 min-w-0 flex-1 text-xs" />
             <Button type="button" size="icon-sm" variant="ghost" disabled={!newName.trim()} onClick={() => void createFile()} aria-label="Create file"><Plus className="size-3.5" /></Button>
             <Button type="button" size="icon-sm" variant="ghost" onClick={openCreateFolderDialog} aria-label="Create folder"><Folder className="size-3.5" /></Button>
