@@ -68,6 +68,8 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const handledFileRequestRef = useRef<number | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const [fileLocation, setFileLocation] = useState<WorkspaceFileLocation | null>(null);
+  const fileLocationRef = useRef<WorkspaceFileLocation | null>(null);
+  fileLocationRef.current = fileLocation;
   const dirty = Boolean(selectedPath) && content !== savedContent;
 
   const revealLocation = useCallback((location: WorkspaceFileLocation | null) => {
@@ -398,7 +400,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
             {!fullscreen ? <Button type="button" size="icon-sm" disabled={!selectedPath || loading || saving} onClick={() => void save()} aria-label="Save file" title="Save file">{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}</Button> : null}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/40">
-            <Editor onMount={(editor) => { editorRef.current = editor; revealLocation(fileLocation); }} height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ readOnly: loading || saving || !selectedPath, automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
+            <Editor onMount={(editor) => { editorRef.current = editor; revealLocation(fileLocationRef.current); }} height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ readOnly: loading || saving || !selectedPath, automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
           </div>
         </div>
       </div>
