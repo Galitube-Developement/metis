@@ -165,6 +165,9 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
     if (!fileRequest || handledFileRequestRef.current === fileRequest.id) return;
     handledFileRequestRef.current = fileRequest.id;
     if (fileRequest.path === selectedPath) {
+      ++loadVersionRef.current;
+      setLoading(false);
+      setError("");
       setFileLocation({ ...fileRequest });
       return;
     }
