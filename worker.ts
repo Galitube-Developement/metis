@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { writeWorkerHeartbeat } from "@/lib/worker-health";
-import { appendRunEvent, cancelChildJobs, claimNextJob, drainNextQueuedMessage, enqueueJob, getActiveParentJob, getJob, listChildJobs, reapExpiredJobLeases, recoverStaleJobs, requeueSwitchingJob, updateJob } from "@/lib/db-jobs";
+import { appendRunEvent, cancelAgentJob, cancelChildJobs, claimNextJob, drainNextQueuedMessage, enqueueJob, getActiveParentJob, getJob, listChildJobs, reapExpiredJobLeases, recoverStaleJobs, requeueSwitchingJob, updateJob } from "@/lib/db-jobs";
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat } from "@/lib/db-store";
 import { expireProjectHandoffs } from "@/lib/project-team";
@@ -118,7 +118,12 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
       : maxJobMs;
     const timeout = jobMaxMs > 0
       ? setTimeout(() => {
-        markFailed(`Worker job exceeded the ${Math.round(jobMaxMs / 60_000)} minute limit.`);
+        const timedOut = getJob(jobId);
+        if (timedOut?.parentJobId || timedOut?.projectTeamId) {
+          cancelAgentJob(jobId, timedOut.userId, "Agent runtime limit reached.", "runtime_limit");
+        } else {
+          markFailed(`Worker job exceeded the ${Math.round(jobMaxMs / 60_000)} minute limit.`);
+        }
         child.kill("SIGTERM");
         forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
       }, jobMaxMs)
