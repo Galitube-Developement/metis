@@ -96,6 +96,7 @@ export function getAccountUsage(ownerId: string, from: string | null = null, to:
     const date=new Date(timestamp).toISOString().slice(0,10); days.set(date,{...empty(),date});
   }
   const models=new Map<string,UsageModel>(),totals=empty();
+  const modelDays=new Map<string,Map<string,UsageModel>>();
   const providers=new Map<string,{id:string;name:string;requests:number}>();
   const excluded=new Set(excludedProviders);
   for(const row of rows) {
@@ -108,8 +109,12 @@ export function getAccountUsage(ownerId: string, from: string | null = null, to:
     const key=JSON.stringify([row.provider_id,row.model_id]);
     const model=models.get(key) || {...empty(),modelId:row.model_id,providerId:row.provider_id};
     add(model,row,estimate);if(price)model.apiPrice=price;models.set(key,model);
+    const date=row.completed_at.slice(0,10);
+    const dailyModels=modelDays.get(date) || new Map<string,UsageModel>();
+    const dailyModel=dailyModels.get(key) || {...empty(),modelId:row.model_id,providerId:row.provider_id};
+    add(dailyModel,row,estimate);dailyModels.set(key,dailyModel);modelDays.set(date,dailyModels);
   }
-  return {...range,timezone:"UTC",...(pricing?{pricing:{sourceUrl:API_PRICE_SOURCE,checkedAt:pricing.checkedAt}}:{}),totals,providers:[...providers.values()].sort((a,b)=>a.name.localeCompare(b.name)),days:[...days.values()],models:[...models.values()].sort((a,b)=>b.tokens-a.tokens)};
+  return {...range,timezone:"UTC",...(pricing?{pricing:{sourceUrl:API_PRICE_SOURCE,checkedAt:pricing.checkedAt}}:{}),totals,providers:[...providers.values()].sort((a,b)=>a.name.localeCompare(b.name)),days:[...days.values()],modelDays:Object.fromEntries([...modelDays].map(([date,models])=>[date,[...models.values()]])),models:[...models.values()].sort((a,b)=>b.tokens-a.tokens)};
 }
 
 function estimateRow(row: Row, price: ReturnType<typeof resolveApiPrice>) {
