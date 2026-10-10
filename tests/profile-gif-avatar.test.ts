@@ -16,16 +16,16 @@ async function owner(name:string) {
 function upload(body:Uint8Array,token?:string,headers:Record<string,string>={}) {
   return new Request("http://localhost/api/profile/avatar",{method:"PUT",headers:{"content-type":"image/gif",...(token?{cookie:"ai_chat_auth="+token}:{}),...headers},body:new Uint8Array(body)});
 }
-async function image(url:string,token?:string) {
+async function image(url:string,token?:string,etag?:string) {
   const {GET}=await import("../app/api/profile/avatar/[avatarId]/route");
-  return GET(new Request("http://localhost"+url,{headers:token?{cookie:"ai_chat_auth="+token}:{}}),{params:Promise.resolve({avatarId:url.split("/").at(-1)!})});
+  return GET(new Request("http://localhost"+url,{headers:{...(token?{cookie:"ai_chat_auth="+token}:{}),...(etag?{"if-none-match":etag}:{})}}),{params:Promise.resolve({avatarId:url.split("/").at(-1)!})});
 }
 test("GIF upload requires authentication and preserves animation bytes, frames, delay and loop",async()=>{
   const {PUT}=await import("../app/api/profile/avatar/route");const user=await owner("gif-owner");
   assert.equal((await PUT(upload(gif))).status,401);
   const response=await PUT(upload(gif,user.token));assert.equal(response.status,200);
   const {avatar}=await response.json();const loaded=await image(avatar,user.token);
-  assert.equal(loaded.headers.get("content-type"),"image/gif");assert.equal(loaded.headers.get("cache-control"),"private, no-store");
+  assert.equal(loaded.headers.get("content-type"),"image/gif");assert.equal(loaded.headers.get("cache-control"),"private, max-age=31536000, immutable");
   const actual=Buffer.from(await loaded.arrayBuffer());assert.deepEqual(actual,gif);
   const metadata=await sharp(actual).metadata();assert.equal(metadata.pages,2);assert.deepEqual(metadata.delay,[400,400]);assert.equal(metadata.loop,0);
 });
@@ -102,4 +102,34 @@ test("repeated draft uploads keep the saved image and only the newest draft",asy
   const newest=(await (await PUT(upload(gif,user.token))).json()).avatar;
   assert.equal((await image(saved,user.token)).status,200);assert.equal((await image(discarded,user.token)).status,404);
   assert.equal((await image(newest,user.token)).status,200);
+});
+
+test("owner images have immutable URLs, private cookie-separated caching and body-free conditional responses",async()=>{
+  const {PUT}=await import("../app/api/profile/avatar/route");const user=await owner("gif-cached");
+  const {avatar}=await (await PUT(upload(gif,user.token))).json();
+  const response=await image(avatar,user.token);const etag=response.headers.get("etag")!;
+  assert.equal(response.headers.get("vary"),"Cookie");
+  assert.equal(etag,'"'+avatar.split("/").at(-1)+'"');
+  await response.arrayBuffer();
+  for(const value of [etag,"W/"+etag,'"other", '+etag,"*"]) {
+    const cached=await image(avatar,user.token,value);
+    assert.equal(cached.status,304);assert.equal((await cached.arrayBuffer()).byteLength,0);
+    assert.equal(cached.headers.get("etag"),etag);assert.equal(cached.headers.get("cache-control"),"private, max-age=31536000, immutable");
+  }
+  const stale=await image(avatar,user.token,'"other"');assert.equal(stale.status,200);await stale.arrayBuffer();
+  const denied=await image(avatar,undefined,etag);assert.equal(denied.status,404);assert.equal(denied.headers.get("cache-control"),"private, no-store");
+});
+test("public image cache revalidates sharing before accepting an ETag",async()=>{
+  const {PUT}=await import("../app/api/profile/avatar/route"),{saveAccountProfile}=await import("../lib/account-profile");
+  const user=await owner("gif-public-cache"),other=await owner("gif-public-viewer");
+  const {avatar}=await (await PUT(upload(gif,user.token))).json();
+  saveAccountProfile(user.id,{...profile,avatar,sharing:true});
+  const response=await image(avatar);const etag=response.headers.get("etag")!;
+  assert.equal(response.headers.get("cache-control"),"private, no-cache");await response.arrayBuffer();
+  assert.equal((await image(avatar,undefined,etag)).status,304);
+  assert.equal((await image(avatar,other.token,etag)).status,304);
+  saveAccountProfile(user.id,{...profile,avatar,sharing:false});
+  for(const token of [undefined,other.token]) {
+    const denied=await image(avatar,token,etag);assert.equal(denied.status,404);assert.equal(denied.headers.get("cache-control"),"private, no-store");
+  }
 });

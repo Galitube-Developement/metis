@@ -85,7 +85,7 @@ function add(target: UsageTotals, row: Row, estimate: number|null = null) {
   if (row.total_tokens !== null) target.tokenReports++;
   if (row.cost_usd !== null) { target.costUsd=(target.costUsd ?? 0)+row.cost_usd; target.costReports++; }
 }
-export function getAccountUsage(ownerId: string, from: string | null = null, to: string | null = null, pricing: PricingSnapshot | null = null): AccountUsage {
+export function getAccountUsage(ownerId: string, from: string | null = null, to: string | null = null, pricing: PricingSnapshot | null = null, excludedProviders: readonly string[] = []): AccountUsage {
   const prices=apiPriceIndex(pricing);
   const range=usageRange(from,to);
   syncAccountUsage(ownerId);
@@ -96,7 +96,12 @@ export function getAccountUsage(ownerId: string, from: string | null = null, to:
     const date=new Date(timestamp).toISOString().slice(0,10); days.set(date,{...empty(),date});
   }
   const models=new Map<string,UsageModel>(),totals=empty();
+  const providers=new Map<string,{id:string;name:string;requests:number}>();
+  const excluded=new Set(excludedProviders);
   for(const row of rows) {
+    const provider=providers.get(row.provider_id) || {id:row.provider_id,name:getProviderDefinition(row.provider_id)?.name || row.provider_id,requests:0};
+    provider.requests++;providers.set(provider.id,provider);
+    if(excluded.has(row.provider_id))continue;
     const price=resolveApiPrice(row.provider_id,row.model_id,prices);
     const estimate=estimateRow(row,price);
     add(totals,row,estimate); add(days.get(row.completed_at.slice(0,10))!,row,estimate);
@@ -104,7 +109,7 @@ export function getAccountUsage(ownerId: string, from: string | null = null, to:
     const model=models.get(key) || {...empty(),modelId:row.model_id,providerId:row.provider_id};
     add(model,row,estimate);if(price)model.apiPrice=price;models.set(key,model);
   }
-  return {...range,timezone:"UTC",...(pricing?{pricing:{sourceUrl:API_PRICE_SOURCE,checkedAt:pricing.checkedAt}}:{}),totals,days:[...days.values()],models:[...models.values()].sort((a,b)=>b.tokens-a.tokens)};
+  return {...range,timezone:"UTC",...(pricing?{pricing:{sourceUrl:API_PRICE_SOURCE,checkedAt:pricing.checkedAt}}:{}),totals,providers:[...providers.values()].sort((a,b)=>a.name.localeCompare(b.name)),days:[...days.values()],models:[...models.values()].sort((a,b)=>b.tokens-a.tokens)};
 }
 
 function estimateRow(row: Row, price: ReturnType<typeof resolveApiPrice>) {
