@@ -19,6 +19,6 @@ export async function GET(req: Request) {
       .map(({ id, chatId, name, role }) => ({ id, chatId, name, role })) });
   }
   return Response.json({ agents: [], chats: listChatsForUser(ownerId)
-    .filter((chat) => (chat.projectId || undefined) === projectId && !chat.incognito && !chat.archived && !chat.automationRunId)
+    .filter((chat) => (chat.projectId || undefined) === projectId)
     .map(({ id, title }) => ({ id, title })) });
 }
