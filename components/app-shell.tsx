@@ -4659,7 +4659,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         enteringChat: enteringChatRef.current,
         userDetached: userDetachedFromBottomRef.current,
       })) void loadEarlierMessagesRef.current();
-    }, { root, rootMargin: "80px 0px 0px 0px", threshold: 0 });
+    }, { root, threshold: 0 });
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
@@ -5654,6 +5654,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (isProgrammaticScroll()) {
         return;
       }
+      if (el.scrollTop < 80 && userDetachedFromBottomRef.current) void loadEarlierMessagesRef.current();
       if (action === "attach") {
         attachToBottom();
       }
