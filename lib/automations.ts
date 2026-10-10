@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { getDatabase, transaction } from "@/lib/sqlite";
-import { appendMessage, createChat, deleteChat, getChat, saveChat } from "@/lib/db-store";
-import { enqueueJob, getJob } from "@/lib/db-jobs";
+import { appendMessage, createChat, deleteChat, getChat, getGlobalModelSettings, saveChat } from "@/lib/db-store";
+import { enqueueJob, getActiveJob, getJob } from "@/lib/db-jobs";
 import { getProject } from "@/lib/projects";
+import { getProjectAgentForChat } from "@/lib/project-team";
 
 export const MAX_ACTIVE_AUTOMATIONS = 20;
 export const MIN_AUTOMATION_INTERVAL_MINUTES = 60;
@@ -41,7 +42,7 @@ export type AutomationGraph = {
 export type Automation = {
   id: string;
   ownerId: string;
-  /** Context/source chat selected when the automation is created. Runs use their own chats. */
+  /** Context/source chat. Ordinary runs are isolated; project agents run in their durable chat. */
   chatId: string;
   chatTitle?: string;
   projectId?: string | null;
@@ -368,11 +369,27 @@ function hasActiveRun(automationId: string) {
   ).get(automationId));
 }
 
-function resolvedProjectId(ownerId: string, projectId?: string | null) {
-  if (projectId === null) return null;
-  const id = typeof projectId === "string" ? projectId.trim() : "";
-  if (!id) return undefined;
-  return getProject(id, ownerId) ? id : null;
+/** Resolve the target before creating any chat, with the same rules for UI and MCP. */
+function resolveAutomationTarget(ownerId: string, chatId: string | undefined, projectId?: string | null, allowLegacyUnassignedContext = false) {
+  const chat = chatId ? getChat(chatId, ownerId) : null;
+  if (chatId && (!chat || chat.incognito || chat.archived || chat.automationRunId)) {
+    throw new Error("Select an available non-incognito context chat.");
+  }
+  const id = projectId === undefined ? chat?.projectId : projectId?.trim() || undefined;
+  const project = id ? getProject(id, ownerId) : null;
+  if (id && !project) throw new Error("Project not found.");
+  // Older releases could save a normal project on the automation while leaving
+  // its context chat unassigned. Preserve those runs, while new destinations are strict.
+  const legacyContext = allowLegacyUnassignedContext && project?.mode !== "agents" && !chat?.projectId;
+  if (chat && (chat.projectId || undefined) !== id && !legacyContext) throw new Error("The selected chat must belong to the selected project.");
+  const agent = chat ? getProjectAgentForChat(chat.id, ownerId) : null;
+  if (project?.mode === "agents" && (!agent || agent.projectId !== id || agent.archivedAt)) {
+    throw new Error("Select an active agent in this project.");
+  }
+  if (agent && (!project || project.mode !== "agents" || agent.archivedAt)) {
+    throw new Error("Select an available project agent.");
+  }
+  return { chat, projectId: id, agent };
 }
 
 export function createAutomation(input: {
@@ -399,8 +416,7 @@ export function createAutomation(input: {
   if (activeCount(input.ownerId) >= MAX_ACTIVE_AUTOMATIONS) {
     throw new Error(`Maximum ${MAX_ACTIVE_AUTOMATIONS} active automations reached.`);
   }
-  const chat = input.chatId ? getChat(input.chatId, input.ownerId) : createChat(`Automation · ${name}`, undefined, input.ownerId);
-  if (!chat || chat.incognito) throw new Error("A valid non-incognito context chat is required.");
+  const target = resolveAutomationTarget(input.ownerId, input.chatId, input.projectId);
   const now = iso();
   const id = randomUUID();
   const storedSchedule = scheduleStorage(schedule);
@@ -423,6 +439,7 @@ export function createAutomation(input: {
     maxRunMinutes,
   });
   const graph = normalizeGraph(input.graph, fallbackGraph);
+  const chat = target.chat || createChat(`Automation · ${name}`, undefined, input.ownerId, undefined, { projectId: target.projectId });
   getDatabase().prepare(
     `INSERT INTO automations
       (id, owner_id, chat_id, project_id, name, prompt, creator, mode_id, model_id, extended_model_id,
@@ -432,7 +449,7 @@ export function createAutomation(input: {
     id,
     input.ownerId,
     chat.id,
-      resolvedProjectId(input.ownerId, input.projectId) || null,
+    target.projectId || null,
     name,
     prompt,
     input.creator === "agent" ? "agent" : "user",
@@ -488,8 +505,7 @@ export function updateAutomation(
   const current = getAutomation(id, ownerId, false);
   if (!current) return null;
   const schedule = patch.schedule ? validateSchedule(patch.schedule) : current.schedule;
-  const chat = patch.chatId ? getChat(patch.chatId, ownerId) : getChat(current.chatId, ownerId);
-  if (!chat || chat.incognito) throw new Error("A valid non-incognito context chat is required.");
+  const target = resolveAutomationTarget(ownerId, patch.chatId !== undefined ? patch.chatId : current.chatId, patch.projectId !== undefined ? patch.projectId : current.projectId);
   const now = iso();
   const storedSchedule = scheduleStorage(schedule);
   const nextRunAt = patch.schedule
@@ -518,9 +534,8 @@ export function updateAutomation(
     maxRunMinutes,
   });
   const graph = patch.graph ? normalizeGraph(patch.graph, generatedGraph) : generatedGraph;
-    const projectId = patch.projectId !== undefined
-      ? resolvedProjectId(ownerId, patch.projectId) || null
-      : current.projectId || null;
+  const projectId = target.projectId || null;
+  const chat = target.chat || createChat(`Automation · ${name}`, undefined, ownerId, undefined, { projectId: target.projectId });
   getDatabase().prepare(
     `UPDATE automations SET chat_id = ?, project_id = ?, name = ?, prompt = ?, mode_id = ?, model_id = ?, extended_model_id = ?,
        max_run_minutes = ?, graph_json = ?, model_params_json = ?, extended_model_params_json = ?, schedule_kind = ?, schedule_value = ?, timezone = ?, next_run_at = ?,
@@ -577,7 +592,10 @@ export function deleteAutomation(id: string, ownerId: string) {
   if (!runChats) return false;
   // Run chats are auxiliary durable transcripts. Delete them after the automation
   // transaction so deleteChat() can use its own transaction safely.
-  for (const row of runChats) deleteChat(row.chatId, ownerId);
+  for (const row of runChats) {
+    // A team run uses the selected agent's durable chat; never delete it.
+    if (getChat(row.chatId, ownerId)?.automationId === id) deleteChat(row.chatId, ownerId);
+  }
   return true;
 }
 
@@ -618,19 +636,24 @@ function runTitle(name: string, createdAt: string) {
 export function startAutomationRun(automation: Automation, trigger: AutomationRun["trigger"] = "scheduled") {
   const id = randomUUID();
   const now = iso();
-  const sourceChat = getChat(automation.chatId, automation.ownerId);
-  if (!sourceChat || sourceChat.incognito) throw new Error("Automation context chat is no longer available.");
-  const runChat = createChat(
+  const target = resolveAutomationTarget(automation.ownerId, automation.chatId, automation.projectId, true);
+  const sourceChat = target.chat;
+  if (!sourceChat) throw new Error("Automation context chat is no longer available.");
+  // Team identity and handoffs are bound to the agent chat. Ordinary runs stay isolated.
+  const runChat = target.agent ? sourceChat : createChat(
     runTitle(automation.name, now),
     sourceChat.browserContext ? { ...sourceChat.browserContext } : undefined,
     automation.ownerId,
-    automation.modelId ? { id: automation.modelId, params: automation.modelParams } : undefined,
+    automation.modelId ? { id: automation.modelId, params: automation.modelParams } : sourceChat.modelId ? { id: sourceChat.modelId, params: sourceChat.modelParams } : undefined,
+    { projectId: target.projectId },
   );
-  runChat.automationId = automation.id;
-  runChat.automationRunId = id;
-  runChat.automationName = automation.name;
-  runChat.keywords = ["automation", automation.name].filter(Boolean).slice(0, 8);
-  saveChat(runChat);
+  if (!target.agent) {
+    runChat.automationId = automation.id;
+    runChat.automationRunId = id;
+    runChat.automationName = automation.name;
+    runChat.keywords = ["automation", automation.name].filter(Boolean).slice(0, 8);
+    saveChat(runChat);
+  }
   const messageId = randomUUID();
   appendMessage(runChat.id, {
     id: messageId,
@@ -670,33 +693,44 @@ function automationExecutionContext(automation: Automation) {
 }
 
 export function queueAutomationRun(automation: Automation, trigger: AutomationRun["trigger"] = "scheduled") {
-  if (hasActiveRun(automation.id)) throw new Error("This automation already has an active run.");
-  const run = startAutomationRun(automation, trigger);
-  try {
-    const job = enqueueJob({
-      chatId: run.chatId,
-      userId: automation.ownerId,
-      message: automation.prompt,
-      messageId: run.messageId,
-      modeId: automation.modeId || "agent",
-      ...(automation.modelId ? { modelId: automation.modelId } : {}),
-      ...(automation.extendedModelId ? { extendedModelId: automation.extendedModelId } : {}),
-      ...(automation.modelParams?.length ? { modelParams: automation.modelParams } : {}),
-      ...(automation.extendedModelParams?.length ? { extendedModelParams: automation.extendedModelParams } : {}),
-      maxRuntimeMs: automation.maxRunMinutes * 60_000,
-      automationId: automation.id,
-      automationRunId: run.id,
-      automationContext: automationExecutionContext(automation),
-    });
-    linkAutomationRunJob(run.id, job.id);
-    return { run: { ...run, jobId: job.id }, job };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not enqueue automation run.";
-    getDatabase().prepare(
-      "UPDATE automation_runs SET status = 'error', completed_at = ?, error = ? WHERE id = ?",
-    ).run(iso(), message.slice(0, 2_000), run.id);
-    throw error;
-  }
+  return transaction(() => {
+    if (hasActiveRun(automation.id)) throw new Error("This automation already has an active run.");
+    const target = resolveAutomationTarget(automation.ownerId, automation.chatId, automation.projectId, true);
+    if (target.agent && getActiveJob(target.agent.chatId, automation.ownerId)) {
+      const error = new Error("This agent already has an active run. Wait for it to finish.");
+      error.name = "ActiveChatRun";
+      throw error;
+    }
+    const defaults = getGlobalModelSettings(automation.ownerId);
+    const modelId = automation.modelId || target.chat?.modelId || defaults.modelId;
+    const modelParams = automation.modelId ? automation.modelParams : target.chat?.modelId ? target.chat.modelParams : defaults.modelParams;
+    const run = startAutomationRun(automation, trigger);
+    try {
+      const job = enqueueJob({
+        chatId: run.chatId,
+        userId: automation.ownerId,
+        message: automation.prompt,
+        messageId: run.messageId,
+        modeId: automation.modeId || "agent",
+        ...(modelId ? { modelId } : {}),
+        ...(automation.extendedModelId ? { extendedModelId: automation.extendedModelId } : {}),
+        ...(modelParams?.length ? { modelParams } : {}),
+        ...(automation.extendedModelParams?.length ? { extendedModelParams: automation.extendedModelParams } : {}),
+        maxRuntimeMs: automation.maxRunMinutes * 60_000,
+        automationId: automation.id,
+        automationRunId: run.id,
+        automationContext: automationExecutionContext(automation),
+      });
+      linkAutomationRunJob(run.id, job.id);
+      return { run: { ...run, jobId: job.id }, job };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not enqueue automation run.";
+      getDatabase().prepare(
+        "UPDATE automation_runs SET status = 'error', completed_at = ?, error = ? WHERE id = ?",
+      ).run(iso(), message.slice(0, 2_000), run.id);
+      throw error;
+    }
+  });
 }
 
 export function runAutomationNow(id: string, ownerId: string) {
@@ -773,7 +807,7 @@ export function finalizeAutomationRunForJob(jobId: string) {
   // Carry the shared browser session/tabs forward without merging run messages into
   // the context chat. The next isolated run therefore continues the same durable
   // browser session while run transcripts remain completely separate.
-  if (runChat?.browserContext) {
+  if (runChat?.browserContext && row.chatId !== row.contextChatId) {
     const contextChat = getChat(row.contextChatId, row.ownerId);
     if (contextChat) {
       contextChat.browserContext = { ...runChat.browserContext, updatedAt: now };

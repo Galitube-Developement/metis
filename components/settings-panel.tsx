@@ -68,6 +68,8 @@ import { cn } from "@/lib/utils";
 import type { MemoryItem } from "@/components/memories-panel";
 import { MicrophoneSettings } from "@/components/microphone-settings";
 import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
+import { ProviderLimitSettings } from "@/components/provider-limit-settings";
+import { NotificationDeliverySettings } from "@/components/notification-delivery-settings";
 import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
 import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -687,8 +689,6 @@ export function SettingsPanel({
   settingsTab,
   onSettingsTabChange,
   memories,
-  notificationsEnabled,
-  onNotificationsEnabledChange,
   soundCuesEnabled,
   onSoundCuesEnabledChange,
   voiceInputEnabled,
@@ -845,8 +845,6 @@ export function SettingsPanel({
   const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
   const [sharedChats, setSharedChats] = useState<ArchivedChat[]>([]);
   const [archivedChatsLoaded, setArchivedChatsLoaded] = useState(false);
-  const [browserNotificationsAvailable, setBrowserNotificationsAvailable] =
-    useState(false);
   const [resetMetisOpen, setResetMetisOpen] = useState(false);
   const [updateMetisOpen, setUpdateMetisOpen] = useState(false);
   const loadRemoteClients = useCallback(async () => {
@@ -1108,11 +1106,6 @@ export function SettingsPanel({
       window.clearInterval(timer);
     };
   }, [remotePairExistingIds, remotePairStep]);
-  useEffect(() => {
-    setBrowserNotificationsAvailable(
-      typeof window !== "undefined" && "Notification" in window,
-    );
-  }, []);
 
   const loadMcpServers = useCallback(async () => {
     try {
@@ -1664,28 +1657,7 @@ export function SettingsPanel({
     toast.success("Provider connection deleted");
   }
 
-  async function toggleNotifications() {
-    if (notificationsEnabled) {
-      onNotificationsEnabledChange(false);
-      return;
-    }
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    if (Notification.permission === "default") {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        toast.warning(
-          permission === "denied"
-            ? "Browser notifications are blocked."
-            : "Browser notification permission was not granted.",
-        );
-        return;
-      }
-    } else if (Notification.permission !== "granted") {
-      toast.warning("Browser notifications are blocked.");
-      return;
-    }
-    onNotificationsEnabledChange(true);
-  }
+
 
   function handleFinishSoundUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -2455,8 +2427,9 @@ export function SettingsPanel({
      <VoiceDictionarySettings />
    </SettingsFeaturePane>
  ) : settingsPane === "agent-settings" ? (
-   <SettingsFeaturePane backLabel="Agent" title="Settings" description="Choose how long agents can work." slot="agent-settings" onBack={() => setSettingsPane("tab")}>
+   <SettingsFeaturePane backLabel="Agent" title="Settings" description="Choose runtime limits and how agents recover from provider limits." slot="agent-settings" onBack={() => setSettingsPane("tab")}>
      <AgentRuntimeSettings />
+     <ProviderLimitSettings />
    </SettingsFeaturePane>
  ) : settingsPane === "agent-rules" ? (
    <SettingsFeaturePane
@@ -2613,33 +2586,7 @@ export function SettingsPanel({
                     response.
                   </p>
                 </div>
-                {browserNotificationsAvailable ? (
-                  <>
-                    <div className="flex items-center justify-between gap-4">
-                      <p className="text-xs text-muted-foreground">
-                        Browser notifications
-                      </p>
-                      <Button
-                        type="button"
-                        variant={notificationsEnabled ? "default" : "outline"}
-                        aria-pressed={notificationsEnabled}
-                        onClick={() => void toggleNotifications()}
-                        className="shrink-0"
-                      >
-                        {notificationsEnabled ? "On" : "Off"}
-                      </Button>
-                    </div>
-                    {Notification.permission === "denied" ? (
-                      <p className="text-xs text-amber-400">
-                        Notifications are blocked in this browser.
-                      </p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Browser notifications are unavailable.
-                  </p>
-                )}
+                <NotificationDeliverySettings />
                 <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
                   <div>
                     <p className="text-xs text-muted-foreground">Sound cues</p>

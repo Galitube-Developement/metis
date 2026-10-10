@@ -11,6 +11,7 @@ process.env.CHAT_DATA_DIR = dir;
 process.env.CHAT_DB_PATH = path.join(dir, "chat.sqlite");
 process.env.AI_CHAT_MCP_STATE_DIR = dir;
 process.env.MCP_BEARER_TOKEN = "memory-policy-test";
+process.env.AI_CHAT_INTERNAL_ORIGIN = "http://memory-policy.invalid";
 const modules = Promise.all([
  import("../lib/db-store"), import("../lib/projects"),
  import("../app/api/internal/mcp-memory/route"), import("../lib/context-scope"),
@@ -50,7 +51,7 @@ test("project chats default to project memory and can explicitly choose global",
  assert.equal(global.status,200); assert.equal(global.body.scope,"global");
  const list = await call(chat.id,{action:"list"});
  assert.deepEqual(list.body.memories.map((x:{id:string})=>x.id),[local.body.memory.id]);
- assert.deepEqual(list.body.availableScopes,["project","global"]);
+ assert.deepEqual(list.body.availableScopes,["chat","project","global"]);
  assert((await call(chat.id,{action:"list",scope:"global"})).body.memories.some((x:{id:string})=>x.id===global.body.memory.id));
  assert.equal((await call(chat.id,{action:"edit",scope:"global",id:global.body.memory.id,content:"Updated preference"})).status,200);
  assert.equal((await call(chat.id,{action:"delete",scope:"global",id:global.body.memory.id})).status,200);
@@ -107,7 +108,7 @@ test("personal context tools check the project policy before contacting the glob
   const definition = gateway.tools.find((item: {name:string}) => item.name===name);
   assert.ok(definition);
   const properties = definition.inputSchema.properties as {scope:{enum:string[]}};
-  assert.deepEqual(properties.scope.enum,["project","global"]);
+  assert.deepEqual(properties.scope.enum,["chat","project","global"]);
  }
  const calls: string[] = [];
  t.mock.method(globalThis,"fetch",async (url: unknown) => {

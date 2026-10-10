@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import { workspaceFileDirectory, type WorkspaceFileLocation, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
 import { createPortal } from "react-dom";
 import { ChevronRight, File, Folder, Fullscreen, LoaderCircle, Minimize2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -15,6 +16,7 @@ type RemoteEntry = { name: string; directory: boolean; path: string };
 type RemoteFileEditorProps = {
   cwd: string;
   onCwdChange: (cwd: string) => void;
+  fileRequest?: WorkspaceFileRequest | null;
 };
 
 function parseListing(output: string, cwd: string): RemoteEntry[] {
@@ -42,7 +44,7 @@ function languageForPath(path: string): string {
   return (extension && languages[extension]) || "plaintext";
 }
 
-export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
+export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEditorProps) {
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [selectedEntryPath, setSelectedEntryPath] = useState("");
@@ -54,6 +56,7 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
   const [newName, setNewName] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(240);
+  const [explorerOpen, setExplorerOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [unsavedDialogOpen, setUnsavedDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState("");
@@ -61,7 +64,28 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
   const [entryDialogName, setEntryDialogName] = useState("");
   const pendingActionRef = useRef<(() => void) | null>(null);
   const dragStartRef = useRef<{ pointerX: number; width: number } | null>(null);
+  const loadedDirectoryRef = useRef<string | null>(null);
+  const loadVersionRef = useRef(0);
+  const handledFileRequestRef = useRef<number | null>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const [fileLocation, setFileLocation] = useState<WorkspaceFileLocation | null>(null);
+  const fileLocationRef = useRef<WorkspaceFileLocation | null>(null);
+  fileLocationRef.current = fileLocation;
   const dirty = Boolean(selectedPath) && content !== savedContent;
+
+  const revealLocation = useCallback((location: WorkspaceFileLocation | null) => {
+    const editor = editorRef.current;
+    if (!editor || !location) return;
+    const lineNumber = Math.min(location.line || 1, editor.getModel()?.getLineCount() || 1);
+    const column = Math.min(location.column || 1, editor.getModel()?.getLineMaxColumn(lineNumber) || 1);
+    editor.setPosition({ lineNumber, column });
+    editor.revealLineInCenter(lineNumber);
+    editor.focus();
+  }, []);
+
+  useEffect(() => {
+    if (fileLocation?.path === selectedPath) revealLocation(fileLocation);
+  }, [fileLocation, selectedPath, revealLocation]);
 
   async function request(body: Record<string, unknown>) {
     const response = await fetch("/api/remote", {
@@ -75,10 +99,13 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
   }
 
   async function loadDirectory(nextPath = cwd) {
+    const version = ++loadVersionRef.current;
     setLoading(true);
     setError("");
     try {
       const data = await request({ action: "list", path: nextPath, cwd });
+      if (version !== loadVersionRef.current) return;
+      loadedDirectoryRef.current = nextPath;
       setEntries(parseListing(data.output || "", nextPath));
       onCwdChange(nextPath);
       setSelectedPath("");
@@ -86,14 +113,14 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
       setContent("");
       setSavedContent("");
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Directory could not be loaded");
+      if (version === loadVersionRef.current) setError(nextError instanceof Error ? nextError.message : "Directory could not be loaded");
     } finally {
-      setLoading(false);
+      if (version === loadVersionRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadDirectory(cwd);
+    if (loadedDirectoryRef.current !== cwd) void loadDirectory(cwd);
     // The editor should refresh when the shared remote cwd changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd]);
@@ -107,25 +134,55 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
     setUnsavedDialogOpen(true);
   }
 
-  async function openEntry(entry: RemoteEntry) {
+  async function readFile(location: WorkspaceFileLocation, loadParent = false) {
+    const version = ++loadVersionRef.current;
     setError("");
-    const action = async () => {
-      setSelectedEntryPath(entry.path);
-      if (entry.directory) {
-        await loadDirectory(entry.path);
-        setSelectedEntryPath(entry.path);
-        return;
+    setLoading(true);
+    try {
+      const parent = workspaceFileDirectory(location.path);
+      const [file, listing] = await Promise.all([
+        request({ action: "read", path: location.path, cwd }),
+        loadParent ? request({ action: "list", path: parent, cwd }) : Promise.resolve(null),
+      ]);
+      if (version !== loadVersionRef.current) return;
+      if (listing) {
+        loadedDirectoryRef.current = parent;
+        setEntries(parseListing(listing.output || "", parent));
+        onCwdChange(parent);
       }
-      try {
-        const data = await request({ action: "read", path: entry.path, cwd });
-        setSelectedPath(entry.path);
-        setContent(data.content || "");
-        setSavedContent(data.content || "");
-      } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : "File could not be read");
-      }
-    };
-    runAfterUnsavedCheck(() => void action());
+      setSelectedEntryPath(location.path);
+      setSelectedPath(location.path);
+      setContent(file.content || "");
+      setSavedContent(file.content || "");
+      setFileLocation({ ...location });
+    } catch (nextError) {
+      if (version === loadVersionRef.current) setError(nextError instanceof Error ? nextError.message : "File could not be read");
+    } finally {
+      if (version === loadVersionRef.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!fileRequest || handledFileRequestRef.current === fileRequest.id) return;
+    handledFileRequestRef.current = fileRequest.id;
+    setExplorerOpen(false);
+    if (fileRequest.path === selectedPath) {
+      ++loadVersionRef.current;
+      setLoading(false);
+      setError("");
+      setFileLocation({ ...fileRequest });
+      return;
+    }
+    runAfterUnsavedCheck(() => void readFile(fileRequest, true));
+    // Handle each click once; the guard uses the current unsaved state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileRequest]);
+
+  async function openEntry(entry: RemoteEntry) {
+    runAfterUnsavedCheck(() => {
+      if (entry.directory) void loadDirectory(entry.path);
+      else void readFile({ path: entry.path });
+    });
   }
 
   async function save() {
@@ -308,13 +365,14 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
   const editor = (
     <div className={fullscreen ? "fixed inset-[1%] z-50 flex min-h-0 flex-col gap-3 rounded-2xl border border-border bg-background p-4 shadow-2xl ring-1 ring-foreground/10 sm:p-6" : "flex min-h-0 flex-1 flex-col gap-2"}>
       <div className="flex items-center gap-2">
+        <Button type="button" size="icon-sm" variant="ghost" aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"} title={explorerOpen ? "Hide file explorer" : "Show file explorer"} aria-expanded={explorerOpen} onClick={() => setExplorerOpen((open) => !open)}><Folder className="size-3.5" /></Button>
         <Input value={cwd} onChange={(event) => onCwdChange(event.target.value)} aria-label="Remote directory" className="h-8 min-w-0 flex-1 font-mono text-xs" />
         <Button type="button" size="icon-sm" variant="ghost" onClick={() => runAfterUnsavedCheck(() => void loadDirectory(cwd))} aria-label="Refresh files">
           <LoaderCircle className={loading ? "size-3.5 animate-spin" : "size-3.5"} />
         </Button>
         {fullscreen ? (
           <div className="flex items-center gap-1">
-            <Button type="button" size="icon-sm" variant="secondary" disabled={!selectedPath || saving} onClick={() => void save()} aria-label="Save file" title="Save file">
+            <Button type="button" size="icon-sm" variant="secondary" disabled={!selectedPath || loading || saving} onClick={() => void save()} aria-label="Save file" title="Save file">
               {saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             </Button>
             <Button type="button" size="icon-sm" variant="secondary" onClick={() => runAfterUnsavedCheck(() => setFullscreen(false))} aria-label="Exit fullscreen" title="Exit fullscreen">
@@ -324,7 +382,7 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1 gap-0">
-        <div className="min-h-0 shrink-0 overflow-y-auto rounded-md border border-border/40 p-1" style={{ width: `${explorerWidth}px` }}>
+        <div hidden={!explorerOpen} className="min-h-0 shrink-0 overflow-y-auto rounded-md border border-border/40 p-1" style={{ width: `${explorerWidth}px` }}>
           {entries.map((entry) => (
             <button key={entry.path} type="button" onClick={() => void openEntry(entry)} className={`flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs hover:bg-muted/50 ${entry.path === selectedEntryPath ? "bg-muted" : ""}`}>
               {entry.directory ? <Folder className="size-3.5 text-primary" /> : <File className="size-3.5 text-muted-foreground" />}
@@ -334,26 +392,27 @@ export function RemoteFileEditor({ cwd, onCwdChange }: RemoteFileEditorProps) {
           ))}
           {!loading && entries.length === 0 ? <p className="p-2 text-xs text-muted-foreground">Directory is empty.</p> : null}
         </div>
-        <div role="separator" aria-orientation="vertical" aria-label="Resize file explorer" aria-valuemin={160} aria-valuemax={420} aria-valuenow={explorerWidth} tabIndex={0} onPointerDown={startDragging} onKeyDown={onResizeKeyDown} className="group flex w-3 shrink-0 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <div hidden={!explorerOpen} role="separator" aria-orientation="vertical" aria-label="Resize file explorer" aria-valuemin={160} aria-valuemax={420} aria-valuenow={explorerWidth} tabIndex={0} onPointerDown={startDragging} onKeyDown={onResizeKeyDown} className="group flex w-3 shrink-0 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <span className={`h-full w-px bg-border/50 transition-colors group-hover:bg-primary/60 ${dragging ? "bg-primary" : ""}`} />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="New file…" className="h-8 min-w-0 flex-1 text-xs" />
             <Button type="button" size="icon-sm" variant="ghost" disabled={!newName.trim()} onClick={() => void createFile()} aria-label="Create file"><Plus className="size-3.5" /></Button>
             <Button type="button" size="icon-sm" variant="ghost" onClick={openCreateFolderDialog} aria-label="Create folder"><Folder className="size-3.5" /></Button>
             <Button type="button" size="icon-sm" variant="ghost" disabled={!selectedEntryPath} onClick={openRenameDialog} aria-label="Rename entry"><Pencil className="size-3.5" /></Button>
             <Button type="button" size="icon-sm" variant="ghost" disabled={!selectedEntryPath} onClick={() => setDeleteTarget(selectedEntryPath)} aria-label="Delete entry"><Trash2 className="size-3.5" /></Button>
             {!fullscreen ? <Button type="button" size="sm" variant="outline" disabled={!selectedPath} onClick={() => setFullscreen(true)} aria-label="Open file fullscreen" title="Open file fullscreen"><Fullscreen className="size-3.5" />Fullscreen</Button> : null}
-            {!fullscreen ? <Button type="button" size="icon-sm" disabled={!selectedPath || saving} onClick={() => void save()} aria-label="Save file" title="Save file">{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}</Button> : null}
+            {!fullscreen ? <Button type="button" size="icon-sm" disabled={!selectedPath || loading || saving} onClick={() => void save()} aria-label="Save file" title="Save file">{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}</Button> : null}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/40">
-            <Editor height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
+            <Editor onMount={(editor) => { editorRef.current = editor; revealLocation(fileLocationRef.current); }} height="100%" path={selectedPath || "untitled"} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={(value) => setContent(value ?? "")} options={{ readOnly: loading || saving || !selectedPath, automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 8 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }} loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
           </div>
         </div>
       </div>
-      {selectedPath ? <p className="truncate text-[11px] text-muted-foreground">{dirty ? "Unsaved changes · " : ""}{selectedPath}</p> : null}
-      {error ? <p className="whitespace-pre-wrap text-xs text-destructive">{error}</p> : null}
+      {loading ? <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" />Loading files…</p> : null}
+      {selectedPath ? <p data-open-file={selectedPath} className="truncate text-[11px] text-muted-foreground">{dirty ? "Unsaved changes · " : ""}{selectedPath}</p> : null}
+      {error ? <p role="alert" className="whitespace-pre-wrap text-xs text-destructive">{error}</p> : null}
       <Dialog open={entryDialogMode !== null} onOpenChange={(open) => { if (!open) closeEntryDialog(); }}>
         <DialogContent className="sm:max-w-sm">
           <form onSubmit={submitEntryDialog} className="space-y-4">

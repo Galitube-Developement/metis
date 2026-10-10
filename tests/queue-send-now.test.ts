@@ -133,12 +133,13 @@ test("a queued stored attachment with no text can be sent", async () => {
   assert.deepEqual(modules[0].getChat(f.chat.id)?.messages.at(-1)?.attachments, stored);
 });
 
-test("Send now cancels a pending question before accepting the follow-up", async () => {
+test("Send now cancels a pending question before accepting the follow-up", async (t) => {
   const f = fixture();
   const questions = await import("../lib/db-questions");
   const pending = questions.createPendingQuestion([{ question: "Old question" }], f.chat.id, f.ownerId, {
     jobId: f.old!.id, runId: f.old!.id,
   });
+  t.after(async () => { pending.stop(); await pending.promise; });
   modules[1].updateJob(f.old!.id, { status: "waiting_input" });
   modules[0].updateChat(f.chat.id, { pendingQuestion: pending, runStatus: "waiting_input" }, f.ownerId);
   assert.equal((await f.submit()).status, 202);

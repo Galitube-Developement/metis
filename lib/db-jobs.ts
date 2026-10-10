@@ -1,3 +1,5 @@
+import { providerRateLimit, type ProviderRateLimit } from "@/lib/provider-rate-limit";
+import { getProviderLimitResumeEnabled } from "@/lib/provider-rate-limit-settings";
 import { randomUUID } from "node:crypto";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
 import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
@@ -217,8 +219,10 @@ function enqueueJobInTransaction(
       ).count || 0,
     );
     const queuedRows = getDatabase()
-      .prepare("SELECT data FROM jobs WHERE status = 'queued'")
-      .all();
+      .prepare(`SELECT data FROM jobs WHERE status = 'queued'
+        AND (NOT json_valid(data) OR json_extract(data, '$.providerRateLimit.resetAt') IS NULL
+             OR json_extract(data, '$.providerRateLimit.resetAt') <= ?)`)
+      .all(iso());
     const queued = queuedRows.filter((row) => parseData<AgentJob>(row)).length;
     const queueMessage = describeQueueWait(running, queued, maxWorkers);
     const job: AgentJob = {
@@ -418,6 +422,8 @@ export function claimNextJob(
       `SELECT id, chat_id as chatId, user_id as userId, data
        FROM jobs
        WHERE status = 'queued'
+         AND (NOT json_valid(data) OR json_extract(data, '$.providerRateLimit.resetAt') IS NULL
+              OR json_extract(data, '$.providerRateLimit.resetAt') <= ?)
          AND NOT EXISTS (
            SELECT 1 FROM job_leases l
            WHERE l.job_id = jobs.id AND l.expires_at > ?
@@ -450,7 +456,8 @@ export function claimNextJob(
              SELECT 1 FROM jobs AS other
              WHERE other.chat_id = jobs.chat_id
                AND other.id != jobs.id
-               AND other.status IN ('running', 'switching', 'waiting_input', 'waiting_for_user')
+               AND (other.status IN ('running', 'switching', 'waiting_input', 'waiting_for_user')
+                 OR (other.status = 'queued' AND json_valid(other.data) AND json_extract(other.data, '$.providerRateLimit.resetAt') IS NOT NULL))
                AND json_valid(other.data)
                AND (
                  json_extract(other.data, '$.parentJobId') IS NULL
@@ -479,7 +486,7 @@ export function claimNextJob(
        LIMIT 1`,
     );
     for (;;) {
-      const row = selectQueued.get(iso(), options.interactiveOnly ? 1 : 0) as
+      const row = selectQueued.get(iso(), iso(), options.interactiveOnly ? 1 : 0) as
         | { id: string; chatId: string; userId: string | null; data: string }
         | undefined;
       if (!row) return null;
@@ -502,8 +509,15 @@ export function claimNextJob(
         ).run(JSON.stringify(failed), failed.status, now, row.id);
         continue;
       }
+      const waiting = (job as AgentJob & { providerRateLimit?: ProviderRateLimit }).providerRateLimit;
+      const detectedAt = Date.parse(waiting?.detectedAt || "");
+      const waitedMs = Number.isFinite(detectedAt) ? Math.max(0, Date.now() - detectedAt) : 0;
       const claimed = {
         ...job,
+        providerRateLimit: undefined,
+        ...(waiting && Number.isFinite(Date.parse(job.agentRuntimeDeadlineAt || "")) ? {
+          agentRuntimeDeadlineAt: new Date(Date.parse(job.agentRuntimeDeadlineAt!) + waitedMs).toISOString(),
+        } : {}),
         status: "running" as const,
         claimedAt: iso(),
         attempts: job.attempts + 1,
@@ -611,7 +625,7 @@ export function updateJob(
       | "cancellationCause"
       | "subagentAutoReview"
     >
-  >,
+  > & { providerRateLimit?: ProviderRateLimit },
   options: { expectedRevision?: number; control?: boolean } = {},
 ) {
   return transaction(() => {
@@ -619,6 +633,13 @@ export function updateJob(
     const current = getJob(id);
     if (!current) return null;
     if (!options.control && !hasActiveWorkerLease(db, id, iso())) return null;
+    // A late isolated-process exit belongs to the attempt that already released
+    // its lease. The supervisor must not overwrite a committed durable pause
+    // (or cancel its children) while reporting that exit as a failure.
+    if (!options.control && current.status === "queued" && patch.status === "error"
+        && (current as AgentJob & { providerRateLimit?: ProviderRateLimit }).providerRateLimit) {
+      throw new Error("Deferred provider-limit job cannot fail from a stale worker exit.");
+    }
     if (patch.status && !canTransitionJobStatus(current.status, patch.status)) {
       throw new Error(
         `Invalid job state transition: ${current.status} -> ${patch.status}`,
@@ -1097,6 +1118,10 @@ export function cancelAgentJob(jobId: string, userId?: string, reason = "Cancell
   return transaction(() => {
     const job = getJob(jobId);
     if (!job || (userId !== undefined && job.userId !== userId)) return null;
+    // The old attempt's runtime timer may fire during process cleanup after
+    // the pause commits. Waiting has no running attempt/budget to expire.
+    if (cause === "runtime_limit" && job.status === "queued"
+        && (job as AgentJob & { providerRateLimit?: ProviderRateLimit }).providerRateLimit) return job;
     if (!["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(job.status)) {
       // An explicit stop after expiry must still stop the surviving child branch.
       if (!cause && job.cancellationCause === "runtime_limit") cancelChildJobs(job.id, job.userId, reason);
@@ -1120,4 +1145,33 @@ export function cancelAgentJob(jobId: string, userId?: string, reason = "Cancell
 export function requestJobCancel(chatId: string, userId?: string) {
   const job = getActiveParentJob(chatId, userId) || getActiveJob(chatId, userId);
   return job ? cancelAgentJob(job.id, userId) : null;
+}
+
+/** Atomically publish the pause before releasing the writer lease. No sleeping worker. */
+export function deferProviderLimitedJob(jobId: string, error: unknown) {
+  // Old schedulers must never claim a deferred job before its reset.
+  // New workers advertise support to their isolated job processes.
+  if (process.env.NODE_ENV === "production" && process.env.AI_CHAT_PROVIDER_LIMIT_WAITER !== "1") return null;
+  const limit = providerRateLimit(error);
+  if (!limit) return null;
+  return transaction(() => {
+    const current = getJob(jobId);
+    if (!current || current.status !== "running" || !getProviderLimitResumeEnabled(current.userId)
+        || !hasActiveWorkerLease(getDatabase(), jobId, iso())) return null;
+    const message = `Provider usage limit reached. This run resumes automatically at ${limit.resetAt}.`;
+    const projected = updateChat(current.chatId, {
+      runStatus: "paused", runUpdatedAt: iso(), queueMessage: message,
+    }, current.userId);
+    if (!projected) return null;
+    appendRunEvent(current.id, current.chatId, current.userId, "status", {
+      status: "waiting_provider_limit", message, resetAt: limit.resetAt, source: limit.source,
+    });
+    const updated = updateJob(current.id, {
+      status: "queued", error: undefined, providerRateLimit: limit,
+      resumePrompt: "The provider usage limit has reset. Continue this same run from its saved provider session and durable checkpoint. Do not repeat completed tools or user-facing work.",
+      resumeRequestedAt: iso(),
+    }, { expectedRevision: jobRevision(current) });
+    if (!updated) throw new Error("Provider-limit pause lost its job revision.");
+    return updated;
+  });
 }

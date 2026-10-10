@@ -72,7 +72,7 @@ function visibleNotes(ownerId: string | undefined, chatId: string, incognito: bo
   if (incognito) return [];
   // Passing chatId makes the SQL scope filter explicit: global notes remain
   // available, while chat notes from another chat cannot enter this scope.
-  return listNotes({ ownerId, chatId });
+  return listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId);
 }
 
 /**
@@ -84,7 +84,8 @@ export function loadContextScope(input: ContextScopeInput): ContextScope | null 
   if (!chat) return null;
 
   const incognito = Boolean(chat.incognito);
-  const notes = visibleNotes(input.ownerId, chat.id, incognito);
+  const ownerId = input.ownerId ?? chat.ownerId;
+  const notes = visibleNotes(ownerId, chat.id, incognito);
   const noteIds = new Set(notes.map((note) => note.id));
   const pinnedIds = [
     ...new Set(chat.sessionState?.pinnedNoteIds?.filter((id) => noteIds.has(id)) || []),
@@ -145,7 +146,7 @@ function learnedFactsForChat(chat: Chat): ScopedLearnedFact[] {
     ownerId: chat.ownerId,
     chatId: chat.id,
     scope: "chat",
-  }).filter((note) => note.kind === LEARNED_FACT_KIND);
+  }).filter((note) => note.kind === LEARNED_FACT_KIND && note.ownerId === chat.ownerId && note.chatId === chat.id);
   const seen = new Set<string>();
   return notes
     .map((note): ScopedLearnedFact => ({
@@ -188,7 +189,7 @@ export function resolveScopeReferences(
         (incognito
           ? getNote(reference.id, ownerId)
           : getNote(reference.id, ownerId, { chatId }));
-      if (!note) return null;
+      if (!note || note.ownerId !== ownerId || (note.scope === "chat" && note.chatId !== chatId)) return null;
       return {
         ...noteToReference(note, "explicit"),
         detail: reference.detail || "Referenced note",
@@ -224,15 +225,9 @@ export function addLearnedFact(
   if (!chat || chat.incognito) return null;
   const content = fact.content.trim().slice(0, MAX_FACT_CHARS);
   if (!content) return null;
-  const timestamp = new Date().toISOString();
-  const id = fact.id?.trim().slice(0, 120) || `fact-${timestamp}`;
-  const learnedFact: ScopedLearnedFact = { id, content, createdAt: timestamp, updatedAt: timestamp };
-
-  // Blocker: Schema change needed for dedicated learned_fact storage.
-  // Currently stores as a chat-scoped note with kind=learned_fact to avoid
-  // polluting conversation history with empty system messages.
-  // Read side (learnedFactsForChat) now reads from notes, not message refs.
-  createNote({
+  // Use the existing durable chat-note store; never promote ordinary chat
+  // state into account/global memory. Return the actual persisted identity.
+  const note = createNote({
     ownerId: ownerId ?? chat.ownerId,
     chatId: chat.id,
     projectId: chat.projectId,
@@ -241,9 +236,9 @@ export function addLearnedFact(
     title: `Learned fact: ${content.slice(0, 80)}`,
     content,
     author: "agent",
+    ...(fact.id?.trim() ? { idempotencyKey: `chat-fact:${chat.id}:${fact.id.trim().slice(0, 120)}` } : {}),
   });
-
-  return learnedFact;
+  return { id: note.id, content: note.content, createdAt: note.createdAt, updatedAt: note.updatedAt };
 }
 
 export function scopeFactsFromMemories(memories: readonly Memory[]): ScopedLearnedFact[] {

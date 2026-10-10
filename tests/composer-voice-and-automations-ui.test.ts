@@ -101,8 +101,9 @@ test("agent completion uses the bundled default sound unless a custom sound is s
 });
 
 test("automations use the full-height demo split view without a composer or workspace panel", () => {
-  assert.match(automationsSource, /data-slot="automations-split-view"/);
-  assert.match(globalCssSource, /grid-template-columns: minmax\(220px, 38%\) minmax\(0, 1fr\)/);
+  const splitViewSource = readFileSync(new URL("../components/automation-editor-surface.tsx", import.meta.url), "utf8");
+  assert.match(splitViewSource, /data-slot="automations-split-view"/);
+  assert.match(globalCssSource, /grid-template-columns: minmax\(0, 1fr\) var\(--automation-detail-width, 480px\)/);
   assert.match(globalCssSource, /@media \(max-width: 900px\)[\s\S]*grid-template-rows: minmax\(210px, 36%\) minmax\(0, 1fr\)/);
   assert.match(globalCssSource, /\.automation-detail-content \{[\s\S]*?max-width: none;/);
   assert.match(globalCssSource, /\.automation-detail-content \{[\s\S]*?padding: 18px 12px 24px 18px;/);

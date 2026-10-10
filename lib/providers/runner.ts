@@ -1,3 +1,4 @@
+import { deferProviderLimitedJob } from "@/lib/db-jobs";
 import {
   appendMessage,
   getChat,
@@ -587,6 +588,10 @@ export async function runAlternativeProviderJob(
             ? error.message
             : "Provider run failed.";
     finalizeAlternativeTools(tools);
+    if (!cancelled && !interrupted && !runtimeFailure) {
+      checkpoint(true);
+      if (deferProviderLimitedJob(job.id, error)) return true;
+    }
     recordSignal({
       modelId: parsed.modelId,
       category: telemetryCategory(job.message),

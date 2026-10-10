@@ -14,7 +14,7 @@ import { metisAgentIdentity } from "@/lib/agent-identity";
 import { formatChatGoal } from "@/lib/chat-goal";
 import { chatMetadataPrompt } from "@/lib/chat-metadata-prompt";
 import { modeById } from "@/lib/modes";
-import { retrieveRelevantFacts } from "@/lib/context-layers";
+import { retrieveRelevantFacts, selectChatContinuityFacts } from "@/lib/context-layers";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import type { AgentJob } from "@/lib/jobs";
 
@@ -36,11 +36,19 @@ function boundedJoin(blocks: string[], maxChars: number) {
   for (const block of blocks) {
     const trimmed = block.trim();
     if (!trimmed) continue;
-    const remaining = maxChars - used;
+    const separatorChars = selected.length ? 2 : 0;
+    const remaining = maxChars - used - separatorChars;
     if (remaining <= 0) break;
-    const next = trimmed.length > remaining ? `${trimmed.slice(0, Math.max(0, remaining - 32))}\n[context clipped]` : trimmed;
+    const marker = "\n[context clipped]";
+    const clipped = trimmed.length > remaining;
+    const next = clipped
+      ? remaining >= marker.length
+        ? `${trimmed.slice(0, remaining - marker.length)}${marker}`
+        : trimmed.slice(0, remaining)
+      : trimmed;
     selected.push(next);
-    used += next.length + 2;
+    used += next.length + separatorChars;
+    if (clipped) break;
   }
   return selected.join("\n\n");
 }
@@ -109,7 +117,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   ], EXPLICIT_CONTEXT_CHARS);
 
   const pinned = boundedJoin([
-    ...(scope?.pinnedNotes || []).map((note) =>
+    ...(incognito ? [] : scope?.pinnedNotes || []).map((note) =>
       `- [note] ${note.title || "Untitled note"}\n  Context:\n${note.content}`,
     ),
   ], PINNED_CONTEXT_CHARS);
@@ -121,15 +129,9 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     project?.name,
   ].filter((value): value is string => Boolean(value?.trim())).join("\n");
 
-  // T3-style context ownership: the active native provider session owns raw
-  // history and compaction. Metis layers only the durable slices needed now.
-  // Both chat and global durable memory are relevance-only. Native sessions
-  // already own vague follow-ups; stateless providers retain bounded history.
-  // A recent-fact fallback would inject unrelated short-term state.
-  const workingFacts = retrieveRelevantFacts(retrievalQuery, scope?.learnedFacts || [], {
-    limit: 8,
-    fallback: 0,
-  });
+  // Reload bounded chat facts from durable storage on every prompt build,
+  // independently of native session history/compaction and current wording.
+  const workingFacts = selectChatContinuityFacts(retrievalQuery, incognito ? [] : scope?.learnedFacts || []);
   const retrievedGlobalFacts = retrieveRelevantFacts(retrievalQuery, globalFacts, {
     limit: 8,
     fallback: 0,
@@ -167,9 +169,10 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     // Layer 3 — Repo Map is metadata/tool-driven, never a repository dump.
     "Repository map: the filesystem/repository is durable external memory. Search/index first, then read only relevant files and symbols; never replay a whole repository into model context.",
     // Layers 4/5 — Retrieved Context + Working Memory.
+    job.incognito || chat?.incognito ? "" : "Keep a small chat working memory for decisions, constraints and corrections needed to continue this task. Use add_memory/edit_memory with scope chat at milestones; replace obsolete facts instead of accumulating transcripts. These facts belong only to this chat. Use global memories only when explicitly requested by the user.",
     pinned ? `Pinned chat context:\n${pinned}` : "",
     projectBlock ? `Project context:\n${projectBlock}` : "",
-    workingBlock,
+    workingBlock ? `${workingBlock}\nThis bounded context belongs only to the current chat and is reloaded from durable storage. Preserve it across compaction/resume; newer user corrections take precedence. Do not automatically create global memories from normal chat prompts.` : "",
     globalBlock,
     // Layer 6 — Checkpoints are injected only by recovery/compaction code.
     // Layer 7 — Raw History stays provider-owned for native sessions; custom

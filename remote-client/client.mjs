@@ -8,11 +8,12 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { Worker } from "node:worker_threads";
 import WebSocket from "ws";
+import { createNotificationReceiver } from "./notification-client.mjs";
 
 const execFileAsync = promisify(execFile);
 const shell = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : (process.env.SHELL || "/bin/sh");
 
-export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {}, desktopGuiAvailable = () => false } = {}) {
+export function startRemoteClient({ config: suppliedConfig, configPath, onEvent = () => {}, desktopGuiAvailable = () => false, nativeNotificationsAvailable = () => false, showNotification } = {}) {
   const resolvedPath = configPath || process.env.METIS_REMOTE_CLIENT_CONFIG ||
     path.join(os.homedir(), ".metis-ai", "remote-client.json");
   const config = suppliedConfig || JSON.parse(fs.readFileSync(resolvedPath, "utf8").replace(/^\uFEFF/, ""));
@@ -31,6 +32,7 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
     throw new Error("Remote client configuration is incomplete");
   }
   const wsUrl = server.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/ws/remote-client";
+  const receiveNotification = createNotificationReceiver({ config, configPath: resolvedPath, available: nativeNotificationsAvailable, show: showNotification });
   const running = new Map();
   const computerUseControllers = new Set();
   const computerUsePending = new Map();
@@ -247,9 +249,9 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
         retryMs = 1_000;
         log("authenticated", message.clientId || "");
         emit({ type: "connection", status: "online", at: new Date().toISOString() });
-        send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()) });
+        send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()), nativeNotifications: typeof showNotification === "function" && nativeNotificationsAvailable() === true });
         clearInterval(heartbeatTimer);
-        heartbeatTimer = setInterval(() => send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()) }), 20_000);
+        heartbeatTimer = setInterval(() => send({ type: "heartbeat", desktopGui: Boolean(desktopGuiAvailable()), nativeNotifications: typeof showNotification === "function" && nativeNotificationsAvailable() === true }), 20_000);
         clearTimeout(heartbeatTimeout);
         heartbeatTimeout = setTimeout(() => current.terminate(), 75_000);
         return;
@@ -257,6 +259,11 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       if (message.type === "heartbeat_ack") {
         clearTimeout(heartbeatTimeout);
         heartbeatTimeout = setTimeout(() => current.terminate(), 75_000);
+        return;
+      }
+      if (message.type === "notification" && authenticated) {
+        const ack = await receiveNotification(message);
+        if (ack && socket === current) send(ack);
         return;
       }
       if (message.type !== "request" || typeof message.requestId !== "string" || !authenticated) return;

@@ -138,6 +138,7 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
           ...process.env,
           ...(claimedJob.leaseOwner ? { AI_CHAT_WORKER_ID: claimedJob.leaseOwner } : {}),
           ...(claimedJob.leaseToken ? { AI_CHAT_JOB_LEASE_TOKEN: claimedJob.leaseToken } : {}),
+          AI_CHAT_PROVIDER_LIMIT_WAITER: "1",
           AI_CHAT_JOB_ID: claimedJob.id,
         },
         stdio: ["ignore", "inherit", "pipe"],
