@@ -1,70 +1,126 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { GripHorizontal, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import {
+  AUTOMATION_SIDEBAR_DEFAULT_WIDTH,
+  automationSidebarBounds,
+  clampAutomationSidebarWidth,
+} from "@/lib/automation-sidebar-layout";
 
-/** Move only the editor surface, never rerender the model pickers on pointer movement. */
-export function AutomationEditorSurface({ floating, children }: { floating: boolean; children: ReactNode }) {
+const WIDTH_KEY = "ai-chat:automation-sidebar-width";
+
+/** Resize the attached sidebar without rerendering the form on pointer movement. */
+export function AutomationSplitView({ creating, children }: { creating: boolean; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const position = useRef({ x: 0, y: 0 });
-  const gesture = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+  const requestedWidth = useRef(AUTOMATION_SIDEBAR_DEFAULT_WIDTH);
+  const displayedWidth = useRef(AUTOMATION_SIDEBAR_DEFAULT_WIDTH);
+  const gesture = useRef<{ x: number; width: number; cursor: string; userSelect: string } | null>(null);
 
-  function move(x: number, y: number) {
-    const panel = ref.current;
-    const parent = panel?.closest(".automations-split-view");
-    if (!panel || !parent || window.matchMedia("(max-width: 900px)").matches) return;
-    const bounds = parent.getBoundingClientRect();
-    const rect = panel.getBoundingClientRect();
-    const baseLeft = rect.left - position.current.x;
-    const baseTop = rect.top - position.current.y;
-    position.current = {
-      x: Math.min(bounds.right - rect.width - 12 - baseLeft, Math.max(bounds.left + 12 - baseLeft, x)),
-      y: Math.min(bounds.bottom - rect.height - 12 - baseTop, Math.max(bounds.top + 12 - baseTop, y)),
-    };
-    panel.style.translate = `${position.current.x}px ${position.current.y}px`;
-  }
+  const paint = useCallback(() => {
+    const container = ref.current;
+    const handle = handleRef.current;
+    if (!container || !handle) return;
+    const containerWidth = container.getBoundingClientRect().width;
+    const width = clampAutomationSidebarWidth(requestedWidth.current, containerWidth);
+    const { min, max } = automationSidebarBounds(containerWidth);
+    displayedWidth.current = width;
+    container.style.setProperty("--automation-detail-width", `${width}px`);
+    handle.setAttribute("aria-valuemin", String(Math.round(min)));
+    handle.setAttribute("aria-valuemax", String(Math.round(max)));
+    handle.setAttribute("aria-valuenow", String(width));
+    handle.setAttribute("aria-valuetext", `${width} pixels`);
+  }, []);
+
+  const save = useCallback(() => {
+    try { localStorage.setItem(WIDTH_KEY, String(requestedWidth.current)); } catch { /* Storage may be disabled. */ }
+  }, []);
+
+  const stop = useCallback(() => {
+    const start = gesture.current;
+    if (!start) return;
+    gesture.current = null;
+    document.body.style.cursor = start.cursor;
+    document.body.style.userSelect = start.userSelect;
+    handleRef.current?.removeAttribute("data-resizing");
+    save();
+  }, [save]);
 
   useEffect(() => {
-    if (!floating) return;
-    function fit() {
-      if (window.matchMedia("(max-width: 900px)").matches) {
-        position.current = { x: 0, y: 0 };
-        if (ref.current) ref.current.style.translate = "none";
-      } else move(position.current.x, position.current.y);
-    }
-    const observer = new ResizeObserver(fit);
+    try {
+      const stored = Number(localStorage.getItem(WIDTH_KEY));
+      if (Number.isFinite(stored) && stored > 0) requestedWidth.current = stored;
+    } catch { /* Keep the default when storage is unavailable. */ }
+    paint();
+    const observer = new ResizeObserver(() => {
+      if (window.matchMedia("(max-width: 900px)").matches) stop();
+      paint();
+    });
     if (ref.current) observer.observe(ref.current);
-    window.addEventListener("resize", fit);
-    return () => { observer.disconnect(); window.removeEventListener("resize", fit); };
-  }, [floating]);
+    window.addEventListener("blur", stop);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("blur", stop);
+      stop();
+    };
+  }, [paint, stop]);
 
   return (
-    <div ref={ref} className={`automation-detail-content${floating ? " automation-editor-floating" : ""}`}>
-      {floating ? <div className="automation-editor-dragbar">
-        <button type="button" className="automation-editor-drag-handle" aria-label="Move automation editor" title="Drag to move · arrow keys to reposition"
-          onPointerDown={(event) => {
-            if (event.button !== 0 || window.matchMedia("(max-width: 900px)").matches) return;
-            gesture.current = { x: event.clientX, y: event.clientY, left: position.current.x, top: position.current.y };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const start = gesture.current;
-            if (start) move(start.left + event.clientX - start.x, start.top + event.clientY - start.y);
-          }}
-          onPointerUp={() => { gesture.current = null; }}
-          onPointerCancel={() => { gesture.current = null; }}
-          onLostPointerCapture={() => { gesture.current = null; }}
-          onKeyDown={(event) => {
-            const offsets: Record<string, readonly [number, number]> = { ArrowLeft: [-24, 0], ArrowRight: [24, 0], ArrowUp: [0, -24], ArrowDown: [0, 24] };
-            const delta = offsets[event.key];
-            if (delta) { event.preventDefault(); move(position.current.x + delta[0], position.current.y + delta[1]); }
-            if (event.key === "Home") { event.preventDefault(); move(0, 0); }
-          }}>
-          <GripHorizontal aria-hidden="true" /><span>Drag to move</span>
-        </button>
-        <button type="button" aria-label="Reset editor position" title="Reset position" onClick={() => move(0, 0)}><RotateCcw aria-hidden="true" /></button>
-      </div> : null}
+    <div ref={ref} className="automations-split-view" data-slot="automations-split-view" data-creating={creating}>
       {children}
+      <div
+        ref={handleRef}
+        className="automation-sidebar-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize automation sidebar"
+        aria-valuemin={360}
+        aria-valuemax={960}
+        aria-valuenow={AUTOMATION_SIDEBAR_DEFAULT_WIDTH}
+        tabIndex={0}
+        title="Drag to resize · arrow keys to adjust · double-click to reset"
+        onPointerDown={(event) => {
+          if (event.button !== 0 || window.matchMedia("(max-width: 900px)").matches) return;
+          event.preventDefault();
+          event.currentTarget.focus();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          gesture.current = {
+            x: event.clientX, width: displayedWidth.current,
+            cursor: document.body.style.cursor, userSelect: document.body.style.userSelect,
+          };
+          event.currentTarget.setAttribute("data-resizing", "true");
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+        }}
+        onPointerMove={(event) => {
+          const start = gesture.current;
+          if (!start || !ref.current) return;
+          requestedWidth.current = clampAutomationSidebarWidth(
+            start.width + start.x - event.clientX,
+            ref.current.getBoundingClientRect().width,
+          );
+          paint();
+        }}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onLostPointerCapture={stop}
+        onDoubleClick={() => {
+          requestedWidth.current = AUTOMATION_SIDEBAR_DEFAULT_WIDTH;
+          paint();
+          save();
+        }}
+        onKeyDown={(event) => {
+          const { min, max } = automationSidebarBounds(ref.current?.getBoundingClientRect().width ?? 0);
+          const next = event.key === "ArrowLeft" ? displayedWidth.current + 16
+            : event.key === "ArrowRight" ? displayedWidth.current - 16
+            : event.key === "Home" ? min : event.key === "End" ? max : undefined;
+          if (next === undefined) return;
+          event.preventDefault();
+          requestedWidth.current = clampAutomationSidebarWidth(next, ref.current?.getBoundingClientRect().width ?? 0);
+          paint();
+          save();
+        }}
+      ><span aria-hidden="true" /></div>
     </div>
   );
 }
