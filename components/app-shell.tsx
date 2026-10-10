@@ -183,7 +183,7 @@ import {
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { removeQueuedFollowUp } from "@/lib/queue-client";
-import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
+import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
@@ -1707,6 +1707,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [messageOffset, setMessageOffset] = useState(0);
   const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
   const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
+  const [earlierMessagesError, setEarlierMessagesError] = useState(false);
+  const earlierMessagesRequestRef = useRef<AbortController | null>(null);
+  const earlierMessagesSentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    earlierMessagesRequestRef.current?.abort();
+    earlierMessagesRequestRef.current = null;
+    setLoadingEarlierMessages(false);
+    setEarlierMessagesError(false);
+    return () => { earlierMessagesRequestRef.current?.abort(); };
+  }, [activeChatId]);
   const [chatTitle, setChatTitle] = useState("New chat");
   const [greeting, setGreeting] = useState("Good afternoon");
 
@@ -4595,32 +4606,63 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const loadEarlierMessages = useCallback(async () => {
     const id = activeChatIdRef.current;
     const el = messagesScrollRef.current;
-    if (!id || !el || !hasEarlierMessages || loadingEarlierMessages) return;
+    if (!id || !el || !hasEarlierMessages || earlierMessagesRequestRef.current) return;
     if (enteringChatRef.current) return;
-    const previousHeight = el.scrollHeight;
+    const controller = new AbortController();
+    earlierMessagesRequestRef.current = controller;
     setLoadingEarlierMessages(true);
+    setEarlierMessagesError(false);
     try {
       const nextOffset = messageOffset + CHAT_MESSAGE_LOAD_LIMIT;
       const res = await fetchReadWithRetry(
         `/api/chats/${id}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=${nextOffset}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
-      if (!res.ok) return;
+      if (!res.ok) throw new Error("Could not load older messages");
       const data = (await res.json()) as ChatPage;
+      if (controller.signal.aborted || activeChatIdRef.current !== id) return;
       const olderMessages = mapApiMessages(data.chat.messages);
-        setMessages((current) => prependMessages(current, olderMessages));
+      // Measure when the response arrives: the user may scroll while it loads.
+      const previousHeight = el.scrollHeight;
+      const previousTop = el.scrollTop;
+      setMessages((current) => prependMessages(current, olderMessages));
       setMessageOffset(data.messageOffset ?? nextOffset);
       setHasEarlierMessages(Boolean(data.hasEarlierMessages));
       window.requestAnimationFrame(() => {
-        const currentEl = messagesScrollRef.current;
-        if (currentEl) currentEl.scrollTop += currentEl.scrollHeight - previousHeight;
+        if (controller.signal.aborted || activeChatIdRef.current !== id || messagesScrollRef.current !== el) return;
+        el.scrollTop = previousTop + el.scrollHeight - previousHeight;
+        lastMessageScrollTopRef.current = el.scrollTop;
       });
+    } catch {
+      if (!controller.signal.aborted && activeChatIdRef.current === id) setEarlierMessagesError(true);
     } finally {
-      setLoadingEarlierMessages(false);
+      if (earlierMessagesRequestRef.current === controller) {
+        earlierMessagesRequestRef.current = null;
+        setLoadingEarlierMessages(false);
+      }
     }
-  }, [hasEarlierMessages, loadingEarlierMessages, messageOffset]);
+  }, [hasEarlierMessages, messageOffset]);
   const loadEarlierMessagesRef = useRef(loadEarlierMessages);
   loadEarlierMessagesRef.current = loadEarlierMessages;
+
+  // Observe the actual top of the transcript, including scrolls whose pinning
+  // action is "ignore" and the first message render after an empty chat.
+  useEffect(() => {
+    const root = messagesScrollRef.current;
+    const sentinel = earlierMessagesSentinelRef.current;
+    if (!root || !sentinel || earlierMessagesError) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting && shouldLoadEarlierMessages({
+        scrollTop: root.scrollTop,
+        hasEarlierMessages,
+        loading: Boolean(earlierMessagesRequestRef.current),
+        enteringChat: enteringChatRef.current,
+        userDetached: userDetachedFromBottomRef.current,
+      })) void loadEarlierMessagesRef.current();
+    }, { root, rootMargin: "80px 0px 0px 0px", threshold: 0 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
 
   useEffect(() => {
     if (loadingChatId || !activeChatId || !hasEarlierMessages || messages.length >= CHAT_MESSAGE_PRELOAD_MAX) return;
@@ -5620,6 +5662,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       markUserScrollInput();
       if (event.deltaY >= 0) return;
       detachFromBottom();
+      if (el.scrollTop < 80) void loadEarlierMessagesRef.current();
     };
     let lastTouchY: number | null = null;
     const markPointerAsUserScroll = () => {
@@ -5657,7 +5700,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (pinFrame) window.cancelAnimationFrame(pinFrame);
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
     };
-  }, [paneKey, loadingChatId]);
+  }, [activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId]);
 
   useLayoutEffect(() => {
     const el = messagesScrollRef.current;
@@ -10229,9 +10272,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     </div>
                   </div>
                 ) : null}
+                <div ref={earlierMessagesSentinelRef} className="h-px" aria-hidden="true" />
                 {hasEarlierMessages || loadingEarlierMessages || hiddenTranscriptCount > 0 ? (
-                  <div className="text-center text-xs text-muted-foreground">
-                    {loadingEarlierMessages ? "Loading more messages…" : "Scroll up for older messages"}
+                  <div className="flex min-h-8 items-center justify-center gap-2 text-xs text-muted-foreground" role="status" aria-live="polite">
+                    {loadingEarlierMessages ? (
+                      <><LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span>Loading older messages…</span></>
+                    ) : hasEarlierMessages ? (
+                      <button type="button" className="min-h-8 px-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => {
+                        userDetachedFromBottomRef.current = true;
+                        stickToBottomRef.current = false;
+                        expandFromBottomRef.current = messagesScrollRef.current ? messagesScrollRef.current.scrollHeight - messagesScrollRef.current.scrollTop - messagesScrollRef.current.clientHeight : 0;
+                        setShowScrollDown(true);
+                        void loadEarlierMessagesRef.current();
+                      }}>{earlierMessagesError ? "Could not load older messages · Retry" : "Scroll up or load older messages"}</button>
+                    ) : <span>Scroll up for older messages</span>}
                   </div>
                 ) : null}
                 {transcriptMessages.map((item) => {
