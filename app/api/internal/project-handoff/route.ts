@@ -58,15 +58,18 @@ export async function POST(req: Request) {
   // Context and active worker lease were verified above; this is a control update.
   updateJob(jobId, { projectWaitingForHandoffId: handoff.id }, { control: true });
   try {
-   const timeoutMs = normalizeAgentRuntimeMs(body.timeoutMs);
+   const timeoutMs = normalizeAgentRuntimeMs(getJob(handoff.jobId!)?.maxRuntimeMs);
    const deadline = Math.min(Date.now() + timeoutMs, handoff.deadlineAt ? Date.parse(handoff.deadlineAt) : Infinity);
    while (["queued", "running"].includes(handoff.status)) {
     const currentParent = getJob(jobId);
     if (!currentParent || ["cancelled", "error", "interrupted"].includes(currentParent.status)) {
-     handoff = cancelProjectHandoff(projectId, handoff.id, ownerId, "Sending agent stopped.") || handoff; break;
+     if (currentParent?.cancellationCause !== "runtime_limit") {
+      handoff = cancelProjectHandoff(projectId, handoff.id, ownerId, "Sending agent stopped.") || handoff;
+     }
+     break;
     }
     if (Date.now() >= deadline) {
-     handoff = cancelProjectHandoff(projectId, handoff.id, ownerId, "Handoff timed out.") || handoff; break;
+     handoff = cancelProjectHandoff(projectId, handoff.id, ownerId, "Handoff timed out.", "runtime_limit") || handoff; break;
     }
     await new Promise(resolve => setTimeout(resolve, 350));
     syncProjectHandoffStatuses(projectId, ownerId);

@@ -70,6 +70,8 @@ export type AgentJob = {
   maxRuntimeMs?: number;
   /** Persisted execution deadline for child/project runs; retained across recovery. */
   agentRuntimeDeadlineAt?: string;
+  /** Distinguishes automatic expiry from an explicit stop. */
+  cancellationCause?: "runtime_limit";
   resumePrompt?: string;
   resumeRequestedAt?: string;
   runId?: string;

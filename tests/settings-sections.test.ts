@@ -105,7 +105,7 @@ test("Models and Agent pack dense features behind settings tiles", () => {
   const models = headingIdsInTab(settingsSource, "models");
   const agent = headingIdsInTab(settingsSource, "agent");
   assert.deepEqual(models, ["settings-usage", "settings-providers", "settings-versions"]);
-  assert.deepEqual(agent, ["settings-skills", "settings-modes", "settings-mcp", "settings-memories", "settings-agent-rules"]);
+  assert.deepEqual(agent, ["settings-agent-runtime", "settings-skills", "settings-modes", "settings-mcp", "settings-memories", "settings-agent-rules"]);
   assert.match(settingsSource, /data-settings-tile=\{id\}/);
   assert.match(settingsSource, /id=\"settings-providers\"/);
   assert.match(settingsSource, /id=\"settings-versions\"/);

@@ -539,6 +539,8 @@ export type AgentRule = { id: string; content: string };
 
 export type GlobalModelSettings = {
   agentRules?: AgentRule[];
+  /** Account default for new subagents and project agent runs. */
+  agentRuntimeMs?: number;
   compression?: {
     enabled?: boolean;
     mode?: "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "stacked";

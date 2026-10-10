@@ -24,11 +24,11 @@ test("canonical agent tools advertise and route the shared 30-minute / 6-hour co
  try {
   for (const name of ["delegate_subagent", "project_handoff"]) {
    const schema = tools.find(tool => tool.name === name).inputSchema.properties.timeoutMs;
-   assert.equal(schema.default, 1_800_000); assert.equal(schema.maximum, 21_600_000);
+   assert.equal(schema.default, undefined); assert.equal(schema.maximum, 21_600_000);
   }
   assert.equal(modeToolCategory("subagent_cancel"), "subagent");
   assert.ok(tools.find(tool => tool.name === "project_handoff").inputSchema.properties.action.enum.includes("stop"));
-  for (const [timeoutMs, expected] of [[undefined, 1_800_000], [43_200_000, 21_600_000]]) {
+  for (const [timeoutMs, expected] of [[undefined, undefined], [43_200_000, 21_600_000]]) {
    const result = await dispatchGatewayTool("delegate_subagent", { prompt: "Read scope", wait: false, timeoutMs }, { context, auditCall: false });
    assert.ok(!result.isError, JSON.stringify(result));
    assert.equal(requests.at(-1).body.timeoutMs, expected);

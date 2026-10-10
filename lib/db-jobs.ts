@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
-import { normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
+import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import {
   getDatabase,
   isSqliteBusyError,
@@ -9,7 +9,7 @@ import {
   withSqliteRetry,
 } from "@/lib/sqlite";
 import type { AgentJob, JobStatus } from "@/lib/jobs";
-import { claimQueuedMessageInTransaction, updateChat } from "@/lib/db-store";
+import { claimQueuedMessageInTransaction, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import {
   describeQueueWait,
   parseWorkerConcurrency,
@@ -189,7 +189,7 @@ function enqueueJobInTransaction(
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
       input = { ...input, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
-    if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: normalizeAgentRuntimeMs(input.maxRuntimeMs) };
+    if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: resolveAgentRuntimeMs(input.maxRuntimeMs, getGlobalModelSettings(input.userId).agentRuntimeMs) };
     const now = iso();
     const background =
       input.workload === "background" || Boolean(input.automationId);
@@ -608,6 +608,8 @@ export function updateJob(
       | "projectWaitingForHandoffId"
       | "maxRuntimeMs"
       | "agentRuntimeDeadlineAt"
+      | "cancellationCause"
+      | "subagentAutoReview"
     >
   >,
   options: { expectedRevision?: number; control?: boolean } = {},
@@ -1090,15 +1092,26 @@ export function requestJobModelSwitch(
   });
 }
 
-/** Cancel one run and its descendants; workers observe the durable terminal state. */
-export function cancelAgentJob(jobId: string, userId?: string, reason = "Cancellation requested by user.") {
+/** Explicit stops cancel the subtree; automatic expiry keeps each child’s own budget. */
+export function cancelAgentJob(jobId: string, userId?: string, reason = "Cancellation requested by user.", cause?: "runtime_limit") {
   return transaction(() => {
     const job = getJob(jobId);
     if (!job || (userId !== undefined && job.userId !== userId)) return null;
-    if (!["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(job.status)) return job;
-    const cancelled = updateJob(job.id, { status: "cancelled", error: reason }, { control: true });
+    if (!["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(job.status)) {
+      // An explicit stop after expiry must still stop the surviving child branch.
+      if (!cause && job.cancellationCause === "runtime_limit") cancelChildJobs(job.id, job.userId, reason);
+      return job;
+    }
+    const cancelled = updateJob(job.id, { status: "cancelled", error: reason, cancellationCause: cause }, { control: true });
     if (!cancelled) return null;
-    cancelChildJobs(job.id, job.userId, reason);
+    if (cause === "runtime_limit") {
+      // Let the existing reconciler collect synchronous children after their sender expires.
+      for (const child of listChildJobs(job.id, job.userId)) {
+        if (!child.subagentFollowUp && ["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(child.status)) {
+          updateJob(child.id, { subagentAutoReview: true }, { control: true });
+        }
+      }
+    } else cancelChildJobs(job.id, job.userId, reason);
     updateChat(job.chatId, { runStatus: "cancelled", runUpdatedAt: iso(), queueMessage: null, pendingQuestion: null, pendingApproval: null }, job.userId);
     appendRunEvent(job.id, job.chatId, job.userId, "done", { status: "cancelled", reason });
     return cancelled;
