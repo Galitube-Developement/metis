@@ -1994,3 +1994,57 @@
 @media (prefers-reduced-motion: reduce) {
   .run-status[data-run-status] > .run-status-icon { animation: none; transform: none; opacity: 1; }
 }
+
+/* The creation editor stays on the right and can be moved without dragging the page. */
+.automations-split-view { position: relative; }
+.automations-split-view[data-creating="true"] .automation-detail-pane { position: static; overflow: visible; }
+.automation-editor-floating {
+  position: absolute; top: 16px; right: 16px; z-index: 20;
+  width: min(560px, calc(100% - 32px)); max-height: calc(100% - 32px);
+  overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  padding: 16px 20px 20px; border: 1px solid var(--automation-border-raised);
+  border-radius: 12px; background: var(--automation-surface);
+  box-shadow: 0 12px 36px #0005; animation: none;
+}
+.automation-editor-dragbar { display: flex; align-items: center; justify-content: space-between; margin: -8px -8px 12px; color: var(--automation-copy); }
+.automation-editor-dragbar button { display: flex; align-items: center; gap: 6px; padding: 6px; font-size: 11px; min-height: 32px; border-radius: 7px; }
+.automation-editor-dragbar svg, .automation-editor-hint svg, .automation-editor-actions svg { width: 14px; height: 14px; flex: none; }
+.automation-editor-drag-handle { cursor: grab; touch-action: none; user-select: none; flex: 1; }
+.automation-editor-drag-handle:active { cursor: grabbing; }
+.automation-editor-dragbar button:focus-visible, .automation-editor-steps button:focus-visible { outline: 2px solid var(--automation-brand); outline-offset: 2px; }
+.automation-editor-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.automation-editor-steps button { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 2px solid var(--automation-border-raised); font-size: 11px; color: var(--automation-copy); }
+.automation-editor-steps button[aria-current="step"] { color: var(--automation-text); border-color: var(--automation-brand); }
+.automation-editor-steps button:disabled { color: var(--automation-muted); cursor: default; }
+.automation-editor-steps button span { font-variant-numeric: tabular-nums; }
+.automation-edit-form fieldset { display: flex; min-width: 0; flex-direction: column; gap: 14px; margin: 0; padding: 0; border: 0; }
+.automation-edit-form fieldset[hidden] { display: none; }
+.automation-edit-form legend { color: var(--automation-text); font-size: 14px; font-weight: 600; margin-bottom: 14px; padding: 0; }
+.automation-edit-form legend:focus { outline: none; }
+.automation-editor-floating .automation-edit-form label { color: var(--automation-copy); font-size: 10px; letter-spacing: .02em; }
+.automation-editor-floating .automation-edit-form input, .automation-editor-floating .automation-edit-form select { min-height: 38px; }
+.automation-editor-floating .automation-edit-form textarea { min-height: 160px; }
+.automation-editor-hint { display: flex; align-items: flex-start; gap: 6px; color: var(--automation-copy); font-size: 12px; line-height: 1.6; }
+.automation-editor-error { color: var(--automation-error); font-size: 12px; line-height: 1.5; }
+.automation-editor-error button { margin-left: 10px; text-decoration: underline; }
+.automation-editor-actions { margin-top: 10px; padding-top: 14px; border-top: 1px solid var(--automation-border-soft); display: flex; flex-wrap: wrap; gap: 8px; }
+.automation-editor-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; }
+.automation-editor-actions button[type="submit"] { margin-left: auto; background: var(--automation-text); color: var(--automation-bg); }
+.automation-editor-review dl { display: grid; gap: 14px; }
+.automation-editor-review dl > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; font-size: 12px; }
+.automation-editor-review dt { color: var(--automation-copy); }
+.automation-editor-review dd { color: var(--automation-text); overflow-wrap: anywhere; }
+.automation-editor-review-prompt { padding-top: 14px; border-top: 1px solid var(--automation-border-soft); color: var(--automation-copy); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+@media (max-width: 900px) {
+  .automations-split-view[data-creating="true"] { display: block; overflow: auto; }
+  .automations-split-view[data-creating="true"] .automation-list-pane { display: none; }
+  .automation-editor-floating { position: relative; inset: auto; width: 100%; max-height: none; border: 0; border-radius: 0; box-shadow: none; padding: 18px 16px 24px; translate: none !important; overflow: visible; }
+  .automation-editor-dragbar { display: none; }
+  .automation-editor-actions button { min-height: 44px; }
+  .automation-editor-steps { gap: 6px; }
+  .automation-editor-steps button { min-height: 44px; font-size: 11px; }
+  .automation-editor-floating .automation-edit-form input, .automation-editor-floating .automation-edit-form textarea, .automation-editor-floating .automation-edit-form select { font-size: 16px; min-height: 44px; }
+}
+.automation-subagent-model > summary { cursor: pointer; color: var(--automation-text); font-size: 12px; font-weight: 500; }
+.automation-subagent-model > summary span { margin-left: 8px; color: var(--automation-copy); font-weight: 400; font-size: 11px; }
+.automation-subagent-model[open] > summary { margin-bottom: 12px; }
