@@ -208,9 +208,37 @@ await t.test("cancellation stops descendants, persists terminal handoffs, and pr
  assert.ok(team.listProjectAgents(f.project.id, owner).filter(a => a.id !== f.sender.id).every(a => !a.supervisorId));
  assert.throws(() => jobs.enqueueJob({ chatId: f.sender.chatId, userId: owner, message: "No" }), /active agent/);
 });
-await t.test("handoffs allow 60 minutes, cap larger requests and retain the 10-minute default", async () => {
+await t.test("direct project agent runs also get the 30-minute default and 6-hour maximum", () => {
  const f = fixture();
- for (const [requested, expected] of [[undefined, 600_000], [3_600_000, 3_600_000], [7_200_000, 3_600_000]] as const) {
+ assert.equal(f.parent.maxRuntimeMs, 1_800_000);
+ const chat = store.getChat(f.agents[1].chatId, owner)!;
+ const job = jobs.enqueueJob({ chatId: chat.id, userId: owner, message: "Direct run", modelId: model, maxRuntimeMs: 43_200_000 });
+ assert.equal(job.maxRuntimeMs, 21_600_000);
+ stop(f); jobs.cancelAgentJob(job.id, owner);
+});
+await t.test("agent stop cancels peer work without archiving and rejects other projects and ancestors", async () => {
+ const f = fixture();
+ const target = f.agents[1];
+ const assignment = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: target.id, task: "Stop this", wait: false });
+ const response = await POST(request(f, { action: "stop", agentId: target.id }));
+ assert.equal(response.status, 200);
+ assert.equal(jobs.getJob(assignment.job!.id)?.status, "cancelled");
+ assert.equal(team.getProjectHandoff(f.project.id, assignment.handoff.id, owner)?.status, "cancelled");
+ assert.equal(team.getProjectAgent(f.project.id, target.id, owner)?.archivedAt, undefined);
+ assert.equal(jobs.getJob(f.parent.id)?.status, "running");
+ assert.equal((await POST(request(f, { action: "stop", agentId: f.sender.id }))).status, 409);
+ const otherProject = projects.createProject({ ownerId: owner, mode: "agents" });
+ const outside = team.createProjectAgent({ projectId: otherProject.id, ownerId: owner, name: "Outside", role: "Outside", modelId: model });
+ assert.equal((await POST(request(f, { action: "stop", agentId: outside.id }))).status, 404);
+ const restarted = jobs.enqueueJob({ chatId: target.chatId, userId: owner, message: "Start again", modelId: model });
+ assert.equal(restarted.status, "queued");
+ assert.equal((await POST(request(f, { action: "cancel", agentId: target.id }))).status, 200);
+ assert.equal(jobs.getJob(restarted.id)?.status, "cancelled");
+ stop(f);
+});
+await t.test("handoffs default to 30 minutes and allow up to 6 hours", async () => {
+ const f = fixture();
+ for (const [requested, expected] of [[undefined, 1_800_000], [21_600_000, 21_600_000], [43_200_000, 21_600_000]] as const) {
   const response = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Deadline " + requested, wait: false, ...(requested === undefined ? {} : { timeoutMs: requested }) }));
   assert.equal(response.status, 200);
   const result = await response.json();
@@ -218,7 +246,7 @@ await t.test("handoffs allow 60 minutes, cap larger requests and retain the 10-m
   assert.equal(job.maxRuntimeMs, expected);
   const duration = Date.parse(result.handoff.deadlineAt) - Date.parse(result.handoff.createdAt);
   assert.ok(duration >= expected && duration < expected + 1_000);
-  if (expected === 3_600_000) {
+  if (expected === 21_600_000) {
    assert.equal(team.expireProjectHandoffs(Date.parse(result.handoff.createdAt) + 30 * 60_000), 0);
    assert.equal(jobs.getJob(job.id)?.status, "queued");
    assert.equal(team.expireProjectHandoffs(Date.parse(result.handoff.deadlineAt) + 1), 1);

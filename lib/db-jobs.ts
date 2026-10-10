@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
+import { normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import {
   getDatabase,
   isSqliteBusyError,
@@ -188,6 +189,7 @@ function enqueueJobInTransaction(
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
       input = { ...input, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
+    if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: normalizeAgentRuntimeMs(input.maxRuntimeMs) };
     const now = iso();
     const background =
       input.workload === "background" || Boolean(input.automationId);
@@ -372,6 +374,8 @@ export function cancelChildJobs(
           runStatus: "cancelled",
           runUpdatedAt: new Date().toISOString(),
           queueMessage: null,
+          pendingQuestion: null,
+          pendingApproval: null,
         },
         child.userId,
       );
@@ -602,6 +606,8 @@ export function updateJob(
       | "pendingModelParams"
       | "modelSwitchRequestedAt"
       | "projectWaitingForHandoffId"
+      | "maxRuntimeMs"
+      | "agentRuntimeDeadlineAt"
     >
   >,
   options: { expectedRevision?: number; control?: boolean } = {},
@@ -1084,13 +1090,21 @@ export function requestJobModelSwitch(
   });
 }
 
+/** Cancel one run and its descendants; workers observe the durable terminal state. */
+export function cancelAgentJob(jobId: string, userId?: string, reason = "Cancellation requested by user.") {
+  return transaction(() => {
+    const job = getJob(jobId);
+    if (!job || (userId !== undefined && job.userId !== userId)) return null;
+    if (!["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(job.status)) return job;
+    const cancelled = updateJob(job.id, { status: "cancelled", error: reason }, { control: true });
+    if (!cancelled) return null;
+    cancelChildJobs(job.id, job.userId, reason);
+    updateChat(job.chatId, { runStatus: "cancelled", runUpdatedAt: iso(), queueMessage: null, pendingQuestion: null, pendingApproval: null }, job.userId);
+    appendRunEvent(job.id, job.chatId, job.userId, "done", { status: "cancelled", reason });
+    return cancelled;
+  });
+}
 export function requestJobCancel(chatId: string, userId?: string) {
   const job = getActiveParentJob(chatId, userId) || getActiveJob(chatId, userId);
-  if (!job) return null;
-  const cancelled = updateJob(job.id, {
-    status: "cancelled",
-    error: "Cancellation requested by user.",
-  }, { control: true });
-  if (cancelled) cancelChildJobs(job.id, userId, "Parent agent cancelled.");
-  return cancelled;
+  return job ? cancelAgentJob(job.id, userId) : null;
 }

@@ -59,6 +59,7 @@ import { metisAgentIdentity } from "@/lib/agent-identity";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { captureKnowledgeFromUserTurn } from "@/lib/knowledge-lifecycle";
 import { isJobWaitingForUser } from "@/lib/user-input-resume";
+import { armAgentRuntime } from "@/lib/agent-runtime";
 
 const AGENT_INIT_TIMEOUT_MS = 90_000;
 const AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
@@ -1888,5 +1889,8 @@ export async function runQueuedJob(job: AgentJob) {
 
 export async function runJobById(id: string) {
   const job = getJob(id);
-  if (job && job.status === "running") await runQueuedJob(job);
+  if (job && job.status === "running") {
+    const disarm = armAgentRuntime(job);
+    try { await runQueuedJob(getJob(id) || job); } finally { disarm(); }
+  }
 }
