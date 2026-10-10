@@ -50,6 +50,8 @@ export type ProviderModelDefinition = {
 };
 
 export type ProviderDefinition = {
+  /** Exact public API catalog references for monetary-value estimates, not billing. */
+  apiPricing?: { providers: readonly string[]; inputIncludesCache: boolean };
   key: string;
   name: string;
   description: string;

@@ -230,6 +230,10 @@ export function getDatabase(): DatabaseSync {
       data TEXT NOT NULL,
       share_id TEXT UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS account_profile_handles (
+      handle TEXT PRIMARY KEY COLLATE NOCASE CHECK(length(handle) BETWEEN 3 AND 32 AND handle = lower(handle)),
+      owner_id TEXT NOT NULL UNIQUE REFERENCES account_profiles(owner_id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS profile_avatars (
       id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -616,6 +620,11 @@ export function getDatabase(): DatabaseSync {
       ON browser_history(owner_id, chat_id, ts DESC);
   `);
   for (const statement of [
+    "ALTER TABLE account_usage ADD COLUMN context_window INTEGER",
+    "ALTER TABLE account_usage ADD COLUMN reasoning_effort TEXT",
+    "ALTER TABLE account_usage ADD COLUMN speed_mode TEXT",
+    "ALTER TABLE account_usage ADD COLUMN cached_input_tokens INTEGER",
+    "ALTER TABLE account_usage ADD COLUMN cache_write_input_tokens INTEGER",
     "ALTER TABLE memories ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE",
     "ALTER TABLE settings ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE",
     "ALTER TABLE provider_oauth_flows ADD COLUMN user_code TEXT",

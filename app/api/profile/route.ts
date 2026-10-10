@@ -1,5 +1,6 @@
 import { getAuthenticatedUser } from "@/lib/auth";
-import { getAccountProfile, saveAccountProfile } from "@/lib/account-profile";
+import { getAccountProfile, saveAccountProfile, ProfileHandleConflict } from "@/lib/account-profile";
+import { ZodError } from "zod";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
@@ -26,5 +27,12 @@ export async function PUT(req: Request) {
     } finally {reader.releaseLock();}
     const body=Buffer.concat(chunks).toString("utf8");
     return Response.json({profile:saveAccountProfile(user.id,JSON.parse(body))},{headers});
-  } catch { return Response.json({error:"Check your name, image and links. Use up to 5 http or https links."},{status:400,headers}); }
+  } catch (error) {
+    if (error instanceof ProfileHandleConflict) return Response.json({error:error.message,field:"handle"},{status:409,headers});
+    if (error instanceof ZodError) {
+      const handleIssue=error.issues.find(issue=>issue.path[0]==="handle");
+      if(handleIssue) return Response.json({error:handleIssue.message,field:"handle"},{status:400,headers});
+    }
+    return Response.json({error:"Check your name, image and links. Use up to 5 http or https links."},{status:400,headers});
+  }
 }

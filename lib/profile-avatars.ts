@@ -74,15 +74,21 @@ export async function uploadProfileGif(ownerId: string, req: Request): Promise<s
     throw new AvatarUploadError("This GIF could not be read. Choose another image.", 400);
   }
 }
-export function profileAvatarResponse(id: string, viewerId?: string): Response {
-  const headers = {"Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"};
+export function profileAvatarResponse(id: string, viewerId?: string, ifNoneMatch?: string | null): Response {
+  const headers = {"Cache-Control":"private, no-store", "Vary":"Cookie", "X-Content-Type-Options":"nosniff"};
   if (!idPattern.test(id)) return new Response(null,{status:404,headers});
   const row = getDatabase().prepare("SELECT a.owner_id,a.size,p.share_id,p.data FROM profile_avatars a LEFT JOIN account_profiles p ON p.owner_id=a.owner_id WHERE a.id=?").get(id) as {owner_id:string;size:number;share_id:string|null;data:string|null}|undefined;
   const publicAvatar = row?.share_id && row.data && JSON.parse(row.data).avatar === prefix + id;
   if (!row || (viewerId !== row.owner_id && !publicAvatar)) return new Response(null,{status:404,headers});
   const file = path.join(root,id+".gif");
   if (!existsSync(file)) return new Response(null,{status:404,headers});
+  // Upload IDs are immutable: a replacement always has a new URL. Keep owner
+  // images in the browser cache. Public viewers revalidate access before a 304,
+  // so revoking sharing still takes effect. Cookie variants separate sessions.
+  const cacheHeaders={...headers,"Cache-Control":viewerId===row.owner_id ? "private, max-age=31536000, immutable" : "private, no-cache",ETag:'"'+id+'"'};
+  if(ifNoneMatch?.split(",").some(tag=>tag.trim()==="*" || tag.trim().replace(/^W\//,"")===cacheHeaders.ETag))
+    return new Response(null,{status:304,headers:cacheHeaders});
   return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, {headers:{
-    ...headers,"Content-Type":"image/gif","Content-Length":String(row.size),"Content-Disposition":'inline; filename="profile.gif"',
+    ...cacheHeaders,"Content-Type":"image/gif","Content-Length":String(row.size),"Content-Disposition":'inline; filename="profile.gif"',
   }});
 }

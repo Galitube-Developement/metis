@@ -100,6 +100,7 @@ function models(...entries: Array<ProviderModelDefinition>) {
 export const PROVIDERS: ProviderDefinition[] = [
   {
     key: "cursor",
+    apiPricing: { providers: ["openai", "anthropic", "google", "xai"], inputIncludesCache: true },
     name: "Cursor",
     description: "Cursor Agent SDK with filesystem tools, MCP, plans, and canvases.",
     kind: "cursor-agent",
@@ -110,6 +111,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "openai",
+    apiPricing: { providers: ["openai"], inputIncludesCache: true },
     name: "OpenAI",
     description: "OpenAI API models through the official Vercel AI SDK provider.",
     kind: "ai-sdk",
@@ -125,6 +127,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "anthropic",
+    apiPricing: { providers: ["anthropic"], inputIncludesCache: true },
     name: "Anthropic",
     description: "Claude API models through the official Anthropic provider.",
     kind: "ai-sdk",
@@ -140,6 +143,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "google",
+    apiPricing: { providers: ["google"], inputIncludesCache: true },
     name: "Google Gemini",
     description: "Gemini API models through Google's official AI SDK provider.",
     kind: "ai-sdk",
@@ -154,6 +158,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "xai",
+    apiPricing: { providers: ["xai"], inputIncludesCache: true },
     name: "xAI / Grok",
     description: "Grok models through the official xAI provider.",
     kind: "ai-sdk",
@@ -168,6 +173,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "openrouter",
+    apiPricing: { providers: ["openrouter"], inputIncludesCache: true },
     name: "OpenRouter",
     description: "One connection to models from many providers.",
     kind: "ai-sdk",
@@ -207,6 +213,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "codex",
+    apiPricing: { providers: ["openai"], inputIncludesCache: true },
     name: "OpenAI Codex",
     description: "Codex agent through the official Codex SDK and CLI runtime.",
     kind: "codex-agent",
@@ -275,6 +282,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "claude-code",
+    apiPricing: { providers: ["anthropic"], inputIncludesCache: false },
     name: "Claude Code",
     description: "Claude Code agent through Anthropic's official Agent SDK.",
     kind: "claude-agent",
@@ -298,6 +306,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "antigravity",
+    apiPricing: { providers: ["google", "anthropic"], inputIncludesCache: true },
     name: "Google Antigravity",
     description: "Antigravity agent through the official Python SDK by default, or the agy CLI via OAuth.",
     kind: "antigravity-agent",
@@ -327,6 +336,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   {
     key: "grok-build",
+    apiPricing: { providers: ["xai"], inputIncludesCache: true },
     name: "Grok Build",
     description: "Grok Build CLI agent over ACP stdio (grok agent stdio), with Metis MCP attached.",
     kind: "grok-agent",
