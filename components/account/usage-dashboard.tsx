@@ -5,10 +5,11 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AccountUsage, UsageModel } from "@/lib/account-types";
+import { usageCsv } from "@/lib/account-usage-export";
 const compact=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:1});
 const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
 const format=(value:number|null,cost=false)=>value===null?"—":cost?money.format(value):value.toLocaleString();
-function csvCell(value: unknown) { const text=String(value??"");return '"'+text.replaceAll('"','""')+'"'; }
+
 export function UsageDashboard() {
   const [range,setRange]=useState("30");
   const [from,setFrom]=useState(""),[to,setTo]=useState("");
@@ -36,10 +37,7 @@ export function UsageDashboard() {
   }),[usage,sort,ascending]);
   function exportCsv() {
     if(!usage)return;
-    const rows=[["Model","Provider","Requests (Metis runs)","Input tokens","Output tokens","Total tokens","Reported cost USD","Token reports","Cost reports"],
-      ...models.map(m=>[m.modelId,m.providerId,m.requests,m.inputTokens,m.outputTokens,m.tokens,m.costUsd,m.tokenReports,m.costReports])];
-    // Prefix formula characters so a model label cannot execute in a spreadsheet.
-    const text=rows.map(row=>row.map(cell=>csvCell(typeof cell==="string" && /^[\s]*[=+@-]/.test(cell)?"'"+cell:cell)).join(",")).join("\n");
+    const text=usageCsv(models);
     const url=URL.createObjectURL(new Blob([text],{type:"text/csv;charset=utf-8"}));
     const anchor=document.createElement("a");anchor.href=url;anchor.download="metis-usage-"+usage.from+"-"+usage.to+".csv";anchor.click();URL.revokeObjectURL(url);
   }
