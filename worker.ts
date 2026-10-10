@@ -16,10 +16,10 @@ import { parseWorkerConcurrency, waitForSchedulerTick } from "@/lib/worker-sched
 import { logError } from "@/lib/error-logs";
 import { persistWorkerFailureMessage } from "@/lib/worker-failure";
 import { checkGatewayHealth } from "@/lib/mcp";
+import { agentRuntimeDeadline, scheduleRuntimeDeadline, workerRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 
 const pollMs = Number(process.env.AI_CHAT_WORKER_POLL_MS || 500);
 const concurrency = parseWorkerConcurrency(process.env.AI_CHAT_WORKER_CONCURRENCY);
-const HARD_CAP_MS = 7 * 24 * 60 * 60_000;
 const configuredMaxJobMsRaw = process.env.AI_CHAT_WORKER_MAX_JOB_MS;
 const configuredMaxJobMs = configuredMaxJobMsRaw === undefined || configuredMaxJobMsRaw === ""
   ? 0
@@ -112,12 +112,14 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
     };
     let forceKillTimer: NodeJS.Timeout | undefined;
     let stderr = "";
-    const requestedJobMaxMs = Number(getJob(jobId)?.maxRuntimeMs);
-    const jobMaxMs = Number.isFinite(requestedJobMaxMs) && requestedJobMaxMs > 0
-      ? Math.max(60_000, Math.min(requestedJobMaxMs, HARD_CAP_MS))
-      : maxJobMs;
-    const timeout = jobMaxMs > 0
-      ? setTimeout(() => {
+    const currentJob = getJob(jobId);
+    const jobMaxMs = workerRuntimeMs(currentJob, maxJobMs);
+    const persistedDeadline = Date.parse(currentJob?.agentRuntimeDeadlineAt || "");
+    const deadline = jobMaxMs === 0 ? Infinity : Math.min(
+      agentRuntimeDeadline(Date.now(), jobMaxMs),
+      Number.isFinite(persistedDeadline) ? persistedDeadline : Infinity,
+    );
+    const releaseTimeout = scheduleRuntimeDeadline(deadline, () => {
         const timedOut = getJob(jobId);
         if (timedOut?.parentJobId || timedOut?.projectTeamId) {
           cancelAgentJob(jobId, timedOut.userId, "Agent runtime limit reached.", "runtime_limit");
@@ -126,8 +128,7 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
         }
         child.kill("SIGTERM");
         forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
-      }, jobMaxMs)
-      : undefined;
+      });
     const child = spawn(
       process.execPath,
       [resolve("node_modules/tsx/dist/cli.mjs"), "worker-job.ts", jobId],
@@ -146,6 +147,7 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
       stderr = `${stderr}${chunk.toString()}`.slice(-4_000);
     });
     child.once("error", (error) => {
+      releaseTimeout();
       const message = `Could not start isolated worker: ${error instanceof Error ? error.message : String(error)}`;
       if (requeueUnexpectedCrash(message)) {
         resolveProcess();
@@ -155,7 +157,7 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
       reject(error);
     });
     child.once("exit", (code, signal) => {
-      if (timeout) clearTimeout(timeout);
+      releaseTimeout();
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (code === 0) {
         const current = getJob(jobId);
@@ -256,7 +258,7 @@ function reconcileSubagentParent(parentJobId: string) {
  subagentTitle: "Subagent lifecycle review",
  subagentDepth: parent.subagentDepth,
  subagentFollowUp: true,
- ...(parent.maxRuntimeMs ? { maxRuntimeMs: parent.maxRuntimeMs } : {}),
+ ...(parent.maxRuntimeMs !== undefined ? { maxRuntimeMs: parent.maxRuntimeMs } : {}),
  }, {
  beforeInsert: () => appendMessageInTransaction(parent.chatId, {
  id: messageId,
