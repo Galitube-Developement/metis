@@ -117,7 +117,7 @@ export function UsageDashboard() {
               <CartesianGrid stroke="var(--border)" vertical={false} strokeDasharray="3 5" opacity={0.6}/>
               <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={36} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
               <YAxis width={48} tickFormatter={n=>activeMetric==="costUsd"?"$"+compact.format(n):compact.format(n)} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
-              <Tooltip allowEscapeViewBox={{x:false,y:true}} wrapperStyle={{pointerEvents:"auto"}} content={props=><UsageModelTooltip active={props.active} day={usage.days.find(day=>day.date===props.label)} models={usage.modelDays?.[String(props.label)] || []} metric={activeMetric} costMode={costMode}/>}/>
+              <Tooltip allowEscapeViewBox={{x:false,y:false}} wrapperStyle={{pointerEvents:"auto"}} content={props=><UsageModelTooltip active={props.active} day={usage.days.find(day=>day.date===props.label)} models={usage.modelDays?.[String(props.label)] || []} metric={activeMetric} costMode={costMode}/>}/>
               <Area type="monotone" dataKey={activeMetric} stroke="var(--chart-1)" strokeWidth={1.8} fill={"url(#"+id+"fill)"} isAnimationActive={false} connectNulls={false}/>
             </AreaChart>
           </ResponsiveContainer>:<div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loading?"Loading usage…":"Usage unavailable"}</div>}
