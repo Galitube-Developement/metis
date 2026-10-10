@@ -43,16 +43,16 @@ test("durable agent limits and scoped cancellation", async t => {
  }
  await t.test("normal chats retain their own limits while child jobs share the delegated policy", () => {
   for (const bad of [undefined, NaN, Infinity, "60000"]) assert.equal(normalizeAgentRuntimeMs(bad), 1_800_000);
-  assert.equal(normalizeAgentRuntimeMs(0), 1000);
-  assert.equal(normalizeAgentRuntimeMs(30_000_000), 21_600_000);
+  assert.equal(normalizeAgentRuntimeMs(0), 0);
+  assert.equal(normalizeAgentRuntimeMs(30_000_000), 30_000_000);
   const f = fixture();
   assert.equal(jobs.getJob(f.parent.id)?.maxRuntimeMs, 7_200_000);
   assert.equal(child(f, "Implicit child").maxRuntimeMs, 1_800_000);
   jobs.requestJobCancel(f.chat.id, owner);
  });
- await t.test("async delegate uses its own default and explicit 6-hour cap, rather than inheriting parent runtime", async () => {
+ await t.test("async delegate uses its own default and custom and unlimited runtimes, rather than inheriting parent runtime", async () => {
   const f = fixture();
-  for (const [timeoutMs, expected] of [[undefined, 1_800_000], [21_600_000, 21_600_000], [43_200_000, 21_600_000]] as const) {
+  for (const [timeoutMs, expected] of [[undefined, 1_800_000], [21_600_000, 21_600_000], [43_200_000, 43_200_000], [0, 0]] as const) {
    const response = await spawn.POST(request(f, { title: "Limit " + expected + "-" + timeoutMs, prompt: "Read the assigned scope", wait: false, timeoutMs }));
    assert.equal(response.status, 200);
    const result = await response.json();
@@ -134,11 +134,34 @@ test("durable agent limits and scoped cancellation", async t => {
   assert.equal(jobs.getJob(delegated.agentId)?.maxRuntimeMs, 10_800_000);
   assert.equal(child(f, "Direct child").maxRuntimeMs, 10_800_000);
   assert.equal(jobs.getJob(existing.id)?.maxRuntimeMs, 1_800_000);
-  const explicit = await spawn.POST(request(f, { title: "Explicit limit", prompt: "Read scope", wait: false, timeoutMs: 60_000 }));
-  assert.equal(jobs.getJob((await explicit.json()).agentId)?.maxRuntimeMs, 60_000);
+  const explicit = await spawn.POST(request(f, { title: "Explicit limit", prompt: "Read scope", wait: false, timeoutMs: 900_000 }));
+  assert.equal(jobs.getJob((await explicit.json()).agentId)?.maxRuntimeMs, 900_000);
   store.saveGlobalModelSettings({}, owner);
   jobs.requestJobCancel(f.chat.id, owner);
  });
+ await t.test("unlimited defaults survive delegation, waiting, recovery and explicit cancellation", async () => {
+   store.saveGlobalModelSettings({ agentRuntimeMs: 0 }, owner);
+   const f = fixture();
+   const response = await spawn.POST(request(f, { title: "Unlimited async", prompt: "Read scope", wait: false }));
+   const delegated = await response.json();
+   assert.equal(jobs.getJob(delegated.agentId)?.maxRuntimeMs, 0);
+   const claimed = jobs.claimNextJob({ workerId: "runtime-worker" })!;
+   assert.equal(claimed.id, delegated.agentId);
+   const release = armAgentRuntime(claimed);
+   assert.equal(jobs.getJob(claimed.id)?.agentRuntimeDeadlineAt, undefined);
+   await new Promise(resolve => setTimeout(resolve, 30));
+   assert.equal(jobs.getJob(claimed.id)?.status, "running");
+   release();
+   const waiting = spawn.POST(request(f, { title: "Unlimited sync", prompt: "Read scope" }));
+   await new Promise(resolve => setTimeout(resolve, 30));
+   const target = jobs.listChildJobs(f.parent.id, owner).find(job => job.subagentTitle === "Unlimited sync")!;
+   assert.equal(target.maxRuntimeMs, 0);
+   assert.equal(target.status, "queued");
+   jobs.cancelAgentJob(target.id, owner);
+   assert.equal((await (await waiting).json()).status, "cancelled");
+   jobs.requestJobCancel(f.chat.id, owner);
+   store.saveGlobalModelSettings({}, owner);
+  });
  await t.test("completed child history survives cancellation attempts", async () => {
   const f = fixture();
   const target = child(f, "Completed");

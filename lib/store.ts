@@ -539,7 +539,7 @@ export type AgentRule = { id: string; content: string };
 
 export type GlobalModelSettings = {
   agentRules?: AgentRule[];
-  /** Account default for new subagents and project agent runs. */
+  /** Account default for new subagents and project agent runs; 0 means Unlimited. */
   agentRuntimeMs?: number;
   compression?: {
     enabled?: boolean;

@@ -3,11 +3,10 @@ import { getJob, updateJob } from "@/lib/db-jobs";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { cancelProjectHandoff, createProjectHandoff, stopProjectAgent, manageProjectAgent, ProjectAgentManagementDenied, getProjectAgentForChat, getProjectHandoff, listProjectAgents, syncProjectHandoffStatuses, TEAM_LIMITS } from "@/lib/project-team";
 import { bearerTokenMatches } from "@/lib/security";
-import { normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
+import { agentRuntimeDeadline, normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 21660;
 
 export async function POST(req: Request) {
  if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -59,7 +58,7 @@ export async function POST(req: Request) {
   updateJob(jobId, { projectWaitingForHandoffId: handoff.id }, { control: true });
   try {
    const timeoutMs = normalizeAgentRuntimeMs(getJob(handoff.jobId!)?.maxRuntimeMs);
-   const deadline = Math.min(Date.now() + timeoutMs, handoff.deadlineAt ? Date.parse(handoff.deadlineAt) : Infinity);
+   const deadline = Math.min(agentRuntimeDeadline(Date.now(), timeoutMs), handoff.deadlineAt ? Date.parse(handoff.deadlineAt) : Infinity);
    while (["queued", "running"].includes(handoff.status)) {
     const currentParent = getJob(jobId);
     if (!currentParent || ["cancelled", "error", "interrupted"].includes(currentParent.status)) {
