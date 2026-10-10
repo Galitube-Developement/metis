@@ -4,6 +4,7 @@ import path from "node:path";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
 import { config } from "@/lib/config";
+import { recordAccountUsage, syncAccountUsage } from "@/lib/account-usage";
 import type {
   BrowserContext,
   Chat,
@@ -266,6 +267,7 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
   // only the message and timestamp, so refresh the cache from that canonical
   // row instead of putting the worker's stale pre-run Chat object back.
   const persisted = rowChat(db.prepare("SELECT data FROM chats WHERE id = ?").get(chat.id)) || chat;
+  recordAccountUsage(persisted.ownerId, message);
   chatCache.set(chat.id, { updatedAt, chat: persisted });
   for (const key of chatPageCache.keys()) {
     if (key.includes(`:${chat.id}:`)) chatPageCache.delete(key);
@@ -883,6 +885,7 @@ export function deleteChat(id: string, ownerId?: string) {
   return transaction(() => {
     const chat = getChat(id, ownerId);
     if (!chat) return false;
+    if (chat.ownerId) syncAccountUsage(chat.ownerId);
     recordChatSyncEvent({
       ownerId: chat.ownerId,
       chatId: id,
