@@ -34,6 +34,10 @@ test("attachment endpoints enforce authentication and note ownership", async () 
     db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)").run(id, id, "unused", new Date().toISOString());
     db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").run(createHash("sha256").update(token).digest("hex"), id, new Date(Date.now() + 60000).toISOString());
   }
+  const { GET: listNotes } = await import("../app/api/notes/route");
+  const emptyList = await listNotes(new Request("http://localhost/api/notes", { headers: { cookie: "ai_chat_auth=" + ownerToken } }));
+  assert.equal(emptyList.status, 200);
+  assert.deepEqual(await emptyList.json(), { notes: [], ownerId });
   const note = createNote({ ownerId, content: "scratchpad" });
   const params = { params: Promise.resolve({ id: note.id }) };
   const fileParams = { params: Promise.resolve({ id: note.id, attachmentId: randomUUID() }) };
@@ -85,4 +89,9 @@ test("attachments persist exact bytes and stay within their note namespace", asy
     assert.equal(await readNoteFile("first-note", stored[0].id + ".json"), null);
     assert.match(stored[0].url, /^\/api\/notes\/first-note\/attachments\//);
   }
+});
+
+test("scratchpad names preserve ordinary letters and replace actual line breaks", () => {
+  assert.equal(noteAttachmentMarkdown([{ name: "report.txt", kind: "file", url: "/file" }]), "[report.txt](/file)");
+  assert.equal(noteAttachmentMarkdown([{ name: "line" + String.fromCharCode(10) + "break", kind: "file", url: "/file" }]), "[line break](/file)");
 });

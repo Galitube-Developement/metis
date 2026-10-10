@@ -118,3 +118,27 @@ export function retrieveRelevantFacts<T extends LayeredContextFact>(
     .slice(0, limit)
     .map((entry) => entry.fact);
 }
+
+/** A small continuity slice survives vague follow-ups and native compaction.
+ * Only pass already owner/chat-scoped facts here; globals stay relevance-only.
+ */
+export function selectChatContinuityFacts<T extends LayeredContextFact>(
+  query: string,
+  facts: readonly T[],
+  limit = 8,
+): T[] {
+  const count = Math.max(0, Math.floor(limit));
+  const recent = [...facts].sort((a, b) => timestamp(b.updatedAt || b.createdAt) - timestamp(a.updatedAt || a.createdAt));
+  const selected = new Map<string, T>();
+  // Reserve half the budget for recent working state even on lexical mismatch.
+  for (const fact of recent.slice(0, Math.ceil(count / 2))) selected.set(fact.id, fact);
+  for (const fact of retrieveRelevantFacts(query, facts, { limit: count })) {
+    if (selected.size >= count) break;
+    selected.set(fact.id, fact);
+  }
+  for (const fact of recent) {
+    if (selected.size >= count) break;
+    selected.set(fact.id, fact);
+  }
+  return [...selected.values()];
+}

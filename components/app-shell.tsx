@@ -1,6 +1,9 @@
 "use client";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 
+import { useAccountNotifications } from "@/hooks/use-account-notifications";
+import { flushNoteEditors } from "@/lib/note-editor-lifecycle";
+import { composerMentionQuery, replaceComposerMention, composerReferenceKeyAction, composerIsComposing } from "@/lib/composer-references";
 import { workspaceFileHref, parseWorkspaceFileLink, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
 import { QuestionForm } from "@/components/question-form";
 import { normalizeStoredQuestions, initialQuestionAnswers, restoreQuestionDraft, type PendingChatQuestion as PendingQuestion, type QuestionAnswers } from "@/lib/question-contract";
@@ -1972,7 +1975,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const slashResults = slashQuery === null ? [] : BUILT_IN_SLASH_COMMANDS.filter((command) => command.id.startsWith(slashQuery));
-  const referenceAutocompleteDismissedRef = useRef(false);
+  const referenceAutocompleteDismissedRef = useRef<number | null>(null);
   const previousComposerInputRef = useRef("");
   const inputCommitTimerRef = useRef<number>(0);
   const [referenceText, setReferenceText] = useState("");
@@ -3472,32 +3475,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setRemoteTerminalCwd(nextTabs.find((tab) => tab.id === (nextActiveId || nextTabs[0].id))?.cwd || workspaceDefaultCwd);
   }
 
-  function notifyUser(
-    title: string,
-    body: string,
-    chatId = activeChatIdRef.current,
-  ) {
-    if (
-      !notificationsEnabled ||
-      typeof window === "undefined" ||
-      !("Notification" in window) ||
-      Notification.permission !== "granted"
-    ) {
-      return;
+  useAccountNotifications(Boolean(authed), (record, prefs) => {
+    const open = () => {
+      window.focus();
+      if (record.chatId) void loadChat(record.chatId);
+    };
+    if (prefs.toastEnabled) {
+      toast.info(record.title, { id: record.id, description: record.body, position: "top-right", action: record.chatId ? { label: "Open chat", onClick: open } : undefined });
     }
-    try {
-      const notification = new Notification(title, {
-        body,
-        tag: `ai-chat-${chatId ?? "agent"}`,
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-    } catch {
-      // Browser notification construction can fail in restricted contexts.
+    if (prefs.browserEnabled && "Notification" in window && Notification.permission === "granted") {
+      try {
+        const notification = new Notification(record.title, { body: record.body, tag: record.id });
+        notification.onclick = () => { notification.close(); open(); };
+      } catch { /* Native alerts can be unavailable in embedded browsers. */ }
     }
-  }
+  }, prefs => { setNotificationsEnabled(prefs.browserEnabled); });
 
   function playFinishSound() {
     if (!soundCuesEnabled || typeof window === "undefined") return;
@@ -3515,18 +3507,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
     if (attentionNotifiedRef.current.has(notificationKey)) return;
     attentionNotifiedRef.current.add(notificationKey);
-    const isCurrentChat = activeChatIdRef.current === chatId;
-    toast.info("Attention required", {
-      description: body,
-      action: {
-        label: isCurrentChat ? "Scroll down" : "Open chat",
-        onClick: () => {
-          if (isCurrentChat) scrollMessagesToBottom();
-          else navigateChat(chatId);
-        },
-      },
-    });
-    notifyUser("Agent needs your input", body, chatId);
+
   }
   notifyAttentionRef.current = notifyAttention;
 
@@ -4126,6 +4107,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           snap.runStatus === "running" ||
           snap.runStatus === "waiting_for_user" ||
           snap.runStatus === "waiting_input" ||
+          (snap.runStatus === "paused" && Boolean(snap.queueMessage)) ||
           snap.pendingQuestion,
       ),
     );
@@ -4533,6 +4515,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setBusySynced(
               next.runStatus === "running" ||
                 next.runStatus === "waiting_input" ||
+                (next.runStatus === "paused" && Boolean(next.queueMessage)) ||
                 next.runStatus === "waiting_for_user" ||
                 Boolean(next.pendingQuestion || next.pendingApproval),
             );
@@ -5875,6 +5858,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function logout() {
+    if (!(await flushNoteEditors())) {
+      toast.error("Save or resolve your note drafts before signing out.");
+      return;
+    }
     await fetch("/api/auth", { method: "DELETE" });
     authedRef.current = false;
     setAuthed(false);
@@ -7781,7 +7768,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               toast.success("Plan ready", {
                 description: `${workspace.name}: ${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}`,
               });
-              notifyUser("Plan ready", `${workspace.name} is ready to review.`, chatId);
             }
           } else if (event === "canvas" && typeof payload.canvas === "string") {
             if (activeChatIdRef.current !== chatId) continue;
@@ -7835,9 +7821,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             if (activeChatIdRef.current === chatId) setAgentId(payload.agentId);
           } else if (event === "status") {
             const rawStatus = typeof payload.status === "string" ? payload.status : "";
-            const statusLabel = String(rawStatus ?? "").toLowerCase() === "running"
-              ? "Agent running"
-              : rawStatus;
+            const statusLabel = rawStatus === "waiting_provider_limit" ? "Waiting for provider reset"
+              : rawStatus.toLowerCase() === "running" ? "Agent running" : rawStatus;
             const label = [statusLabel, typeof payload.message === "string" ? payload.message : ""]
               .filter(Boolean)
               .join(" · ");
@@ -7850,7 +7835,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             const errMsg = payload.message;
             setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
             setChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, badge: "red" } : chat));
-            notifyUser("Agent error", errMsg, chatId);
             setMessages((m) =>
               m.map((x) => {
                 if (x.id !== asstId) return x;
@@ -7879,7 +7863,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             } else if (activeChatIdRef.current === chatId) {
               clearUnread(chatId);
             }
-            notifyUser("Agent finished", "Your response is ready.");
             if (activeChatIdRef.current === chatId) {
               pendingQuestionIdRef.current = null;
               setPendingQuestion(null);
@@ -8263,6 +8246,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         commitComposerParentState(draftInputRef.current);
       }, COMPOSER_STATE_COMMIT_MS);
     }
+    updateComposerReferenceMenu(value, cursorPosition, cursorPosition);
+  }
+
+  function updateComposerReferenceMenu(value: string, cursorPosition: number, selectionEnd = cursorPosition) {
     const nextSlashQuery = slashCommandQuery(value, cursorPosition);
     if (nextSlashQuery !== slashQuery) {
       setSlashQuery(nextSlashQuery);
@@ -8272,28 +8259,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (referenceMenu) setReferenceMenu(null);
       return;
     }
-    if (referenceAutocompleteDismissedRef.current) {
-      const addedAtMention =
-        (value.match(/@/g) || []).length > (previousValue.match(/@/g) || []).length ||
-        (value.endsWith("@") && !previousValue.endsWith("@"));
-      if (!addedAtMention) {
-        if (referenceMenu) setReferenceMenu(null);
-        return;
-      }
-      referenceAutocompleteDismissedRef.current = false;
-    }
-    const beforeCursor = value.slice(0, cursorPosition);
-    const match = beforeCursor.match(/(?:^|\s)@([^\n]*)$/);
-    if (!match) {
+    const mention = composerMentionQuery(value, cursorPosition, selectionEnd, references.map(reference => reference.label));
+    if (!mention || referenceAutocompleteDismissedRef.current === mention.start) {
       if (referenceMenu) setReferenceMenu(null);
       return;
     }
-    const start = beforeCursor.length - match[0].length + (match[0].startsWith("@") ? 0 : 1);
+    referenceAutocompleteDismissedRef.current = null;
+    const sameToken = referenceMenu?.start === mention.start;
     const nextMenu = {
-      query: match[1],
-      kind: null as ReferenceKind | null,
-      start,
-      end: cursorPosition,
+      ...mention,
+      kind: sameToken ? referenceMenu.kind : null as ReferenceKind | null,
     };
     if (
       !referenceMenu
@@ -8325,53 +8300,36 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   async function selectReference(reference: ReferenceItem) {
     if (!referenceMenu) return;
-    let resolvedReference = reference;
-    if (reference.kind === "terminal" && reference.sessionId && !reference.content) {
-      try {
-        const response = await fetch(
-          `/api/remote?sessionId=${encodeURIComponent(reference.sessionId)}&cursor=0`,
-          { cache: "no-store" },
-        );
-        if (response.ok) {
-          const data = (await response.json()) as {
-            chunks?: Array<{ data?: string }>;
-          };
-          resolvedReference = {
-            ...reference,
-            content: (data.chunks || [])
-              .map((chunk) => chunk.data || "")
-              .join("")
-              .slice(-30_000),
-          };
-        }
-      } catch {
-        // Keep the terminal reference usable even if its live output is unavailable.
-      }
-    }
-    setReferences((current) => (
-      current.some((item) => item.kind === resolvedReference.kind && item.id === resolvedReference.id)
-        ? current
-        : [...current, resolvedReference]
-    ));
-    const start = referenceMenu.start;
-    const end = referenceMenu.end;
-    const completedTag = `@${resolvedReference.label}`;
-    let caretPosition = start + completedTag.length;
-    setInput((current) => {
-      const next = `${current.slice(0, start)}${completedTag}${current.slice(end)}`;
-      caretPosition = start + completedTag.length;
-      return next;
-    });
-    setComposerSyncNonce((current) => current + 1);
-    referenceAutocompleteDismissedRef.current = false;
+    const chatId = activeChatIdRef.current;
+    const live = textareaRef.current?.value ?? draftInputRef.current;
+    const replacement = replaceComposerMention(live, referenceMenu, reference.label);
+    if (!replacement) return;
+    // Select immediately; a slow terminal snapshot cannot overwrite new typing.
+    setReferences(current => current.some(item => item.kind === reference.kind && item.id === reference.id)
+      ? current : [...current, reference]);
+    draftInputRef.current = replacement.value;
+    stateRef.current.input = replacement.value;
+    setInput(replacement.value);
+    setComposerSyncNonce(current => current + 1);
+    referenceAutocompleteDismissedRef.current = null;
     setReferenceMenu(null);
     window.requestAnimationFrame(() => {
       const element = textareaRef.current;
-      if (!element) return;
+      if (!element || activeChatIdRef.current !== chatId) return;
       element.focus();
-      const cursor = Math.max(0, Math.min(caretPosition, element.value.length));
+      const cursor = Math.min(replacement.cursor, element.value.length);
       element.setSelectionRange(cursor, cursor);
     });
+    if (reference.kind === "terminal" && reference.sessionId && !reference.content) {
+      try {
+        const response = await fetch(`/api/remote?sessionId=${encodeURIComponent(reference.sessionId)}&cursor=0`, { cache: "no-store" });
+        if (!response.ok || activeChatIdRef.current !== chatId) return;
+        const data = await response.json() as { chunks?: Array<{ data?: string }> };
+        if (activeChatIdRef.current !== chatId) return;
+        const content = (data.chunks || []).map(chunk => chunk.data || "").join("").slice(-30_000);
+        setReferences(current => current.map(item => item.kind === reference.kind && item.id === reference.id ? { ...item, content } : item));
+      } catch { /* Keep the selected terminal usable without a live snapshot. */ }
+    }
   }
 
   function removeReference(reference: ReferenceItem) {
@@ -8907,18 +8865,22 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </div>
         ) : null}
         {referenceMenu ? (
-          <div className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
+          <div id="composer-reference-list" role="listbox" aria-label="Context references" className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
             {!referenceMenu.kind && !referenceMenu.query ? (
               <div className="flex flex-col gap-0.5">
-                {(["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as ReferenceKind[]).map((kind) => (
+                {(["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as ReferenceKind[]).map((kind, index) => (
                   <button
                     key={kind}
+                    id={`composer-reference-option-${index}`}
+                    role="option"
+                    aria-selected={referenceIndex === index}
+                    onMouseEnter={() => setReferenceIndex(index)}
                     type="button"
                     aria-label={referenceLabel(kind)}
                     title={referenceLabel(kind)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground", referenceIndex === index && "bg-muted text-foreground")}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setReferenceMenu((current) => current ? { ...current, kind } : current)}
+                    onClick={() => { setReferenceIndex(0); setReferenceMenu((current) => current ? { ...current, kind } : current); }}
                   >
                     {(() => {
                       const Icon = referenceIcon(kind);
@@ -8954,6 +8916,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         index === referenceIndex ? "bg-muted" : "hover:bg-muted/60",
                       )}
                       onMouseDown={(event) => event.preventDefault()}
+                      id={`composer-reference-option-${index}`}
+                      role="option"
+                      aria-selected={referenceIndex === index}
                       onMouseEnter={() => setReferenceIndex(index)}
                       onClick={() => selectReference(reference)}
                     >
@@ -9074,7 +9039,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   setInput(next);
                   setComposerSyncNonce((value) => value + 1);
                   setReferenceMenu({ query: "", kind: null, start: prefix.length, end: next.length });
-                  referenceAutocompleteDismissedRef.current = false;
+                  referenceAutocompleteDismissedRef.current = null;
                   window.requestAnimationFrame(() => textareaRef.current?.focus());
                 }}>
                   <AtSign className="size-4" />
@@ -9090,6 +9055,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             syncNonce={composerSyncNonce}
             mentionLabels={references.map((reference) => reference.label)}
             onChange={handleComposerInputChange}
+            onSelectionChange={(value, start, end) => updateComposerReferenceMenu(value, start, end)}
+            aria-controls="composer-reference-list"
+            aria-expanded={Boolean(referenceMenu)}
+            aria-activedescendant={referenceMenu ? `composer-reference-option-${referenceIndex}` : undefined}
             onPaste={onComposerPaste}
             onFocus={() => {
               const viewport = window.visualViewport;
@@ -9133,28 +9102,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               setSlashQuery(null);
               return;
             }
-            if (referenceMenu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-              e.preventDefault();
-              const count = referenceResults.length;
-              if (count > 0) {
-                setReferenceIndex((current) => (
-                  e.key === "ArrowDown"
-                    ? (current + 1) % count
-                    : (current - 1 + count) % count
-                ));
+            if (composerIsComposing(e.nativeEvent)) return;
+            if (referenceMenu) {
+              const categories = !referenceMenu.kind && !referenceMenu.query;
+              const kinds: ReferenceKind[] = ["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"];
+              const action = composerReferenceKeyAction({ key: e.key, shiftKey: e.shiftKey, repeat: e.repeat,
+                count: categories ? kinds.length : referenceResults.length, index: referenceIndex });
+              if (action) {
+                e.preventDefault();
+                if (action.type === "move") setReferenceIndex(action.index);
+                else if (action.type === "select") {
+                  if (categories) { setReferenceMenu({ ...referenceMenu, kind: kinds[action.index] }); setReferenceIndex(0); }
+                  else void selectReference(referenceResults[action.index]);
+                } else { setReferenceMenu(null); referenceAutocompleteDismissedRef.current = referenceMenu.start; }
+                return;
               }
-              return;
-            }
-            if (referenceMenu && e.key === "Enter" && referenceResults[referenceIndex]) {
-              e.preventDefault();
-              selectReference(referenceResults[referenceIndex]);
-              return;
-            }
-            if (referenceMenu && e.key === "Escape") {
-              e.preventDefault();
-              setReferenceMenu(null);
-              referenceAutocompleteDismissedRef.current = true;
-              return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
               if (

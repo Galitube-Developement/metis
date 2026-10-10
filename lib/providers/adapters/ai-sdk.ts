@@ -51,6 +51,7 @@ async function runAiSdk(context: ProviderContext): Promise<ProviderResult> {
   const route = routeTask(context.job.message);
   const stream = (nextMessages: ModelMessage[], remainingSteps: number) =>
     streamText({
+        maxRetries: 0,
       model: aiModel(
         context.connection.providerKey,
         context.modelId,
@@ -160,6 +161,7 @@ async function runOAuthAiSdk(
     const route = routeTask(context.job.message);
     const stream = (nextMessages: ModelMessage[], remainingSteps: number) =>
       streamText({
+        maxRetries: 0,
         model: provider.languageModel(oauthModelId),
         instructions,
         messages: nextMessages,

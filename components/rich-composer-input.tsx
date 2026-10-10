@@ -5,12 +5,14 @@ import {
   useLayoutEffect,
   useCallback,
   useRef,
+  useReducer,
   type ClipboardEvent,
   type FocusEvent,
   type KeyboardEvent,
 } from "react";
 import { shouldSyncComposerDom, stripComposerPlaceholderLeak } from "@/lib/composer-send";
 import { cn } from "@/lib/utils";
+import { composerIsComposing, composerMentionQuery, type ComposerMentionQuery } from "@/lib/composer-references";
 
 const MAX_COMPOSER_HEIGHT = 180;
 const MIN_COMPOSER_HEIGHT = 36;
@@ -20,6 +22,12 @@ type RichComposerInputProps = {
   mentionLabels?: string[];
   syncNonce?: number;
   onChange: (value: string, cursorPosition: number) => void;
+  /** Caret-only updates must not mark the draft dirty or persist it. */
+  onSelectionChange?: (value: string, start: number, end: number) => void;
+  onMentionQueryChange?: (query: ComposerMentionQuery | null) => void;
+  "aria-controls"?: string;
+  "aria-expanded"?: boolean;
+  "aria-activedescendant"?: string;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onFocus?: (event: FocusEvent<HTMLTextAreaElement>) => void;
@@ -32,10 +40,9 @@ type RichComposerInputProps = {
 
 export function composerPlainText(element: HTMLElement | null | undefined, placeholder?: string) {
   if (!element) return "";
-  const raw =
-    element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
-      ? element.value
-      : (element.textContent || "").replace(/\u00a0/g, " ");
+  // Preserve literal placeholder text, NBSPs, markdown and line breaks in native inputs.
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) return element.value;
+  const raw = (element.textContent || "").replace(/\u00a0/g, " ");
   return stripComposerPlaceholderLeak(raw.replace(/\u00a0/g, " "), placeholder);
 }
 
@@ -52,8 +59,14 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
   function RichComposerInput(
     {
       value,
+      mentionLabels = [],
       syncNonce,
       onChange,
+      onSelectionChange,
+      onMentionQueryChange,
+      "aria-controls": ariaControls,
+      "aria-expanded": ariaExpanded,
+      "aria-activedescendant": ariaActiveDescendant,
       onKeyDown,
       onPaste,
       onFocus,
@@ -67,8 +80,18 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
   ) {
     const editorRef = useRef<HTMLTextAreaElement>(null);
     const lastSyncNonceRef = useRef(syncNonce ?? 0);
-    const liveValue = stripComposerPlaceholderLeak(value, placeholder);
+    // A native textarea cannot leak its placeholder into its value.
+    const liveValue = value;
     const initialValueRef = useRef(liveValue);
+    const composingRef = useRef(false);
+    const [compositionEpoch, finishComposition] = useReducer((epoch: number) => epoch + 1, 0);
+    const reportSelection = (element: HTMLTextAreaElement) => {
+      if (composingRef.current) return;
+      const start = element.selectionStart;
+      const end = element.selectionEnd;
+      onSelectionChange?.(element.value, start, end);
+      onMentionQueryChange?.(composerMentionQuery(element.value, start, end, mentionLabels));
+    };
     const attachEditor = useCallback((node: HTMLTextAreaElement | null) => {
       editorRef.current = node;
       if (typeof ref === "function") ref(node);
@@ -78,7 +101,7 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
 
     useLayoutEffect(() => {
       const element = editorRef.current;
-      if (!element) return;
+      if (!element || composingRef.current) return;
       const nonceChanged = syncNonce !== undefined && syncNonce !== lastSyncNonceRef.current;
       if (nonceChanged) lastSyncNonceRef.current = syncNonce;
       const focused = document.activeElement === element;
@@ -92,7 +115,7 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
         element.scrollTop = element.scrollHeight;
       }
       fitComposerHeight(element);
-    }, [liveValue, syncNonce]);
+    }, [liveValue, syncNonce, compositionEpoch]);
 
     return (
       <textarea
@@ -102,6 +125,11 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
         disabled={disabled}
         rows={1}
         aria-label={ariaLabel}
+        role={ariaControls ? "combobox" : undefined}
+        aria-autocomplete={ariaControls ? "list" : undefined}
+        aria-controls={ariaControls}
+        aria-expanded={ariaExpanded}
+        aria-activedescendant={ariaExpanded ? ariaActiveDescendant : undefined}
         className={cn(
           "rich-composer-input block min-h-9 max-h-[180px] w-full flex-1 resize-none overflow-y-auto whitespace-pre-wrap rounded-none border-0 bg-transparent px-3 py-1.5 text-[15px] leading-6 shadow-none outline-none",
           "placeholder:select-none placeholder:text-muted-foreground",
@@ -111,11 +139,31 @@ export const RichComposerInput = forwardRef<HTMLTextAreaElement, RichComposerInp
         )}
         onChange={(event) => {
           const element = event.currentTarget;
-          const next = stripComposerPlaceholderLeak(element.value, placeholder);
+          const next = element.value;
           fitComposerHeight(element);
-          onChange(next, element.selectionStart ?? next.length);
+          if (!composingRef.current) {
+            onChange(next, element.selectionStart ?? next.length);
+            reportSelection(element);
+          }
         }}
-        onKeyDown={onKeyDown}
+        onSelect={(event) => reportSelection(event.currentTarget)}
+        onCompositionStart={() => {
+          composingRef.current = true;
+          onMentionQueryChange?.(null);
+        }}
+        onCompositionEnd={(event) => {
+          composingRef.current = false;
+          const element = event.currentTarget;
+          fitComposerHeight(element);
+          onChange(element.value, element.selectionStart);
+          reportSelection(element);
+          finishComposition();
+        }}
+        onKeyDown={(event) => {
+          // Picker handlers run before the parent's send guard; protect all IME keys here.
+          if (composerIsComposing(event.nativeEvent, composingRef.current)) return;
+          onKeyDown?.(event);
+        }}
         onPaste={onPaste}
         onFocus={onFocus}
         onBlur={onBlur}
