@@ -1,6 +1,6 @@
 "use client";
 
-import { AutomationEditorSurface } from "@/components/automation-editor-surface";
+import { AutomationSplitView } from "@/components/automation-editor-surface";
 import { RunStatus } from "@/components/run-status";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -759,7 +759,7 @@ export function AutomationsPanel({
     : "";
 
   return (
-    <div className="automations-split-view" data-slot="automations-split-view" data-creating={creating}>
+    <AutomationSplitView creating={creating}>
       <aside className="automation-list-pane automation-scroll" aria-label="Automations">
         <header className="automation-list-header">
           <div className="automation-list-title-row">
@@ -830,7 +830,7 @@ export function AutomationsPanel({
         ) : null}
 
         {currentDetail ? (
-          <AutomationEditorSurface key={currentDetail.id} floating={creating}>
+          <div key={currentDetail.id} className={`automation-detail-content${creating ? " automation-editor-creating" : ""}`}>
             <header className="automation-detail-header">
               <span className="automation-detail-icon">
                 {creating ? <Plus aria-hidden="true" /> : currentDetail.creator === "agent" ? <Bot aria-hidden="true" /> : <CalendarClock aria-hidden="true" />}
@@ -1176,7 +1176,7 @@ export function AutomationsPanel({
             ) : null}
 
             {detailLoading ? <span className="sr-only" role="status">Refreshing automation details…</span> : null}
-          </AutomationEditorSurface>
+          </div>
         ) : null}
       </section>
 
@@ -1194,6 +1194,6 @@ export function AutomationsPanel({
           setDeleteTarget(null);
         }}
       />
-    </div>
+    </AutomationSplitView>
   );
 }

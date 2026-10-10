@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test, { after, before } from "node:test";
+import { automationSidebarBounds, clampAutomationSidebarWidth } from "../lib/automation-sidebar-layout";
 
 const dataDir = path.join(os.tmpdir(), `metis-automations-${randomUUID()}`);
 process.env.CHAT_DATA_DIR = dataDir;
@@ -371,4 +372,46 @@ test("legacy project automations with unassigned context chats keep running with
   const run = queueAutomationRun(legacy);
   assert.equal(modules[1].getChat(run.run.chatId, owner)?.projectId, project.id);
   assert.equal(modules[1].getChat(automation.chatId, owner)?.projectId, undefined);
+});
+
+test("the sidebar preserves a readable list and usable form at desktop widths", () => {
+  for (const width of [660, 800, 1040, 1200, 1800]) {
+    const bounds = automationSidebarBounds(width);
+    for (const requested of [100, 360, 480, 700, 5000]) {
+      const actual = clampAutomationSidebarWidth(requested, width);
+      assert.ok(actual >= 360 && actual <= 960);
+      assert.ok(width - actual >= 240, "resizing must not cover the automation list");
+      assert.ok(actual >= bounds.min && actual <= bounds.max);
+    }
+  }
+});
+
+test("a preferred width survives temporary constraints without overflowing", () => {
+  const preferred = 700;
+  assert.equal(clampAutomationSidebarWidth(preferred, 800), 560);
+  assert.equal(clampAutomationSidebarWidth(preferred, 1200), preferred);
+  for (const width of [0, 100, 300, 500]) {
+    const actual = clampAutomationSidebarWidth(preferred, width);
+    assert.ok(actual >= 0 && actual <= width);
+    assert.ok(width - actual >= Math.floor(Math.min(240, width * 0.4)));
+  }
+});
+
+test("non-finite sizes use the default and out-of-range gestures clamp to the nearest edge", () => {
+  for (const size of [NaN, Infinity]) {
+    assert.equal(clampAutomationSidebarWidth(size, 1040), 480);
+    assert.equal(clampAutomationSidebarWidth(size, 660), 420);
+  }
+  assert.equal(clampAutomationSidebarWidth(-300, 1040), 360);
+  assert.equal(clampAutomationSidebarWidth(0, 1040), 360);
+  assert.equal(clampAutomationSidebarWidth(480, NaN), 0);
+  assert.equal(clampAutomationSidebarWidth(480, -100), 0);
+});
+
+test("dragging a right sidebar left widens it and its bounds apply in both directions", () => {
+  const startWidth = 480, startX = 800;
+  assert.equal(clampAutomationSidebarWidth(startWidth + startX - 700, 1200), 580);
+  assert.equal(clampAutomationSidebarWidth(startWidth + startX - 900, 1200), 380);
+  assert.equal(clampAutomationSidebarWidth(startWidth + startX - 2000, 1200), 360);
+  assert.equal(clampAutomationSidebarWidth(startWidth + startX, 1200), 960);
 });
