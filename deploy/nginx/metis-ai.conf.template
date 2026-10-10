@@ -22,6 +22,20 @@ server {
         return 403;
     }
 
+    # GIF profile uploads: raw body, exact 50 MB limit enforced by the app.
+    location = /api/profile/avatar {
+        client_max_body_size 50m;
+        proxy_pass http://127.0.0.1:YOUR_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:YOUR_PORT;
         proxy_http_version 1.1;
