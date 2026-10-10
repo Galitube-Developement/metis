@@ -72,10 +72,12 @@ export function bridgeToolTimeoutMs(args: Record<string, unknown>, schema: Recor
   if (args.wait === false) return baseMs;
   const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
   const rule = properties?.timeoutMs;
-  if (!rule || typeof rule.maximum !== "number" || !Number.isFinite(rule.maximum)) return baseMs;
+  if (!rule) return baseMs;
   const requested = typeof args.timeoutMs === "number" ? args.timeoutMs : rule.default;
   if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) return baseMs;
-  return Math.max(baseMs, Math.max(0, Math.min(requested, rule.maximum)) + 60_000);
+  const deadline = typeof rule.maximum === "number" && Number.isFinite(rule.maximum)
+    ? Math.min(requested, rule.maximum) : requested;
+  return Math.max(baseMs, Math.max(0, deadline) + 60_000);
 }
 
 type GatewayProcess = {
@@ -291,6 +293,7 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "search_tools",
   "call_mcp_tool",
   "list_mcp_servers",
+  "customnotify",
   "ask_user",
   "request_mode_change",
   "delegate_subagent",
