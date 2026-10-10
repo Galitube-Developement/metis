@@ -183,7 +183,7 @@ import {
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { removeQueuedFollowUp } from "@/lib/queue-client";
-import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
+import { hiddenTranscriptMessageCount, anchoredTranscriptScrollTop, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
@@ -4625,14 +4625,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       // Measure when the response arrives: the user may scroll while it loads.
       const previousHeight = el.scrollHeight;
       const previousTop = el.scrollTop;
+      const viewportTop = el.getBoundingClientRect().top;
+      const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]"))
+        .find((node) => node.getBoundingClientRect().bottom > viewportTop);
+      const anchorTop = anchor?.getBoundingClientRect().top;
       setMessages((current) => prependMessages(current, olderMessages));
       setMessageOffset(data.messageOffset ?? nextOffset);
       setHasEarlierMessages(Boolean(data.hasEarlierMessages));
-      window.requestAnimationFrame(() => {
+      const restoreReadingPosition = (remainingFrames: number) => {
         if (controller.signal.aborted || activeChatIdRef.current !== id || messagesScrollRef.current !== el) return;
-        el.scrollTop = previousTop + el.scrollHeight - previousHeight;
+        // Offscreen rows use content-visibility and estimated heights. Track a
+        // visible row across the prepend, then settle the next layout frames.
+        el.scrollTop = anchor?.isConnected && anchorTop !== undefined
+          ? anchoredTranscriptScrollTop(el.scrollTop, anchor.getBoundingClientRect().top, anchorTop)
+          : previousTop + el.scrollHeight - previousHeight;
         lastMessageScrollTopRef.current = el.scrollTop;
-      });
+        if (remainingFrames > 0 && anchor?.isConnected) window.requestAnimationFrame(() => restoreReadingPosition(remainingFrames - 1));
+      };
+      window.requestAnimationFrame(() => restoreReadingPosition(2));
     } catch {
       if (!controller.signal.aborted && activeChatIdRef.current === id) setEarlierMessagesError(true);
     } finally {
