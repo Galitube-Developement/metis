@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useId, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Download, RefreshCw } from "lucide-react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, Download, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ProviderLogo } from "@/components/provider-logo";
+import { ModelUsageDetails } from "@/components/account/model-usage-details";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AccountUsage, UsageModel } from "@/lib/account-types";
@@ -17,6 +19,7 @@ export function UsageDashboard() {
   const [usage,setUsage]=useState<AccountUsage|null>(null);
   const [error,setError]=useState(""),[loading,setLoading]=useState(true),[refresh,setRefresh]=useState(0);
   const [sort,setSort]=useState<"tokens"|"costUsd"|"requests"|"modelId">("tokens"),[ascending,setAscending]=useState(false);
+  const [expanded,setExpanded]=useState<string|null>(null);
   const id=useId().replaceAll(":","");
   useEffect(()=>{
     if(range==="custom" && (!from || !to)) { setUsage(null);setLoading(false);return; }
@@ -87,17 +90,30 @@ export function UsageDashboard() {
     <section aria-label="Usage by model">
       <div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-base font-medium">By model</h2><Button variant="outline" className="h-11 gap-2" onClick={exportCsv} disabled={!models.length || Boolean(error) || loading}><Download className="size-4" /> Export CSV</Button></div>
       <div className="overflow-x-auto rounded-xl border border-border/60">
-        <table className="w-full text-left text-sm"><caption className="sr-only">Model usage for the selected date range</caption>
+        <table className="w-full table-fixed text-left text-sm"><caption className="sr-only">Model usage for the selected date range</caption>
           <thead className="border-b border-border/60 bg-muted/25 text-xs text-muted-foreground"><tr>
-            {([["modelId","Model"],["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).map(([key,label])=><th key={key} scope="col" aria-sort={sort===key?(ascending?"ascending":"descending"):"none"} className="px-4 py-2 font-normal">
+            {([["modelId","Model"],["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).map(([key,label])=><th key={key} scope="col" aria-sort={sort===key?(ascending?"ascending":"descending"):"none"} className={"px-3 py-2 font-normal sm:px-4 "+(key==="costUsd"?"hidden sm:table-cell":key==="modelId"?"w-[48%] sm:w-[35%]":"")}>
               <button type="button" className="flex min-h-9 items-center gap-1.5" onClick={()=>sortBy(key)}>{label}{sort===key?(ascending?<ArrowUp className="size-3" />:<ArrowDown className="size-3" />):null}</button></th>)}
-            <th className="px-4 py-4 font-normal" scope="col">Input</th><th className="px-4 py-4 font-normal" scope="col">Output</th>
+            <th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Input</th><th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Output</th>
           </tr></thead>
-          <tbody>{models.map((model:UsageModel)=><tr key={model.providerId+"::"+model.modelId} className="border-b border-border/40 last:border-b-0">
-            <td className="min-w-48 px-4 py-4"><span className="font-medium">{model.modelId}</span><span className="mt-1 block text-xs text-muted-foreground">{model.providerId}</span></td>
-            <td className="whitespace-nowrap px-4 py-4 tabular-nums">{format(model.costUsd,true)}</td><td className="px-4 py-4 tabular-nums">{format(model.tokenReports?model.tokens:null)}</td><td className="px-4 py-4 tabular-nums">{format(model.requests)}</td>
-            <td className="px-4 py-4 tabular-nums">{format(model.inputReports?model.inputTokens:null)}</td><td className="px-4 py-4 tabular-nums">{format(model.outputReports?model.outputTokens:null)}</td>
-          </tr>)}
+          <tbody>{models.map((model:UsageModel)=>{
+            const key=JSON.stringify([model.providerId,model.modelId]),open=expanded===key;
+            const detailId=id+"-model-"+encodeURIComponent(key);
+            return <Fragment key={key}><tr className="border-b border-border/40">
+              <td className="max-w-0 px-3 py-2 sm:px-4">
+                <button type="button" aria-label={(open?"Hide":"Show")+" usage details for "+model.modelId+" ("+model.providerId+")"} aria-expanded={open} aria-controls={detailId} onClick={()=>setExpanded(open?null:key)} className="flex min-h-12 w-full items-center gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring">
+                  <ChevronDown aria-hidden="true" className={"size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none "+(open?"rotate-180":"")}/>
+                  <span className="min-w-0"><span className="block truncate font-medium" title={model.modelId}>{model.modelId}</span><span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><span aria-hidden="true"><ProviderLogo providerId={model.providerId} className="size-3.5"/></span><span className="truncate">{model.providerId}</span></span></span>
+                </button>
+              </td>
+              <td className="hidden whitespace-nowrap px-4 py-4 tabular-nums sm:table-cell">{format(model.costUsd,true)}</td>
+              <td className="px-3 py-4 tabular-nums sm:px-4">{model.tokenReports?compact.format(model.tokens):"—"}</td>
+              <td className="px-3 py-4 tabular-nums sm:px-4">{compact.format(model.requests)}</td>
+              <td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.inputReports?model.inputTokens:null)}</td><td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.outputReports?model.outputTokens:null)}</td>
+            </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={6} className="bg-muted/15 px-4 py-5 sm:px-6">
+              {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to}/>:null}
+            </td></tr></Fragment>;
+          })}
           {!models.length ? <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":"No recorded usage in this period."}</td></tr>:null}
           </tbody>
         </table>

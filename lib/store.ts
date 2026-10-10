@@ -91,6 +91,9 @@ export type ChatMessage = {
     totalProcessedTokens?: number;
     contextUsedTokens?: number;
     contextWindow?: number;
+    configuredContextWindow?: number;
+    reasoningEffort?: string;
+    speedMode?: string;
     contextWindowSource?: "provider" | "runtime" | "stored-provider" | "registry" | "catalog" | "inferred" | "estimate";
     maxOutputTokens?: number;
     compactsAutomatically?: boolean;

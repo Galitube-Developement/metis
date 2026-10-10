@@ -42,6 +42,7 @@ import {
 } from "@/lib/tool-persistence";
 import { recordSignal } from "@/lib/model-telemetry";
 import { providerModelsForConnection } from "@/lib/providers/discovery";
+import { usageConfiguration } from "@/lib/usage-configuration";
 import { contextWindowForSelection } from "@/lib/context-window";
 import {
   clearProviderSessionBinding,
@@ -345,6 +346,13 @@ export async function runAlternativeProviderJob(
   );
 
   try {
+    const runParams = (job.modelParams?.length ? job.modelParams : chat.modelParams)?.map(param => ({ ...param }));
+    const selectedModel = providerModelsForConnection(credential)
+      .find((candidate) => candidate.id === parsed.modelId);
+    const selectedContextWindow = contextWindowForSelection(
+      selectedModel || { id: parsed.modelId, providerId: definition.key }, runParams,
+    );
+    const runConfiguration = usageConfiguration(runParams, selectedContextWindow);
     if (adapter.capabilities.contextOwner === "native") {
       const binding = getProviderSessionBinding(chat, execution, credential.id);
       const selectedModel = providerModelsForConnection(credential)
@@ -465,12 +473,7 @@ export async function runAlternativeProviderJob(
     const inputTokens =
       measuredInputTokens ??
       estimateProviderInputTokens(chat, job, parsed.modelId);
-    const selectedModel = providerModelsForConnection(credential)
-      .find((candidate) => candidate.id === parsed.modelId);
-    const selectedContextWindow = contextWindowForSelection(
-      selectedModel || { id: parsed.modelId, providerId: definition.key },
-      job.modelParams?.length ? job.modelParams : chat.modelParams,
-    );
+
     const runtimeWindow =
       typeof result.usage?.maxTokens === "number" && result.usage.maxTokens >= 32_768
         ? result.usage.maxTokens
@@ -505,6 +508,7 @@ export async function runAlternativeProviderJob(
       role: "assistant",
       ...durableMessageProjection(),
       runMetadata: {
+        ...runConfiguration,
         providerId: definition.key,
         modelId: parsed.modelId,
         inputTokens,

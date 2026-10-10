@@ -37,6 +37,7 @@ import { routeTask } from "@/lib/agent-efficiency";
 import type { Chat } from "@/lib/store";
 import { compactChatHistoryForPrompt, runAlternativeProviderJob, COMPACTION_MARKER } from "@/lib/providers/runner";
 import { recoveryTranscript } from "@/lib/providers/recovery-transcript";
+import { usageConfiguration } from "@/lib/usage-configuration";
 import { contextModeOf, contextWindowForSelection } from "@/lib/context-window";
 import { appendAgentTrace } from "@/lib/agent-trace";
 import { parseAgentTranscript, stripTranscriptDump } from "@/lib/agent-transcript";
@@ -846,6 +847,7 @@ export async function runQueuedJob(job: AgentJob) {
       modelParams,
     );
     const contextMode = contextModeOf(modelParams);
+    const runConfiguration = usageConfiguration(modelParams, contextWindow);
 
     // Native Cursor owns its conversation. Metis stores a provider-specific
     // last-known-good binding so switching providers does not destroy it.
@@ -1765,6 +1767,7 @@ export async function runQueuedJob(job: AgentJob) {
       ...(result.status === "finished"
         ? {
             runMetadata: {
+              ...runConfiguration,
               providerId: "cursor",
               modelId: result.model?.id || job.modelId || chat.modelId,
               connectionId: cursorConnection.id,
