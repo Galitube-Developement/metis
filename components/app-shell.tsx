@@ -1,4 +1,5 @@
 "use client";
+import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 
 import { QuestionForm } from "@/components/question-form";
 import { normalizeStoredQuestions, initialQuestionAnswers, restoreQuestionDraft, type PendingChatQuestion as PendingQuestion, type QuestionAnswers } from "@/lib/question-contract";
@@ -93,7 +94,6 @@ import {
   Reply,
   Search,
   Share2,
-  Settings,
   Settings2,
   Square,
   StickyNote,
@@ -269,6 +269,7 @@ const RemoteTerminal = dynamic(
   () => import("@/components/remote-terminal").then((mod) => mod.RemoteTerminal),
   { ssr: false },
 );
+const AccountPanel = dynamic(() => import("@/components/account/account-panel").then(mod => mod.AccountPanel));
 const SettingsPanel = dynamic(() => import("@/components/settings-panel").then((mod) => mod.SettingsPanel));
 const SetupWizard = dynamic(() => import("@/components/setup-wizard").then((mod) => mod.SetupWizard));
 const SubagentChatView = dynamic(() => import("@/components/subagent-chat-view").then((mod) => mod.SubagentChatView));
@@ -2011,6 +2012,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [workspaceOpen]);
 
   const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [accountView, setAccountView] = useState<"profile" | "usage" | null>(null);
+  useEffect(() => setAccountView(null), [routeChatId, routeView]);
+  const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("general");
   const [settingsUpdateAvailable, setSettingsUpdateAvailable] = useState(false);
@@ -4123,6 +4127,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const openDraft = useCallback(
     (opts?: { skipNav?: boolean; projectId?: string | null }) => {
+      if (!opts?.skipNav) setAccountView(null);
       suppressNotesRouteRef.current = true;
       setNotesOpen(false);
       setFocusedNoteId(null);
@@ -4274,6 +4279,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const loadChat = useCallback(
     async (id: string, opts?: { skipNav?: boolean; forceReload?: boolean }) => {
+      if (!opts?.skipNav) setAccountView(null);
       if (window.matchMedia("(max-width: 767px), (pointer: coarse)").matches) {
         textareaRef.current?.blur();
         setComposerFocused(false);
@@ -4841,6 +4847,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const current = activeChatIdRef.current;
     const routeProjectId = parseProjectRouteId(routeChatId);
     if (routeChatId === "automations" || routeView === "automations") {
+      setAccountView(null);
       setAutomationsOpen(true);
       setNotesOpen(false);
       setWorkspaceOpen(false);
@@ -4862,6 +4869,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setDraftProjectId(routeProjectId);
     } else if (routeChatId === "notes") {
       if (suppressNotesRouteRef.current) return;
+      setAccountView(null);
       setNotesOpen(true);
       setAutomationsOpen(false);
       setWorkspaceOpen(false);
@@ -5102,7 +5110,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
       if (reference.kind === "note") {
         setWorkspaceOpen(false);
-        setNotesOpen(true);
+        setAccountView(null);
+      setNotesOpen(true);
         setFocusedNoteId(null);
         window.setTimeout(() => setFocusedNoteId(reference.id), 0);
         navigateChat("notes");
@@ -5186,6 +5195,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         activeChatIdRef.current = null;
         setProjectHomeId(null);
       setFocusedAutomationId(id);
+      setAccountView(null);
       setAutomationsOpen(true);
       setNotesOpen(false);
       setWorkspaceOpen(false);
@@ -9346,6 +9356,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  }
 
  function openProjectHome(projectId: string) {
+ setAccountView(null);
  setSidebarAllProjects(false);
  setNotesOpen(false);
  setAutomationsOpen(false);
@@ -9428,7 +9439,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               : "text-muted-foreground hover:bg-white/[0.03] hover:text-foreground",
           )}
           onClick={() => {
-            setNotesOpen(true);
+            setAccountView(null);
+      setNotesOpen(true);
             setAutomationsOpen(false);
             setWorkspaceOpen(false);
             navigateChat("notes");
@@ -9450,7 +9462,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     setActiveChatId(null);
                     activeChatIdRef.current = null;
                     setProjectHomeId(null);
-            setAutomationsOpen(true);
+            setAccountView(null);
+      setAutomationsOpen(true);
             setFocusedAutomationId(null);
             setNotesOpen(false);
             setWorkspaceOpen(false);
@@ -9687,28 +9700,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       <div className="shrink-0 p-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-9 w-full justify-start gap-2 px-2.5 text-muted-foreground"
-          onClick={() => {
-            void loadMemories();
-            void refreshStatus();
-            setSettingsOpen(true);
-          }}
-        >
-          <span className="relative shrink-0">
-            <Settings className="size-3.5" />
-            {settingsUpdateAvailable ? (
-              <span
-                className="absolute -right-1 -top-1 size-2 rounded-full bg-emerald-500 ring-2 ring-background"
-                aria-label="Update Available"
-                title="Update Available"
-              />
-            ) : null}
-          </span>
-          <span className="truncate">Settings</span>
-        </Button>
+        <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable}
+          onSettings={() => { setMobileNavOpen(false); void loadMemories(); void refreshStatus(); setSettingsOpen(true); }}
+          onProfile={() => { setAccountView("profile"); setMobileNavOpen(false); setWorkspaceOpen(false); }}
+          onUsage={() => { setAccountView("usage"); setMobileNavOpen(false); setWorkspaceOpen(false); }} />
       </div>
     </div>
   );
@@ -9848,7 +9843,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   return (
     <ChatFileDropZone
-      enabled={!notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
       onFiles={addPendingFiles}
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
@@ -9868,7 +9863,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }}
         onOpenNotes={() => {
           setWorkspaceOpen(false);
-          setNotesOpen(true);
+          setAccountView(null);
+      setNotesOpen(true);
           setFocusedNoteId(null);
           setMobileNavOpen(false);
           navigateChat("notes");
@@ -9879,7 +9875,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  }}
  onOpenNote={(noteId) => {
           setWorkspaceOpen(false);
-          setNotesOpen(true);
+          setAccountView(null);
+      setNotesOpen(true);
           setFocusedNoteId(null);
           setMobileNavOpen(false);
           window.setTimeout(() => setFocusedNoteId(noteId), 0);
@@ -9995,6 +9992,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {accountView ? <AccountPanel view={accountView} onView={setAccountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} /> : <>
         {/* Thin top bar */}
         <header className="relative z-20 flex h-14 shrink-0 items-center gap-2.5 border-b border-border/55 bg-background px-3.5 md:h-12 md:gap-2 md:px-4">
           <Button
@@ -10143,7 +10141,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             onNewChat={(projectId) => openDraft({ projectId })}
             onAttachFile={(file) => void attachProjectFileToNextChat(projectHomeId, file)}
             onOpenNotes={(noteId) => {
-              setNotesOpen(true);
+              setAccountView(null);
+      setNotesOpen(true);
               setFocusedNoteId(noteId ?? null);
             }}
           onDeleted={() => {
@@ -10890,12 +10889,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             </div>
         ) : null}
         </div>
+        </>}
       </div>
 
-      {!notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
+      {!accountView && !notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
         <div className="fixed inset-0 z-40 bg-background/55" aria-hidden="true" />
       ) : null}
-      {!notesOpen && !automationsOpen && workspaceMounted ? (
+      {!accountView && !notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
