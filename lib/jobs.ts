@@ -16,6 +16,8 @@ export type JobStatus =
   | "error";
 
 export type AgentJob = {
+  /** Durable deferred claim metadata; cleared atomically when the reset is due. */
+  providerRateLimit?: import("@/lib/provider-rate-limit").ProviderRateLimit;
   id: string;
   chatId: string;
   userId?: string;

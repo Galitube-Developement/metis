@@ -1,3 +1,4 @@
+import { chatMemoryAction } from "@/lib/chat-memory-actions";
 import { createMemory, deleteMemory, getChat, listMemories, updateMemory } from "@/lib/db-store";
 import {
   getProject,
@@ -44,18 +45,19 @@ export async function POST(req: Request) {
   if (chat.incognito) return Response.json({ error: "Memory tools are unavailable in Incognito." }, { status: 403 });
   const project = chat.projectId ? getProject(chat.projectId, userId) : null;
   if (chat.projectId && !project) return Response.json({ error: "Project not found" }, { status: 404 });
-  if (body.scope !== undefined && body.scope !== "project" && body.scope !== "global") {
-    return Response.json({ error: "scope must be project or global" }, { status: 400 });
+  if (body.scope !== undefined && body.scope !== "project" && body.scope !== "global" && body.scope !== "chat") {
+    return Response.json({ error: "scope must be chat, project or global" }, { status: 400 });
   }
   const scope = body.scope ?? (project ? "project" : "global");
+  if (scope === "chat") return chatMemoryAction(userId, chat.id, action, body);
   if (scope === "project" && !project) return Response.json({ error: "No project is active" }, { status: 400 });
   if (scope === "global" && project?.memoryMode === "project_only") {
     return Response.json({ error: "Global memory access is disabled for this project. Use scope project." }, { status: 403 });
   }
   const projectId = scope === "project" ? project?.id : undefined;
   const availableScopes = project
-    ? project.memoryMode === "project_only" ? ["project"] : ["project", "global"]
-    : ["global"];
+    ? project.memoryMode === "project_only" ? ["chat", "project"] : ["chat", "project", "global"]
+    : ["chat", "global"];
   if (action === "access") return Response.json({ scope, availableScopes });
 
   if (action === "list") {

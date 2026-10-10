@@ -1,3 +1,4 @@
+import { providerRateLimit, providerErrorWithCause } from "@/lib/provider-rate-limit";
 import {
   createApproval,
   getApproval,
@@ -332,6 +333,21 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
     for await (const message of conversation) {
       const record = asRecord(message);
       sessionId ||= asString(record.session_id);
+      if (sessionId) updateProviderSessionBinding({ chatId: context.chat.id, ownerId: context.job.userId,
+        execution: "claude-agent", connectionId: context.connection.id, contextOwner: "native",
+        candidateCursor: sessionId, promoteCursor: true, modelId: context.modelId });
+      // SDK limit events carry authoritative Unix reset timestamps; warning/allowed events are not failures.
+      if (record.type === "rate_limit_event") {
+        const info = asRecord(record.rate_limit_info);
+        if (info.status === "rejected") {
+          const evidence = { ...info, code: "rate_limit_exceeded" };
+          if (providerRateLimit(evidence)) throw providerErrorWithCause("Provider rate limit reached.", evidence);
+          throw new Error("Provider rate limit reached; reset time unavailable.");
+        }
+      }
+      if (record.type === "result" && record.is_error === true) {
+        throw providerErrorWithCause(asString(record.result) || "Claude provider turn failed.", record);
+      }
       if (record.type === "stream_event") {
         const event = asRecord(record.event);
         const delta = asRecord(event.delta);

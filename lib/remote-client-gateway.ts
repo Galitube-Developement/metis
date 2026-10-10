@@ -1,3 +1,4 @@
+import { bindNotificationSession } from "@/lib/notification-remote";
 import {
   appendRemoteAudit,
   authenticateRemoteClient,
@@ -59,6 +60,7 @@ export function attachRemoteClient(socket: SocketLike, clientId: string, ownerId
   connections.get(clientId)?.socket.close();
   const pending = new Map<string, Pending>();
   connections.set(clientId, { socket, ownerId, pending });
+  bindNotificationSession(socket, clientId, ownerId);
   markRemoteClientSeen(clientId, address);
   let lastHeartbeatAt = Date.now();
   const heartbeatCheck = setInterval(() => {

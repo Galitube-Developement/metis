@@ -64,7 +64,7 @@ export async function GET(req: Request) {
       notes = [...notes, ...extra.filter((note) => !seen.has(note.id))];
     }
   }
-  return Response.json({ notes });
+  return Response.json({ notes, ownerId: userId });
 }
 
 export async function POST(req: Request) {

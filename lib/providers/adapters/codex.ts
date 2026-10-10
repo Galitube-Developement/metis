@@ -1,3 +1,5 @@
+import { codexLimitErrorFromRollout } from "@/lib/providers/codex-rate-limit";
+import { providerErrorWithCause } from "@/lib/provider-rate-limit";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CodexOptions } from "@openai/codex-sdk";
@@ -204,7 +206,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
     throw new Error("Codex API-key authentication requires a key.");
   }
   const persistentHome =
-    context.connection.authType === "oauth" && context.job.userId
+    (context.connection.authType === "oauth" || context.connection.authType === "account") && context.job.userId
       ? path.join(
           config.dataDir,
           "provider-sessions",
@@ -283,6 +285,7 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
   const thread = previousId
     ? codex.resumeThread(previousId, threadOptions)
     : codex.startThread(threadOptions);
+  const turnStartedAt = Date.now();
   try {
     const prompt = [
       providerPrompt(
@@ -304,6 +307,12 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
     let usage: ProviderResult["usage"] | undefined;
     let emittedAgentMessage = false;
     for await (const event of events) {
+      // Persist the native thread as soon as the provider assigns it, including failed turns.
+      if (event.type === "thread.started") {
+        updateProviderSessionBinding({ chatId: context.chat.id, ownerId: context.job.userId,
+          execution: "codex-sdk", connectionId: context.connection.id, contextOwner: "native",
+          candidateCursor: event.thread_id, promoteCursor: true, modelId: context.modelId });
+      }
       context.onStream({
         type: event.type,
         ...("item" in event ? { item: event.item } : {}),
@@ -325,9 +334,13 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
           totalTokens: event.usage.input_tokens + event.usage.output_tokens,
         };
       } else if (event.type === "turn.failed") {
-        throw new Error(event.error.message);
+        throw codexHome && thread.id
+          ? codexLimitErrorFromRollout(event.error, codexHome.home, thread.id, turnStartedAt)
+          : providerErrorWithCause(event.error.message, event.error);
       } else if (event.type === "error") {
-        throw new Error(event.message);
+        throw codexHome && thread.id
+          ? codexLimitErrorFromRollout(event, codexHome.home, thread.id, turnStartedAt)
+          : providerErrorWithCause(event.message, event);
       } else if (
         event.type === "item.started" ||
         event.type === "item.updated" ||
