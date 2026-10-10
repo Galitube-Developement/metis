@@ -52,7 +52,7 @@ export function ModelUsageDetails({model,from,to}: {model:UsageModel;from:string
       }).catch(error=>{if(!controller.signal.aborted)setError(error.message);});
     return ()=>controller.abort();
   },[model.modelId,model.providerId,from,to,retry]);
-  const chart=useMemo(()=>{
+  const chart=useMemo<{data:Array<Record<string,string|number|null>>;series:Array<{key:string;label:string}>}>(()=>{
     if(!details)return {data:[],series:[]};
     if(metric === "tokens" || metric === "requests")return {
       data:details.days.map(day=>({date:day.date,value:metric==="tokens" && day.requests && !day.tokenReports ? null:day[metric]})),
