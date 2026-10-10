@@ -2048,3 +2048,10 @@
 .automation-subagent-model > summary { cursor: pointer; color: var(--automation-text); font-size: 12px; font-weight: 500; }
 .automation-subagent-model > summary span { margin-left: 8px; color: var(--automation-copy); font-weight: 400; font-size: 11px; }
 .automation-subagent-model[open] > summary { margin-bottom: 12px; }
+/* Keep the primary action distinct when shared action hover styles apply. */
+.automation-editor-actions button[type="submit"]:hover:not(:disabled),
+.automation-editor-actions button[type="submit"]:active:not(:disabled) {
+  background: var(--automation-text);
+  color: var(--automation-bg);
+  border-color: var(--automation-text);
+}
