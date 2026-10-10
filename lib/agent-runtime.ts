@@ -15,7 +15,7 @@ export function armAgentRuntime(job: AgentJob) {
  const timer = setTimeout(() => {
   const current = getJob(job.id);
   if (current && ["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(current.status)) {
-   cancelAgentJob(job.id, job.userId, "Agent runtime limit reached.");
+   cancelAgentJob(job.id, job.userId, "Agent runtime limit reached.", "runtime_limit");
   }
  }, Math.max(0, deadline - Date.now()));
  timer.unref();

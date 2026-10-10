@@ -216,6 +216,35 @@ await t.test("direct project agent runs also get the 30-minute default and 6-hou
  assert.equal(job.maxRuntimeMs, 21_600_000);
  stop(f); jobs.cancelAgentJob(job.id, owner);
 });
+await t.test("configured runtime reaches coordinator, async assignments and retries", () => {
+ store.saveGlobalModelSettings({ agentRuntimeMs: 7_200_000 }, owner);
+ const f = fixture();
+ assert.equal(f.parent.maxRuntimeMs, 7_200_000);
+ const h = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "User runtime", wait: false });
+ assert.equal(h.job!.maxRuntimeMs, 7_200_000);
+ assert.equal(Date.parse(h.handoff.deadlineAt!) - Date.parse(h.handoff.createdAt), 7_200_000);
+ team.cancelProjectHandoff(f.project.id, h.handoff.id, owner);
+ const retry = team.actOnProjectHandoff(f.project.id, h.handoff.id, "retry", owner)!;
+ assert.equal(jobs.getJob(retry.jobId!)!.maxRuntimeMs, 7_200_000);
+ stop(f);
+ store.saveGlobalModelSettings({}, owner);
+});
+await t.test("synchronous handoff survives sender runtime expiry, then explicit stop cancels it", async () => {
+ const f = fixture();
+ const waiting = POST(request(f, { recipientAgentId: f.agents[1].id, task: "Independent child budget", timeoutMs: 21_600_000 }));
+ await new Promise(resolve => setTimeout(resolve, 30));
+ const handoff = team.listProjectHandoffs(f.project.id, owner)[0];
+ assert.ok(handoff);
+ jobs.cancelAgentJob(f.parent.id, owner, "Agent runtime limit reached.", "runtime_limit");
+ const response = await waiting;
+ assert.equal(response.status, 200);
+ assert.equal((await response.json()).status, "queued");
+ assert.equal(jobs.getJob(handoff.jobId!)?.maxRuntimeMs, 21_600_000);
+ assert.equal(jobs.getJob(handoff.jobId!)?.status, "queued");
+ assert.equal(jobs.getJob(handoff.jobId!)?.subagentAutoReview, true);
+ jobs.cancelAgentJob(f.parent.id, owner);
+ assert.equal(jobs.getJob(handoff.jobId!)?.status, "cancelled");
+});
 await t.test("agent stop cancels peer work without archiving and rejects other projects and ancestors", async () => {
  const f = fixture();
  const target = f.agents[1];

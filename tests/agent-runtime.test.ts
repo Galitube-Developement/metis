@@ -102,7 +102,7 @@ test("durable agent limits and scoped cancellation", async t => {
   jobs.cancelAgentJob(outsider.id, other); jobs.cancelAgentJob(sameOwner.id, owner);
   jobs.requestJobCancel(f.chat.id, owner);
  });
- await t.test("job-process deadlines persist across recovery and cancel expired async subtrees", async () => {
+ await t.test("job-process deadlines persist across recovery while children retain their own budgets", async () => {
   const f = fixture();
   const target = child(f, "Timed subtree");
   const branchChat = store.createChat("Timed descendant", undefined, owner);
@@ -117,9 +117,27 @@ test("durable agent limits and scoped cancellation", async t => {
   const releaseResumed = armAgentRuntime(jobs.getJob(target.id)!);
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(jobs.getJob(target.id)?.status, "cancelled");
+  assert.equal(jobs.getJob(target.id)?.cancellationCause, "runtime_limit");
+  assert.equal(jobs.getJob(branch.id)?.status, "queued");
+  assert.equal(jobs.getJob(branch.id)?.subagentAutoReview, true);
+  jobs.cancelAgentJob(target.id, owner);
   assert.equal(jobs.getJob(branch.id)?.status, "cancelled");
   assert.equal(jobs.getJob(f.parent.id)?.status, "running");
   releaseResumed(); jobs.requestJobCancel(f.chat.id, owner);
+ });
+ await t.test("account defaults reach new children without changing existing or explicit limits", async () => {
+  const f = fixture();
+  const existing = child(f, "Existing limit");
+  store.saveGlobalModelSettings({ agentRuntimeMs: 10_800_000 }, owner);
+  const response = await spawn.POST(request(f, { title: "User limit", prompt: "Read scope", wait: false }));
+  const delegated = await response.json();
+  assert.equal(jobs.getJob(delegated.agentId)?.maxRuntimeMs, 10_800_000);
+  assert.equal(child(f, "Direct child").maxRuntimeMs, 10_800_000);
+  assert.equal(jobs.getJob(existing.id)?.maxRuntimeMs, 1_800_000);
+  const explicit = await spawn.POST(request(f, { title: "Explicit limit", prompt: "Read scope", wait: false, timeoutMs: 60_000 }));
+  assert.equal(jobs.getJob((await explicit.json()).agentId)?.maxRuntimeMs, 60_000);
+  store.saveGlobalModelSettings({}, owner);
+  jobs.requestJobCancel(f.chat.id, owner);
  });
  await t.test("completed child history survives cancellation attempts", async () => {
   const f = fixture();

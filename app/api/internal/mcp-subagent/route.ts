@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { appendMessage, createChat, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import { cancelAgentJob, enqueueJob, getJob, listChildJobs } from "@/lib/db-jobs";
-import { normalizeAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
+import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import { bearerTokenMatches } from "@/lib/security";
 import { parseWorkerConcurrency } from "@/lib/worker-scheduler";
 
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
   const modeId = parentModeId === "agent" && requestedMode ? requestedMode : parentModeId;
 
   const wait = body.wait !== false;
-  const timeoutMs = normalizeAgentRuntimeMs(body.timeoutMs);
+  const timeoutMs = resolveAgentRuntimeMs(body.timeoutMs, preferences.agentRuntimeMs);
   const child = createChat(title, undefined, userId, modelId ? { id: modelId } : undefined);
   const parentGoal = parentChat.sessionState?.goal?.trim();
   updateChat(child.id, {
@@ -163,7 +163,7 @@ export async function POST(req: Request) {
   }
   const result = finalChildResult(child.id, userId);
   if (current && ACTIVE.has(current.status)) {
-    current = cancelAgentJob(childJob.id, userId, "Subagent timed out.") || current;
+    current = cancelAgentJob(childJob.id, userId, "Subagent timed out.", "runtime_limit") || current;
     return Response.json({
       agentId: childJob.id,
       jobId: childJob.id,
