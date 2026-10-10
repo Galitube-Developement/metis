@@ -30,6 +30,8 @@ async function avatarData(file:File) {
 }
 export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChange:(profile:AccountProfile)=>void}) {
   const [draft,setDraft]=useState(profile),[editing,setEditing]=useState(false),[saving,setSaving]=useState(false),[uploading,setUploading]=useState(false);
+  const [handleError,setHandleError]=useState("");
+  const sharePath="/p/"+(profile.handle || profile.shareId);
   const [activity,setActivity]=useState<AccountUsage|null>(null),[activityError,setActivityError]=useState(""),[copied,setCopied]=useState(false);
   useEffect(()=>{if(!editing)setDraft(profile);},[profile,editing]);
   useEffect(()=>{
@@ -41,28 +43,30 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
     return ()=>controller.abort();
   },[]);
   async function save(value:AccountProfile) {
-    setSaving(true);
+    setSaving(true);setHandleError("");
     try {
       const response=await fetch("/api/profile",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-        displayName:value.displayName,bio:value.bio,avatar:value.avatar,links:value.links,sharing:Boolean(value.shareId),shareActivity:value.shareActivity,
+        displayName:value.displayName,handle:value.handle,bio:value.bio,avatar:value.avatar,links:value.links,sharing:Boolean(value.shareId),shareActivity:value.shareActivity,
       })});
-      const data=await response.json();if(!response.ok)throw new Error(data.error || "Could not save profile.");
+      const data=await response.json();
+      if(!response.ok){if(data.field==="handle")setHandleError(data.error);throw new Error(data.error || "Could not save profile.");}
       onChange(data.profile);setDraft(data.profile);setEditing(false);toast.success("Profile saved");
     } catch(error){toast.error(error instanceof Error?error.message:"Could not save profile.");}
     finally{setSaving(false);}
   }
   async function copy() {
-    try{await navigator.clipboard.writeText(new URL("/p/"+profile.shareId,window.location.origin).href);setCopied(true);window.setTimeout(()=>setCopied(false),2000);}
+    try{await navigator.clipboard.writeText(new URL(sharePath,window.location.origin).href);setCopied(true);window.setTimeout(()=>setCopied(false),2000);}
     catch{toast.error("Copy the profile link from the field below.");}
   }
   return <div className="space-y-8">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Profile</h1><p className="mt-2 text-sm text-muted-foreground">A little about you, and what you build.</p></div>
-      {!editing ? <Button variant="outline" className="h-11 gap-2" onClick={()=>{setDraft(profile);setEditing(true);}}><Pencil className="size-4" /> Edit profile</Button>:null}
+      {!editing ? <Button variant="outline" className="h-11 gap-2" onClick={()=>{setDraft(profile);setHandleError("");setEditing(true);}}><Pencil className="size-4" /> Edit profile</Button>:null}
     </div>
     <div className="grid items-start gap-8 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
       <div className="min-w-0">
         <ProfileAvatar profile={editing?draft:profile} name={profile.displayName} className="mb-5 size-24 text-3xl sm:size-28" />
         <h2 className="break-words text-xl font-semibold tracking-tight">{profile.displayName}</h2>
+        {profile.handle?<p className="mt-1 break-all text-sm text-muted-foreground">@{profile.handle}</p>:null}
         <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{profile.bio || "Add a bio to make this profile yours."}</p>
         <div className="mt-5 space-y-2">{profile.links.map((link,index)=><a key={index} href={link.url} target="_blank" rel="noopener noreferrer" className="flex min-h-8 items-center gap-2 text-sm hover:underline"><Link2 className="size-3.5 shrink-0 text-muted-foreground"/><span className="truncate">{link.label}</span><ExternalLink className="ml-auto size-3 text-muted-foreground" /></a>)}</div>
       </div>
@@ -77,6 +81,12 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
             {draft.avatar ? <Button variant="ghost" type="button" size="sm" disabled={saving || uploading} onClick={()=>setDraft({...draft,avatar:null})}>Remove picture</Button>:null}
           </div>
           <label className="block space-y-2 text-sm">Name<Input aria-label="Profile name" value={draft.displayName} maxLength={80} required onChange={event=>setDraft({...draft,displayName:event.target.value})} className="h-11"/></label>
+          <div className="space-y-2">
+            <label htmlFor="profile-handle" className="text-sm">Handle</label>
+            <Input id="profile-handle" aria-label="Profile handle" value={draft.handle || ""} maxLength={32} minLength={3} pattern="[A-Za-z0-9](?:[A-Za-z0-9_]|-){2,31}" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="your_handle" aria-invalid={Boolean(handleError)} aria-describedby="profile-handle-help" className="h-11" onChange={event=>{setDraft({...draft,handle:event.target.value});setHandleError("");}}/>
+            <p id="profile-handle-help" className="break-words text-xs text-muted-foreground">{handleError || "3–32 letters, numbers, underscores or hyphens. Leave empty to use a generated link."}</p>
+            {draft.handle?<p className="break-all text-xs text-muted-foreground">/p/{draft.handle.toLowerCase()}</p>:null}
+          </div>
           <label className="block space-y-2 text-sm">Bio<Textarea aria-label="Profile bio" value={draft.bio} maxLength={500} rows={3} onChange={event=>setDraft({...draft,bio:event.target.value})}/></label>
           <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm">Links</h3><Button type="button" variant="ghost" className="h-11 gap-1" disabled={draft.links.length>=5} onClick={()=>setDraft({...draft,links:[...draft.links,{label:"",url:""}]})}><Plus className="size-4"/> Add link</Button></div>
             {draft.links.map((link,index)=><div key={index} className="grid grid-cols-[1fr_44px] gap-2 sm:grid-cols-[130px_1fr_44px]">
@@ -96,7 +106,7 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
           {profile.shareId ? <><div className="mt-4 flex items-center justify-between gap-4"><div><label htmlFor="profile-share-activity" className="text-sm">Include token activity</label><p className="mt-1 text-xs text-muted-foreground">Share the daily heatmap. Usage details and costs stay private.</p></div>
             <Switch id="profile-share-activity" checked={profile.shareActivity} disabled={saving || editing} onCheckedChange={shareActivity=>void save({...profile,shareActivity})}/>
           </div>
-          <div className="mt-5 flex gap-2"><Input aria-label="Shared profile link" className="h-11 text-xs" readOnly value={typeof window!=="undefined"?new URL("/p/"+profile.shareId,window.location.origin).href:"/p/"+profile.shareId}/>
+          <div className="mt-5 flex gap-2"><Input aria-label="Shared profile link" className="h-11 text-xs" readOnly value={typeof window!=="undefined"?new URL(sharePath,window.location.origin).href:sharePath}/>
             <Button className="size-11 shrink-0" variant="outline" size="icon" aria-label="Copy profile link" onClick={()=>void copy()}>{copied?<Check className="size-4"/>:<Copy className="size-4"/>}</Button>
           </div><p className="mt-2 text-xs text-muted-foreground">Turning sharing off revokes this link.</p></>:<p className="mt-4 text-xs text-muted-foreground">Your profile is private.</p>}
         </section>

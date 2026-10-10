@@ -21,6 +21,7 @@ export default async function SharedProfilePage({params}:{params:Promise<{shareI
       <section className="mt-14">
         <ProfileAvatar profile={profile} name={profile.displayName} className="size-24 text-3xl"/>
         <h1 className="mt-6 break-words text-3xl font-semibold tracking-tight">{profile.displayName}</h1>
+        {profile.handle?<p className="mt-2 break-all text-sm text-muted-foreground">@{profile.handle}</p>:null}
         {profile.bio?<p className="mt-4 whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{profile.bio}</p>:null}
         <div className="my-6 flex flex-wrap gap-4">{profile.links.map((link,index)=><a key={index} href={link.url} rel="noopener noreferrer" target="_blank" className="inline-flex min-h-11 items-center gap-2 text-sm hover:underline">{link.label}<ExternalLink className="size-3.5"/></a>)}</div>
         {days?<TokenHeatmap days={days}/>:null}
