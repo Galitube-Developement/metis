@@ -2,13 +2,12 @@ import { createHash } from "node:crypto";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { appendMessage, createChat, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import { cancelAgentJob, enqueueJob, getJob, listChildJobs } from "@/lib/db-jobs";
-import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
+import { agentRuntimeDeadline, resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
 import { bearerTokenMatches } from "@/lib/security";
 import { parseWorkerConcurrency } from "@/lib/worker-scheduler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 21660;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const ACTIVE = new Set(["queued", "running", "switching", "waiting_input", "waiting_for_user"]);
@@ -155,7 +154,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const deadline = Date.now() + timeoutMs;
+  const deadline = agentRuntimeDeadline(Date.now(), timeoutMs);
   let current = getJob(childJob.id);
   while (current && ACTIVE.has(current.status) && Date.now() < deadline) {
     await sleep(400);

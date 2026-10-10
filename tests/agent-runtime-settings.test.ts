@@ -27,11 +27,15 @@ test("runtime settings authenticate, isolate accounts, validate and preserve oth
   store.saveGlobalModelSettings({ agentRules: [{ id: "rule", content: "Preserve me" }], modelId: "existing-selection" }, owner.id);
   assert.equal((await api.GET(request(undefined, false))).status, 401);
   assert.equal((await api.PATCH(request({ runtimeMs: 3_600_000 }, false))).status, 401);
-  assert.equal((await (await api.GET(request())).json()).runtimeMs, 1_800_000);
-  for (const runtimeMs of [null, "3600000", 0, -60_000, 60_001, 30_000, 21_660_000, 60_000.5]) {
+  const defaults = await (await api.GET(request())).json();
+  assert.equal(defaults.runtimeMs, 1_800_000);
+  assert.equal(defaults.minRuntimeMs, 900_000);
+  assert.equal(defaults.maxRuntimeMs, null);
+  assert.equal(defaults.unlimitedRuntimeMs, 0);
+  for (const runtimeMs of [null, "3600000", -60_000, 60_001, 30_000, 840_000, 900_001, 60_000.5, Number.MAX_SAFE_INTEGER + 1]) {
     assert.equal((await api.PATCH(request({ runtimeMs }))).status, 400);
   }
-  for (const runtimeMs of [60_000, 3_600_000, 21_600_000]) {
+  for (const runtimeMs of [900_000, 3_600_000, 43_200_000, 30 * 24 * 60 * 60_000, 0]) {
     const response = await api.PATCH(request({ runtimeMs, ownerId: other.id }));
     assert.equal(response.status, 200);
     assert.equal((await response.json()).runtimeMs, runtimeMs);

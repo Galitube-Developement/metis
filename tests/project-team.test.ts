@@ -153,7 +153,7 @@ await t.test("an incoming handoff status query never waits on or cancels its own
  const h = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "Real assignment" });
  jobs.updateJob(f.parent.id, { projectWaitingForHandoffId: h.handoff.id });
  const child = jobs.claimNextJob({ workerId: "status-worker" })!;
- const req = request(f, { action: "status", handoffId: h.handoff.id, wait: true, timeoutMs: 1000 });
+ const req = request(f, { action: "status", handoffId: h.handoff.id, wait: true, timeoutMs: 900_000 });
  req.headers.set("x-ai-chat-id", child.chatId); req.headers.set("x-ai-chat-job-id", child.id);
  req.headers.set("x-ai-chat-worker-id", child.leaseOwner!); req.headers.set("x-ai-chat-lease-token", child.leaseToken!);
  const result = await POST(req);
@@ -208,12 +208,12 @@ await t.test("cancellation stops descendants, persists terminal handoffs, and pr
  assert.ok(team.listProjectAgents(f.project.id, owner).filter(a => a.id !== f.sender.id).every(a => !a.supervisorId));
  assert.throws(() => jobs.enqueueJob({ chatId: f.sender.chatId, userId: owner, message: "No" }), /active agent/);
 });
-await t.test("direct project agent runs also get the 30-minute default and 6-hour maximum", () => {
+await t.test("direct project agent runs also get the 30-minute default and longer custom limits", () => {
  const f = fixture();
  assert.equal(f.parent.maxRuntimeMs, 1_800_000);
  const chat = store.getChat(f.agents[1].chatId, owner)!;
  const job = jobs.enqueueJob({ chatId: chat.id, userId: owner, message: "Direct run", modelId: model, maxRuntimeMs: 43_200_000 });
- assert.equal(job.maxRuntimeMs, 21_600_000);
+ assert.equal(job.maxRuntimeMs, 43_200_000);
  stop(f); jobs.cancelAgentJob(job.id, owner);
 });
 await t.test("configured runtime reaches coordinator, async assignments and retries", () => {
@@ -226,6 +226,25 @@ await t.test("configured runtime reaches coordinator, async assignments and retr
  team.cancelProjectHandoff(f.project.id, h.handoff.id, owner);
  const retry = team.actOnProjectHandoff(f.project.id, h.handoff.id, "retry", owner)!;
  assert.equal(jobs.getJob(retry.jobId!)!.maxRuntimeMs, 7_200_000);
+ stop(f);
+ store.saveGlobalModelSettings({}, owner);
+});
+await t.test("Unlimited applies to coordinators and handoffs without creating an expiry deadline", async () => {
+ store.saveGlobalModelSettings({ agentRuntimeMs: 0 }, owner);
+ const f = fixture();
+ assert.equal(f.parent.maxRuntimeMs, 0);
+ const h = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "Unlimited assignment", wait: false });
+ assert.equal(h.job!.maxRuntimeMs, 0);
+ assert.equal(h.handoff.deadlineAt, undefined);
+ assert.equal(team.expireProjectHandoffs(Date.now() + 365 * 24 * 60 * 60_000), 0);
+ assert.equal(jobs.getJob(h.job!.id)?.status, "queued");
+ const waiting = POST(request(f, { recipientAgentId: f.agents[2].id, task: "Unlimited synchronous assignment" }));
+ await new Promise(resolve => setTimeout(resolve, 30));
+ const sync = team.listProjectHandoffs(f.project.id, owner).find(handoff => handoff.task === "Unlimited synchronous assignment")!;
+ assert.equal(jobs.getJob(sync.jobId!)?.maxRuntimeMs, 0);
+ assert.equal(sync.deadlineAt, undefined);
+ team.cancelProjectHandoff(f.project.id, sync.id, owner);
+ assert.equal((await (await waiting).json()).status, "cancelled");
  stop(f);
  store.saveGlobalModelSettings({}, owner);
 });
@@ -265,9 +284,9 @@ await t.test("agent stop cancels peer work without archiving and rejects other p
  assert.equal(jobs.getJob(restarted.id)?.status, "cancelled");
  stop(f);
 });
-await t.test("handoffs default to 30 minutes and allow up to 6 hours", async () => {
+await t.test("handoffs default to 30 minutes and allow custom durations beyond 6 hours", async () => {
  const f = fixture();
- for (const [requested, expected] of [[undefined, 1_800_000], [21_600_000, 21_600_000], [43_200_000, 21_600_000]] as const) {
+ for (const [requested, expected] of [[undefined, 1_800_000], [21_600_000, 21_600_000], [43_200_000, 43_200_000]] as const) {
   const response = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Deadline " + requested, wait: false, ...(requested === undefined ? {} : { timeoutMs: requested }) }));
   assert.equal(response.status, 200);
   const result = await response.json();
@@ -284,9 +303,14 @@ await t.test("handoffs default to 30 minutes and allow up to 6 hours", async () 
  }
  stop(f);
 });
-await t.test("timeouts cancel real queued jobs and retries retain the failed record", async () => {
+await t.test("timeouts cancel real queued jobs and retries retain the failed record", async testContext => {
  const f = fixture();
- const response = await POST(request(f, { recipientAgentId: f.agents[1].id, task: "Will time out", timeoutMs: 1000 }));
+ const waiting = POST(request(f, { recipientAgentId: f.agents[1].id, task: "Will time out", timeoutMs: 900_000 }));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const future = Date.now() + 900_001;
+  testContext.mock.method(Date, "now", () => future);
+  const response = await waiting;
+  testContext.mock.restoreAll();
  const outcome = await response.json();
  assert.equal(outcome.status, "cancelled");
  assert.match(outcome.error, /timed out/);
@@ -299,12 +323,12 @@ await t.test("timeouts cancel real queued jobs and retries retain the failed rec
 });
 await t.test("durable expiry and project deletion cancel dependent work without losing histories", async () => {
  const f = fixture();
- const h = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "Persisted timeout", wait: false, timeoutMs: 1000 });
+ const h = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "Persisted timeout", wait: false, timeoutMs: 900_000 });
  const { createApproval, getApproval } = await import("../lib/db-approvals");
  const { createPendingQuestion, getPendingQuestion } = await import("../lib/db-questions");
  const approval = createApproval({ jobId: h.job!.id, chatId: f.agents[1].chatId, ownerId: owner, title: "Sensitive action" });
  const question = createPendingQuestion([{ question: "Clarify?" }], f.agents[1].chatId, owner, { jobId: h.job!.id });
- assert.equal(team.expireProjectHandoffs(Date.now() + 2000), 1);
+ assert.equal(team.expireProjectHandoffs(Date.now() + 900_001), 1);
  assert.equal(jobs.getJob(h.job!.id)?.status, "cancelled");
  assert.equal(getApproval(approval.approvalId, owner)?.decision, "deny");
  assert.equal(getPendingQuestion(question.questionId, owner)?.status, "cancelled");

@@ -11,11 +11,11 @@ process.env.AI_CHAT_INTERNAL_ORIGIN = "http://127.0.0.1:1";
 process.env.MCP_BEARER_TOKEN = "synthetic-runtime-test";
 const { tools, dispatchGatewayTool, modeToolCategory } = await import("../lib/mcp-core/gateway-core.mjs");
 
-test("canonical agent tools advertise and route the shared 30-minute / 6-hour contract", async () => {
+test("canonical agent tools advertise and route the shared custom / unlimited runtime contract", async () => {
  const original = globalThis.fetch;
  const requests = [];
  globalThis.fetch = async (url, options) => {
-  requests.push({ url: String(url), body: JSON.parse(options.body), headers: options.headers });
+  requests.push({ url: String(url), body: JSON.parse(options.body), headers: options.headers, signal: options.signal, dispatcher: options.dispatcher });
   return Response.json({ status: "cancelled", agentId: "child", delegated: true });
  };
  const context = { chatId: "parent-chat", jobId: "parent-job", userId: "synthetic",
@@ -24,16 +24,27 @@ test("canonical agent tools advertise and route the shared 30-minute / 6-hour co
  try {
   for (const name of ["delegate_subagent", "project_handoff"]) {
    const schema = tools.find(tool => tool.name === name).inputSchema.properties.timeoutMs;
-   assert.equal(schema.default, undefined); assert.equal(schema.maximum, 21_600_000);
+   assert.equal(schema.default, undefined); assert.equal(schema.maximum, undefined);
+   assert.deepEqual(schema.anyOf, [{ const: 0 }, { minimum: 900_000 }]);
   }
   assert.equal(modeToolCategory("subagent_cancel"), "subagent");
   assert.ok(tools.find(tool => tool.name === "project_handoff").inputSchema.properties.action.enum.includes("stop"));
-  for (const [timeoutMs, expected] of [[undefined, undefined], [43_200_000, 21_600_000]]) {
+  for (const [timeoutMs, expected] of [[undefined, undefined], [43_200_000, 43_200_000], [0, 0]]) {
    const result = await dispatchGatewayTool("delegate_subagent", { prompt: "Read scope", wait: false, timeoutMs }, { context, auditCall: false });
    assert.ok(!result.isError, JSON.stringify(result));
    assert.equal(requests.at(-1).body.timeoutMs, expected);
   }
-  const cancelled = await dispatchGatewayTool("subagent_cancel", { agentId: "child" }, { context, auditCall: false });
+  const controller = new AbortController();
+   for (const name of ["delegate_subagent", "project_handoff"]) {
+    for (const timeoutMs of [undefined, 0, 30 * 24 * 60 * 60_000]) {
+     const result = await dispatchGatewayTool(name, { prompt: "Read scope", recipientAgentId: "peer", task: "Read scope", timeoutMs }, { context: { ...context, signal: controller.signal }, auditCall: false });
+     assert.ok(!result.isError, JSON.stringify(result));
+     assert.equal(requests.at(-1).body.timeoutMs, timeoutMs);
+     assert.equal(requests.at(-1).signal, controller.signal, "waiting uses cancellation, not a hidden transport deadline");
+     assert.ok(requests.at(-1).dispatcher, "long waits also override fetch's default HTTP header timeout");
+    }
+   }
+   const cancelled = await dispatchGatewayTool("subagent_cancel", { agentId: "child" }, { context, auditCall: false });
   assert.ok(!cancelled.isError, JSON.stringify(cancelled));
   assert.match(requests.at(-1).url, /mcp-agent-state$/);
   assert.equal(requests.at(-1).body.action, "cancel");
