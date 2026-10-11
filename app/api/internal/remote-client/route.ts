@@ -1,3 +1,4 @@
+import { getJob } from "@/lib/db-jobs";
 import { collectRemoteClientEvents, requestRemoteClientWithApproval } from "@/lib/remote-client-gateway";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { listRemoteClients } from "@/lib/remote-clients";
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     const result = await requestRemoteClientWithApproval({
       clientId: body.clientId,
       ownerId,
+      chatId: getJob(jobId)?.chatId,
       action: body.action as Parameters<typeof requestRemoteClientWithApproval>[0]["action"],
       params: body.params && typeof body.params === "object" && !Array.isArray(body.params)
         ? body.params as Record<string, unknown>
