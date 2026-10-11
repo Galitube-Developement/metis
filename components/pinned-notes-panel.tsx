@@ -1,4 +1,5 @@
 "use client";
+import { createClientId } from "@/lib/client-id";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Pin, X } from "lucide-react";
@@ -91,7 +92,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
       const current = { ...note, ...patch };
       const response = await fetch(`/api/notes/${encodeURIComponent(note.id)}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": createClientId() },
         body: JSON.stringify({ ...patch, version: note.version }),
       });
       if (response.ok) {

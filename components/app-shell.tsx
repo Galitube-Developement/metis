@@ -1,4 +1,5 @@
 "use client";
+import { createClientId } from "@/lib/client-id";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 import type { AccountView } from "@/components/account/account-panel";
 
@@ -3469,7 +3470,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function openTerminalTab() {
-    const id = `terminal-${crypto.randomUUID()}`;
+    const id = `terminal-${createClientId()}`;
     const tab: TerminalTab = {
       id,
       title: `Terminal ${terminalTabs.length + 1}`,
@@ -7204,7 +7205,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
 
     const ac = new AbortController();
-    const generation = crypto.randomUUID();
+    const generation = createClientId();
     markChatRunning(chatId, {
       abortController: ac,
       assistantMessageId: asstId,
@@ -8480,7 +8481,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     let copyName = `${baseName} copy`;
     let suffix = 2;
     while (names.has(copyName.toLocaleLowerCase())) copyName = `${baseName} copy ${suffix++}`;
-    const copy = { ...workspace, id: crypto.randomUUID(), name: copyName, createdAt: timestamp, updatedAt: timestamp, version: 1 };
+    const copy = { ...workspace, id: createClientId(), name: copyName, createdAt: timestamp, updatedAt: timestamp, version: 1 };
     updateWorkspaceList([...workspaces, copy].slice(-20));
     setActiveWorkspaceId(copy.id);
     setWorkspaceTab(copy.type);
