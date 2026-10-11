@@ -39,6 +39,9 @@ $result = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/remote-clients/enr
 $config = @{ server=$Server.TrimEnd('/'); permissionMode=$PermissionMode; clientId=$result.client.id; credential=$result.credential } | ConvertTo-Json
 $configPath = Join-Path $InstallDir 'config.json'; Set-Content $configPath $config -Encoding utf8
 Invoke-WebRequest "$($Server.TrimEnd('/'))/install/remote-client.mjs" -OutFile (Join-Path $InstallDir 'client.mjs')
+foreach ($file in @('computer-use.mjs','computer-use-worker.mjs','computer-use-unix.mjs','desktop-preview.mjs')) {
+  Invoke-WebRequest "$($Server.TrimEnd('/'))/install/$file" -OutFile (Join-Path $InstallDir $file)
+}
 Invoke-WebRequest "$($Server.TrimEnd('/'))/install/remote-client-uninstall.ps1" -OutFile (Join-Path $InstallDir 'uninstall.ps1')
 
 Push-Location $InstallDir

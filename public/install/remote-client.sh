@@ -50,7 +50,7 @@ tar -xzf "$stage/$archive" -C "$stage"
 mv "$stage/${archive%.tar.gz}" "$stage/runtime"
 rm "$stage/$archive" "$stage/SHASUMS256.txt"
 export PATH="$stage/runtime/bin:$PATH"
-for file in remote-client.mjs computer-use.mjs computer-use-worker.mjs computer-use-unix.mjs metis-desktop-helper.swift remote-client-uninstall.sh; do
+for file in remote-client.mjs computer-use.mjs computer-use-worker.mjs computer-use-unix.mjs desktop-preview.mjs metis-desktop-helper.swift remote-client-uninstall.sh; do
   download "$base_url/install/$file" "$stage/$file"
 done
 mv "$stage/remote-client.mjs" "$stage/client.mjs"

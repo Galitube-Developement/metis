@@ -1,4 +1,5 @@
 "use client";
+import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { createClientId } from "@/lib/client-id";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
@@ -46,6 +47,7 @@ import {
   Cpu,
   Gauge,
   MemoryStick,
+  Monitor,
   Network,
   Users,
   ArrowLeft,
@@ -699,7 +701,7 @@ type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team" | "memory";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "desktops" | "monitor" | "team" | "memory";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
@@ -737,6 +739,7 @@ function normalizeWorkspaceTab(value: unknown): NonNullable<ChatSessionState["wo
     value === "terminal" ||
     value === "files" ||
     value === "browser" ||
+    value === "desktops" ||
     value === "monitor" ||
     value === "team" ||
     value === "memory"
@@ -3442,6 +3445,33 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setAgentPointer(null);
     };
   }, [activeBrowserAgentRun, activeChatId, browserEnabled]);
+
+  const [desktopAgentClientId, setDesktopAgentClientId] = useState<string | null>(null);
+  const [desktopAgentActive, setDesktopAgentActive] = useState(false);
+  const [desktopActivityTimestamp, setDesktopActivityTimestamp] = useState(0);
+  useEffect(() => {
+    setDesktopAgentClientId(null);
+    setDesktopAgentActive(false);
+    if (!activeChatId || loadingChatId) return;
+    const source = new EventSource(`/api/remote-clients/live?chatId=${encodeURIComponent(activeChatId)}`);
+    source.onmessage = event => {
+      try {
+        const data = JSON.parse(event.data) as { clientId?: string; phase?: string; timestamp?: number };
+        if (!data.clientId) return;
+        if (data.phase === "start") {
+          setDesktopAgentClientId(data.clientId);
+          setDesktopAgentActive(true);
+          setDesktopActivityTimestamp(data.timestamp || Date.now());
+          setWorkspaceTab("desktops");
+          setWorkspaceMounted(true);
+          if (!isMobileChatViewport()) setWorkspaceOpen(true);
+        } else if (data.phase === "end") {
+          setDesktopAgentActive(false);
+        }
+      } catch { /* Ignore malformed activity events. */ }
+    };
+    return () => source.close();
+  }, [activeChatId, loadingChatId]);
 
   // Load persisted navigation history when the browser workspace tab opens.
   useEffect(() => {
@@ -11072,7 +11102,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
-            (workspaceTab === "browser" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
+            (workspaceTab === "browser" || workspaceTab === "desktops" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
             workspaceFullscreen && "fixed inset-[1%] z-50 !w-auto rounded-lg border border-border/70 shadow-xl",
             workspaceOpen ? "workspace-panel-enter" : "workspace-panel-exit",
           )}
@@ -11095,7 +11125,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           )}
           <div className="flex shrink-0 items-center gap-1 border-b border-border/30 px-2 py-1.5">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {(["team", "canvas", "plan", "memory", "files", "terminal", "browser", "monitor"] as const)
+              {(["team", "canvas", "plan", "memory", "files", "terminal", "browser", "desktops", "monitor"] as const)
                 .filter((tab) => (tab !== "browser" || browserEnabled) && (tab !== "team" || isAgentChat))
                 .map((tab) => (
                 <Button
@@ -11121,7 +11151,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   )}
                   aria-label={tab === "team" ? "Agent overview" : tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab === "memory" ? "Memory" : tab[0].toUpperCase() + tab.slice(1)}
                 >
-                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "memory" ? <Brain className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
+                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "memory" ? <Brain className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "desktops" ? <Monitor className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
                   <span className={cn(
                     "overflow-hidden whitespace-nowrap text-xs transition-[max-width,opacity,transform] duration-300",
                     workspaceTab === tab
@@ -11159,13 +11189,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               <X className="size-4" />
             </Button>
           </div>
-          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", workspaceTab === "browser" && "max-sm:p-1.5")}>
+          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", (workspaceTab === "browser" || workspaceTab === "desktops") && "max-sm:p-1.5")}>
             {loadingChatId !== null && loadingChatId === activeChatId ? (
               <WorkspaceLoadingSkeleton />
             ) : workspaceTab === "memory" ? (
               activeChatId ? <WorkspaceMemoryPanel key={activeChatId} chatId={activeChatId} label={isAgentChat ? "Agent Memory" : "Chat Memory"}/> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open a chat to view its memories.</div>
             ) : workspaceTab === "team" ? (
               isAgentChat && activeProjectId && activeChatId ? <ProjectTeamWorkspace key={activeProjectId} projectId={activeProjectId} chatId={activeChatId} onOpenChat={(chatId) => { void loadChat(chatId).then(() => { if (activeChatIdRef.current === chatId) { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); } }); }} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open an agent chat to view its team.</div>
+            ) : workspaceTab === "desktops" ? (
+              <WorkspaceDesktopsPanel active={workspaceOpen && !accountView} agentClientId={desktopAgentClientId} agentActive={desktopAgentActive} activityTimestamp={desktopActivityTimestamp}
+                onOpenDevices={() => { setSettingsTab("devices"); openAccountPage("settings"); }} />
             ) : workspaceTab === "browser" ? (
               <div className="flex min-h-0 flex-1 flex-col gap-1.5">
                 <div className="flex h-8 shrink-0 items-end gap-1 overflow-x-auto rounded-lg border border-border/50 bg-muted/15 px-1 pt-1 max-sm:h-7">
