@@ -89,6 +89,7 @@ export type ChatMessage = {
     inputTokensEstimated?: boolean;
     totalTokens?: number;
     totalProcessedTokens?: number;
+    tokenUsageScope?: "turn";
     contextUsedTokens?: number;
     contextWindow?: number;
     configuredContextWindow?: number;
@@ -362,6 +363,8 @@ export type ProviderSessionBinding = {
   /** Newly observed cursor; promoted only after the turn is durably completed. */
   candidateCursor?: string;
   modelId?: string;
+  /** Native cumulative usage at the last completed turn, scoped to this cursor. */
+  lastUsageTotals?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number };
   lastContextTokens?: number;
   lastContextWindow?: number;
   lastCompactionAt?: string;
