@@ -240,6 +240,7 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
     process.geteuid?.() ?? process.getuid?.(),
   );
   const modelParams = effectiveModelParams(context.chat, context.job);
+  const mcpServers = claudeMcpServers(getMcpServers(providerMcpContext(context)));
   const options = {
     cwd: agentCwd,
     model: resolveClaudeAgentModelId(context.modelId, modelParams),
@@ -262,9 +263,16 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
               title?: string;
             },
           ) => {
-            // Metis MCP tools are authorized by the gateway's runtime gate.
-            // Approving them here avoids a second, mismatched SDK approval.
-            if (toolName.startsWith("mcp__metis_ai__")) {
+            // Under root, this callback replaces SDK bypass for Full access.
+            // Other modes delegate the configured Metis gateway tools to its
+            // own runtime gate, without a second SDK approval. Use the actual
+            // server names: getMcpServers currently exposes "gateway".
+            if (
+              runtimeMode === "full-access" ||
+              Object.keys(mcpServers).some((name) =>
+                toolName.startsWith(`mcp__${name}__`),
+              )
+            ) {
               return claudePermissionResult("allow");
             }
             if (
@@ -313,11 +321,7 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
       CLAUDE_AGENT_SDK_CLIENT_APP: "metis-ai",
     }),
     abortController,
-    mcpServers: claudeMcpServers(
-      getMcpServers(
-        providerMcpContext(context),
-      ),
-    ),
+    mcpServers,
     systemPrompt: providerPrompt(
       context.job,
       ["mcp"],
