@@ -30,7 +30,7 @@ function fixture() {
     runtimeRef: { current: new Map([["chat", { abortController: { abort: () => { aborts++; } } }]]) },
     busy: true, busyRef: { current: true },
     modelId: "unit-test-selection",
-    pendingQuestion: { questionId: "old-question" }, pendingQuestionIdRef: { current: "old-question" as string | null },
+    pendingQuestion: null as { questionId: string } | null, pendingQuestionIdRef: { current: null as string | null }, answeringQuestion: false,
     sendInFlightKeysRef: { current: new Set<string>() }, queueDrainRef, queueDrainBlockedRef, queuedSendRef,
     shouldStartQueuedFollowUp, mergeQueuedFollowUps,
     stateRef: { current: { messages: [] as Array<{ id: string; role: string }> } },
@@ -109,3 +109,24 @@ test("live sync and autosave retain an unaccepted queued submission even with it
   f.calls[0].finish();
   await sending;
 });
+
+for (const waitingState of ["question", "sync-ref", "answer-submit"] as const) {
+  test(`queued UI messages stay untouched while waiting for ${waitingState}`, async () => {
+    const f = fixture();
+    if (waitingState === "question") f.context.pendingQuestion = { questionId: "open-question" };
+    if (waitingState === "sync-ref") f.context.pendingQuestionIdRef.current = "open-question";
+    if (waitingState === "answer-submit") f.context.answeringQuestion = true;
+    await f.sendQueuedMessage(f.first);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.aborts(), 0);
+    assert.deepEqual(f.queue(), [f.first, f.second]);
+    assert.equal(f.queueDrainRef.current, false);
+    f.context.pendingQuestion = null;
+    f.context.pendingQuestionIdRef.current = null;
+    f.context.answeringQuestion = false;
+    const resumed = f.sendQueuedMessage(f.first);
+    assert.equal(f.calls.length, 1);
+    f.calls[0].finish();
+    await resumed;
+  });
+}

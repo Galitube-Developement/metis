@@ -1,8 +1,7 @@
 import { materializeUploads } from "@/lib/file-upload-store";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
-import { resolveApproval } from "@/lib/db-approvals";
-import { cancelQuestion } from "@/lib/db-questions";
+import { isChatWaitingForUser } from "@/lib/user-input-resume";
 import { enqueueJob, getActiveJob, getJobForMessageId } from "@/lib/db-jobs";
 import {
   appendMessageInTransaction,
@@ -171,12 +170,7 @@ export async function POST(req: Request) {
         );
       }
     }
-    if (!sendQueuedNow && (
-      chat.pendingQuestion ||
-      chat.pendingApproval ||
-      chat.runStatus === "waiting_input" ||
-      chat.runStatus === "waiting_for_user"
-    )) {
+    if (isChatWaitingForUser(chat)) {
       return Response.json(
         {
           error:
@@ -258,11 +252,8 @@ export async function POST(req: Request) {
           };
           if (sendQueuedNow) {
             const current = getChat(chatId, ownerId);
-            if (current?.pendingQuestion?.questionId) cancelQuestion(current.pendingQuestion.questionId, ownerId);
-            if (current?.pendingApproval?.id) resolveApproval(current.pendingApproval.id, "deny", ownerId);
             updateChat(chatId, {
               queuedMessages: (current?.queuedMessages ?? []).filter((item) => item.id !== messageId),
-              pendingQuestion: null, pendingApproval: null,
             }, ownerId);
           }
           const appended = appendMessageInTransaction(chatId, userMessage, ownerId);
@@ -270,6 +261,9 @@ export async function POST(req: Request) {
         },
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "WaitingForUser") {
+        return Response.json({ error: error.message }, { status: 409 });
+      }
       if (error instanceof Error && error.name === "ActiveChatRun") {
         return Response.json(
           {

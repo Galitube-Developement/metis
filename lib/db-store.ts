@@ -1,3 +1,4 @@
+import { isChatWaitingForUser } from "@/lib/user-input-resume";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -1038,7 +1039,7 @@ export function removeQueuedMessage(chatId: string, messageId: string, ownerId?:
 export function claimQueuedMessageInTransaction(chatId: string, ownerId?: string) {
   const chat = getChat(chatId, ownerId);
   const message = chat?.queuedMessages?.[0];
-  if (!chat || !message) return null;
+  if (!chat || !message || isChatWaitingForUser(chat)) return null;
   const next = { ...chat };
   const remaining = chat.queuedMessages!.slice(1);
   if (remaining.length) next.queuedMessages = remaining;
