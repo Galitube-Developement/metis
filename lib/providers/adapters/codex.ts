@@ -129,6 +129,7 @@ export function codexTool(
     id: asString(item.id) || crypto.randomUUID(),
     name,
     status,
+    ...(type === "mcp_tool_call" ? { source: "mcp" as const } : {}),
     kind:
       type === "file_change"
         ? "edit"
