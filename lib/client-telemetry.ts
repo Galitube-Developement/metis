@@ -1,3 +1,5 @@
+import { notifyClientError } from "@/lib/client-error-notifications";
+
 /**
  * Invisible browser telemetry for errors and send-path UX anomalies.
  *
@@ -167,6 +169,7 @@ export function installGlobalClientTelemetry() {
   state.installed = true;
 
   window.addEventListener("error", (event) => {
+    notifyClientError(event.message || "An unexpected browser error occurred.");
     reportClientError(event.message || "Uncaught browser error", {
       stack: event.error instanceof Error ? event.error.stack : undefined,
       context: {
@@ -178,6 +181,7 @@ export function installGlobalClientTelemetry() {
   });
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
+    notifyClientError(reason);
     reportClientError(
       reason instanceof Error
         ? reason.message
