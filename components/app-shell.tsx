@@ -16,7 +16,6 @@ import { RunStatus } from "@/components/run-status";
 
 import {
   ClipboardEvent,
-  DragEvent,
   FormEvent,
   Fragment,
   KeyboardEvent,
@@ -111,6 +110,7 @@ import {
   CornerUpLeft,
   Undo2,
   Video,
+  Upload,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -124,6 +124,7 @@ import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activit
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
 import { projectQuestionTranscript, type QuestionAnswerReference } from "@/lib/question-transcript";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
+import { FileDropZone } from "@/components/file-drop-zone";
 import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
@@ -1873,6 +1874,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [browserHistoryOpen, setBrowserHistoryOpen] = useState(false);
   const [browserError, setBrowserError] = useState("");
   const [browserInstalling, setBrowserInstalling] = useState(false);
+  const [browserFileUploading, setBrowserFileUploading] = useState(false);
+  const browserFileInputRef = useRef<HTMLInputElement>(null);
   const [browserViewport, setBrowserViewport] = useState({ width: 1280, height: 800 });
   const [browserFrameSize, setBrowserFrameSize] = useState({ width: 0, height: 0 });
   const [browserWidthInput, setBrowserWidthInput] = useState("1280");
@@ -3092,6 +3095,35 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     } finally {
       setBrowserLoading(false);
     }
+  }
+
+  async function uploadFilesToBrowser(files: FileList, event?: DragEvent) {
+    if (!activeChatId || browserFileUploading) return;
+    let point: { x: number; y: number } | undefined;
+    if (event) {
+      const rect = browserScreenshotRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0 || event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+        toast.error("Drop files onto an upload area inside the browser page."); return;
+      }
+      point = { x: (event.clientX - rect.left) / rect.width * browserViewport.width,
+        y: (event.clientY - rect.top) / rect.height * browserViewport.height };
+    }
+    const incoming = Array.from(files);
+    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size || file.size > MAX_FILE_BYTES)) {
+      toast.error("Choose up to 10 files, each 1 GB or smaller."); return;
+    }
+    setBrowserFileUploading(true);
+    try {
+      // Capture this chat, tab and drop location before any background upload waits.
+      const tasks = incoming.map(file => startUpload(file, { label: "Browser · " + (browserTabs.find(tab => tab.id === activeBrowserTabId)?.title || "Page") }));
+      const uploaded = await Promise.all(tasks.map(waitForUpload));
+      const result = await performBrowserAction(point ? "drop_files" : "upload_files", {
+        uploadIds: uploaded.map(file => file.id), url: browserUrl || "about:blank", ...(point || {}),
+      });
+      if (result) toast.success("Files delivered to the browser page");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Browser upload failed");
+    } finally { setBrowserFileUploading(false); }
   }
 
   const browserNeedsInstall = /playwright chromium is not installed|executable doesn't exist|install browser/i.test(browserError);
@@ -9966,9 +9998,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   return (
-    <ChatFileDropZone
-      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
-      onFiles={addPendingFiles}
+    <div
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -10115,7 +10145,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </aside>
       </div>
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <ChatFileDropZone
+        enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+        onFiles={addPendingFiles}
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {accountView ? <AccountPanel view={accountView} onView={openAccountPage} onOpenManagementPage={openAccountPage} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
           {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
         setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
@@ -11086,7 +11119,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ) : null}
         </div>
         </>}
-      </div>
+      </ChatFileDropZone>
 
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
         <div className="fixed inset-0 z-40 bg-background/55" aria-hidden="true" />
@@ -11193,7 +11226,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               <WorkspaceDesktopsPanel active={workspaceOpen && !accountView} agentClientId={desktopAgentClientId} agentActive={desktopAgentActive} activityTimestamp={desktopActivityTimestamp}
                 onOpenDevices={() => { setSettingsTab("devices"); openAccountPage("settings"); }} />
             ) : workspaceTab === "browser" ? (
-              <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <FileDropZone className="relative flex min-h-0 flex-1 flex-col gap-1.5" enabled={workspaceOpen && browserEnabled && Boolean(activeChatId) && !browserFileUploading}
+                title="Drop files into the browser" detail="Files go to the upload area under your pointer."
+                onFiles={(files, event) => void uploadFilesToBrowser(files, event)}>
+                <input ref={browserFileInputRef} type="file" multiple className="hidden" aria-label="Upload files to browser" onChange={event => {
+                  if (event.target.files?.length) void uploadFilesToBrowser(event.target.files);
+                  event.target.value = "";
+                }} />
                 <div className="flex h-8 shrink-0 items-end gap-1 overflow-x-auto rounded-lg border border-border/50 bg-muted/15 px-1 pt-1 max-sm:h-7">
                   {browserTabs.map((tab) => (
                     <div key={tab.id} className={cn(
@@ -11340,6 +11379,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   >
                     <ExternalLink className="size-3.5" />
                   </Button>
+                  <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 rounded-lg" aria-label="Upload files to browser page" title="Upload files to browser page"
+                    disabled={!activeChatId || !browserEnabled || browserFileUploading} onClick={() => browserFileInputRef.current?.click()}>
+                    {browserFileUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 rounded-lg" aria-label="Browser options" title="Browser options">
@@ -11458,7 +11501,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     <div className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">{browserError}</div>
                   )
                 ) : null}
-              </div>
+              </FileDropZone>
             ) : workspaceTab === "monitor" ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {monitorData.current ? (
@@ -12255,6 +12298,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </ChatFileDropZone>
+    </div>
   );
 }
