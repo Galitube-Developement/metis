@@ -120,6 +120,7 @@ import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/li
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { useLiveMessageMotion } from "@/components/use-live-message-motion";
+import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
@@ -380,31 +381,9 @@ function formatToolPayload(value?: string) {
   }
 }
 
-type ToolPart = {
-  id: string;
-  name: string;
-  status: string;
-  detail?: string;
-  kind?: "plan" | "edit" | "read" | "shell" | "subagent" | "mcp" | "canvas" | "note" | "todo" | "browser" | "memory" | "automation" | "compaction" | "other";
-  path?: string;
-  diff?: { before?: string; after?: string; additions?: number; deletions?: number };
-  todos?: Array<{ id?: string; content: string; status?: string }>;
-  input?: string;
-  result?: string;
-  resultUrl?: string;
-  inputUrl?: string;
+type ToolPart = StoredToolPart & {
   sourceMessageCreatedAt?: string;
   sourceMessageIsLatestAssistant?: boolean;
-  subagent?: {
-    agentId?: string;
-    chatId?: string;
-    title?: string;
-    mode?: string;
-    model?: string;
-    prompt?: string;
-    messages?: Array<{ role: string; text: string; timestamp?: string }>;
-    tools?: ToolPart[];
-  };
 };
 
 type MsgPart =
