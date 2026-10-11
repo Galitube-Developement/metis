@@ -1,30 +1,10 @@
+import { gatewayToolForRequest as gatewayTool } from "@/lib/gateway-request";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { isHostAdmin } from "@/lib/user-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type GatewayResult = {
-  content?: Array<{ type?: string; text?: string }>;
-  isError?: boolean;
-};
-
-async function gatewayTool(req: Request, name: string, args: Record<string, unknown> = {}) {
-  const userId = (await getAuthenticatedUserId(req)) ?? undefined;
-  // The gateway core is an ESM runtime module shared with the stdio MCP entrypoint.
-  // @ts-expect-error The runtime module has no generated TypeScript declarations.
-  const { dispatchGatewayTool } = await import("@/packages/mcp-gateway/index.mjs");
-  const result = (await dispatchGatewayTool(name, args, {
-    context: { userId, isHostAdmin: isHostAdmin(userId) },
-  })) as GatewayResult;
-  const text = result.content?.map((item) => item.text || "").join("\n") || "";
-  if (result.isError) throw new Error(text || "MCP operation failed");
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("MCP operation returned invalid JSON");
-  }
-}
 
 function sanitizeServer(value: unknown) {
   if (!value || typeof value !== "object") return value;

@@ -1,10 +1,10 @@
 "use client";
+import { subscribeToWindowEvents } from "@/lib/browser-events";
 import { useMemo, useSyncExternalStore } from "react";
 const KEY="metis-usage-excluded-providers", EVENT="metis-usage-provider-filter-change";
 let fallback="[]";
 function subscribe(callback:()=>void) {
-  window.addEventListener("storage",callback);window.addEventListener(EVENT,callback);
-  return ()=>{window.removeEventListener("storage",callback);window.removeEventListener(EVENT,callback);};
+  return subscribeToWindowEvents(["storage", EVENT], callback);
 }
 function read() {
   try {return localStorage.getItem(KEY) || fallback;} catch {return fallback;}

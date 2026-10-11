@@ -7,8 +7,8 @@ import {
   loadContextScope,
   resolveScopeReferences,
 } from "@/lib/context-scope";
-import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
-import { autoSkillActivationPrompt } from "@/lib/skill-routing";
+import { projectSkillSettings } from "@/lib/skills";
+import { buildSkillContext } from "@/lib/skill-context";
 import { METIS_SHARED_AGENT_CONTROL, toolContractPrompt } from "@/lib/agent-control";
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { formatChatGoal } from "@/lib/chat-goal";
@@ -149,9 +149,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
     formatChatGoal(chat.sessionState, ownerId, chat.id, incognito),
     chatMetadataPrompt(chat, incognito),
-    skillsCatalogPrompt(skillSettings),
-    alwaysOnSkillsPrompt(skillSettings),
-    autoSkillActivationPrompt(job.message, skillSettings, {
+    buildSkillContext(job.message, skillSettings, {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
     "Working style: precise, technically fluent, proactive. Act with tools instead of narrating steps. Reply in the user's language. On clear orders decide and act; ask only when genuinely ambiguous or destructive.",

@@ -29,10 +29,10 @@ test("Project Home exposes two-column drag and button controls for per-project s
 
 test("project skills are applied to both provider prompt paths", () => {
   assert.match(worker, /projectSkillSettings\(globalModelSettings, project\)/);
-  assert.match(worker, /skillsCatalogPrompt\(skillSettings\)/);
+  assert.match(worker, /buildSkillContext\(job\.message, skillSettings/);
   assert.match(providerPrompt, /const globalSettings = getGlobalModelSettings\(ownerId\)/);
   assert.match(providerPrompt, /projectSkillSettings\(globalSettings, project\)/);
-  assert.match(providerPrompt, /autoSkillActivationPrompt\(job\.message, skillSettings/);
+  assert.match(providerPrompt, /buildSkillContext\(job\.message, skillSettings/);
 });
 
 test("Project Home manages durable project memory used by agents and memory tools", () => {

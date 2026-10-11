@@ -1,6 +1,8 @@
 "use client";
 
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { useMeasuredTextHeight } from "@/components/use-measured-text-height";
+
+import { memo, useState } from "react";
 import { Flag } from "lucide-react";
 
 type GoalReference = {
@@ -17,18 +19,8 @@ export const ChatGoalBanner = memo(function ChatGoalBanner({
   references: GoalReference[];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [fullHeight, setFullHeight] = useState(16);
-  const fullTextRef = useRef<HTMLSpanElement>(null);
 
-  useLayoutEffect(() => {
-    const text = fullTextRef.current;
-    if (!text) return;
-    const measure = () => setFullHeight(Math.max(16, text.scrollHeight));
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(text);
-    return () => observer.disconnect();
-  }, [goal]);
+  const [fullTextRef, fullHeight] = useMeasuredTextHeight<HTMLSpanElement>(goal);
 
   return (
     <div

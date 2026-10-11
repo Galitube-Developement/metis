@@ -1,5 +1,7 @@
 "use client";
 
+import { useEscapeDismiss } from "@/components/use-escape-dismiss";
+
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Fullscreen, Minimize2, Plus, Trash2 } from "lucide-react";
@@ -199,14 +201,7 @@ export function GraphBoard({
     }
   }, [draft, persist]);
 
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+  useEscapeDismiss(fullscreen, setFullscreen);
 
   const toolbar = (
     <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-md border border-border/50 bg-background/90 p-0.5 text-[11px]">

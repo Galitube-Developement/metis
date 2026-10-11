@@ -1,21 +1,13 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useMeasuredTextHeight } from "@/components/use-measured-text-height";
+
+import { type CSSProperties } from "react";
 
 /** Match the goal banner's measured height transition without clipping long prompts. */
 export function QueuedPromptPreview({ text }: { text: string }) {
-  const fullTextRef = useRef<HTMLParagraphElement>(null);
-  const [fullHeight, setFullHeight] = useState(16);
 
-  useLayoutEffect(() => {
-    const text = fullTextRef.current;
-    if (!text) return;
-    const measure = () => setFullHeight(Math.max(16, text.scrollHeight));
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(text);
-    return () => observer.disconnect();
-  }, [text]);
+  const [fullTextRef, fullHeight] = useMeasuredTextHeight<HTMLParagraphElement>(text);
 
   return (
     <div

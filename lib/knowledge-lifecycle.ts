@@ -1,3 +1,4 @@
+import { normalizeContextText as normalized } from "@/lib/text-normalization";
 import {
   getChat,
   normalizeChatKeywords,
@@ -36,14 +37,6 @@ const REQUIREMENT = /\b(soll(?:en)?|muss|müssen|darf\s+nicht|immer|nie|standard
 const QUESTION_START = /^(wer|wie|was|wann|wo|warum|wieso|weshalb|welche[rmn]?|kann|können|ist|sind|hat|haben|do|does|did|is|are|can|could|should|what|when|where|why|how|which)\b/i;
 const SENSITIVE = /\b(passwort|password|api[_ -]?key|secret|token|cookie|bearer|refresh[_ -]?token|access[_ -]?token|pin|tan|2fa|otp|private[_ -]?key|credit\s*card|kreditkarte|cvv|security\s*code)\b/i;
 const CODEISH = /```|\b(?:curl|npm|pnpm|yarn|git|sudo|ssh)\s+[^\n]+|[A-Za-z0-9_./-]+\.(?:ts|tsx|js|mjs|py|json|yaml|yml)\b/;
-
-function normalized(value: string) {
-  return value
-    .normalize("NFKD")
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}._/-]+/gu, " ")
-    .trim();
-}
 
 function terms(value: string, options: { stripValues?: boolean } = {}) {
   const out: string[] = [];
