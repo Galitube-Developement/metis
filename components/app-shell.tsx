@@ -1,5 +1,6 @@
 "use client";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
+import type { AccountView } from "@/components/account/account-panel";
 
 import { useAccountNotifications } from "@/hooks/use-account-notifications";
 import { flushNoteEditors } from "@/lib/note-editor-lifecycle";
@@ -2033,11 +2034,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [workspaceOpen]);
 
   const [memories, setMemories] = useState<MemoryItem[]>([]);
-  const [accountView, setAccountView] = useState<"profile" | "usage" | null>(null);
+  const [accountView, setAccountView] = useState<AccountView | null>(null);
   useEffect(() => setAccountView(null), [routeChatId, routeView]);
   const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [agentHubOpen, setAgentHubOpen] = useState(false);
+  const settingsOpen = accountView === "settings";
+  const setSettingsOpen = useCallback((open: boolean) => {
+    setAccountView(current => open ? "settings" : current === "settings" ? null : current);
+  }, []);
+  function openAccountPage(view: AccountView) {
+    setAccountView(view);
+    setMobileNavOpen(false);
+    setWorkspaceOpen(false);
+    if (view === "settings") { void loadMemories(); void refreshStatus(); }
+  }
   const [settingsTab, setSettingsTab] = useState("general");
   const [settingsUpdateAvailable, setSettingsUpdateAvailable] = useState(false);
   const [chatLogsOpen, setChatLogsOpen] = useState(false);
@@ -9754,10 +9763,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
       <div className="shrink-0 p-2">
         <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable}
-          onSettings={() => { setMobileNavOpen(false); void loadMemories(); void refreshStatus(); setSettingsOpen(true); }}
-          onAgentHub={() => { setMobileNavOpen(false); setAgentHubOpen(true); }}
-          onProfile={() => { setAccountView("profile"); setMobileNavOpen(false); setWorkspaceOpen(false); }}
-          onUsage={() => { setAccountView("usage"); setMobileNavOpen(false); setWorkspaceOpen(false); }} />
+          onSettings={() => openAccountPage("settings")}
+          onAgentHub={() => openAccountPage("agent-hub")}
+          onProfile={() => openAccountPage("profile")}
+          onUsage={() => openAccountPage("usage")} />
       </div>
     </div>
   );
@@ -9897,7 +9906,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   return (
     <ChatFileDropZone
-      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !agentHubOpen && !providerSetupRequired && !loadingChatId}
+      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
       onFiles={addPendingFiles}
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
@@ -10046,7 +10055,68 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {accountView ? <AccountPanel view={accountView} onView={setAccountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} /> : <>
+        {accountView ? <AccountPanel view={accountView} onView={openAccountPage} onOpenManagementPage={openAccountPage} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
+          {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
+        setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
+        setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
+        setComposerSyncNonce(current => current + 1);
+      }} /> : accountView === "settings" ? <SettingsPanel
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settingsTab={settingsTab}
+        onSettingsTabChange={setSettingsTab}
+        memories={memories}
+        notificationsEnabled={notificationsEnabled}
+        onNotificationsEnabledChange={setNotificationsEnabled}
+        soundCuesEnabled={soundCuesEnabled}
+        onSoundCuesEnabledChange={setSoundCuesEnabled}
+        voiceInputEnabled={voiceInputEnabled}
+        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
+        voiceProvider={voiceProvider}
+        voiceModelId={voiceModelId}
+        voiceRealtime={voiceRealtime}
+        voiceEndpoint={voiceEndpoint}
+        onVoiceApiKeySave={saveVoiceApiKey}
+        onVoiceInputSettingsChange={updateVoiceInputSettings}
+        browserEnabled={browserEnabled}
+        browserRealtime={browserRealtime}
+        browserFps={browserFps}
+        browserViewportWidth={browserDefaultViewport.width}
+        browserViewportHeight={browserDefaultViewport.height}
+        onBrowserSettingsChange={updateBrowserSettings}
+        compressionEnabled={compressionEnabled}
+        compressionMode={compressionMode}
+        compressionToolResults={compressionToolResults}
+        compressionChatHistory={compressionChatHistory}
+        onCompressionSettingsChange={updateCompressionSettings}
+        models={models}
+        favoriteModelKeys={favoriteModelKeys}
+        onToggleFavoriteModel={toggleFavoriteModel}
+        subagentModelEnabled={subagentModelEnabled}
+        onSubagentModelEnabledChange={updateSubagentModelEnabled}
+        subagentModelId={subagentModelId}
+        onSubagentModelIdChange={updateSubagentModelId}
+        subagentModelParams={subagentModelParams}
+        onSubagentModelParamsChange={updateSubagentModelParams}
+        finishSound={finishSound}
+        onFinishSoundChange={(sound) => {
+          setFinishSound(sound);
+          saveFinishSound(sound);
+        }}
+        onTestFinishSound={playFinishSound}
+        onMemoriesChanged={() => void loadMemories()}
+        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
+        onChatsChanged={() => void loadChats()}
+        usageSnapshot={planUsageSnapshot}
+        onRefreshUsage={() => refreshPlanUsage(true)}
+        onModelsChanged={() => void loadModels()}
+        onModesChanged={() => void loadModes()}
+        onLogout={() => void logout()}
+        onResetMetis={resetMetis}
+        onUpdateMetis={updateMetis}
+        isHostAdmin={Boolean(status?.isHostAdmin)}
+      /> : null}
+        </AccountPanel> : <>
         {/* Thin top bar */}
         <header className="relative z-20 flex h-14 shrink-0 items-center gap-2.5 border-b border-border/55 bg-background px-3.5 md:h-12 md:gap-2 md:px-4">
           <Button
@@ -11915,68 +11985,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ) : null}
         </DialogContent>
       </Dialog>
-
-      {agentHubOpen ? <AgentHub open={agentHubOpen} onOpenChange={setAgentHubOpen} isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
-        setAgentHubOpen(false); setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
-        setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
-        setComposerSyncNonce(current => current + 1);
-      }} /> : null}
-      <SettingsPanel
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        settingsTab={settingsTab}
-        onSettingsTabChange={setSettingsTab}
-        memories={memories}
-        notificationsEnabled={notificationsEnabled}
-        onNotificationsEnabledChange={setNotificationsEnabled}
-        soundCuesEnabled={soundCuesEnabled}
-        onSoundCuesEnabledChange={setSoundCuesEnabled}
-        voiceInputEnabled={voiceInputEnabled}
-        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
-        voiceProvider={voiceProvider}
-        voiceModelId={voiceModelId}
-        voiceRealtime={voiceRealtime}
-        voiceEndpoint={voiceEndpoint}
-        onVoiceApiKeySave={saveVoiceApiKey}
-        onVoiceInputSettingsChange={updateVoiceInputSettings}
-        browserEnabled={browserEnabled}
-        browserRealtime={browserRealtime}
-        browserFps={browserFps}
-        browserViewportWidth={browserDefaultViewport.width}
-        browserViewportHeight={browserDefaultViewport.height}
-        onBrowserSettingsChange={updateBrowserSettings}
-        compressionEnabled={compressionEnabled}
-        compressionMode={compressionMode}
-        compressionToolResults={compressionToolResults}
-        compressionChatHistory={compressionChatHistory}
-        onCompressionSettingsChange={updateCompressionSettings}
-        models={models}
-        favoriteModelKeys={favoriteModelKeys}
-        onToggleFavoriteModel={toggleFavoriteModel}
-        subagentModelEnabled={subagentModelEnabled}
-        onSubagentModelEnabledChange={updateSubagentModelEnabled}
-        subagentModelId={subagentModelId}
-        onSubagentModelIdChange={updateSubagentModelId}
-        subagentModelParams={subagentModelParams}
-        onSubagentModelParamsChange={updateSubagentModelParams}
-        finishSound={finishSound}
-        onFinishSoundChange={(sound) => {
-          setFinishSound(sound);
-          saveFinishSound(sound);
-        }}
-        onTestFinishSound={playFinishSound}
-        onMemoriesChanged={() => void loadMemories()}
-        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
-        onChatsChanged={() => void loadChats()}
-        usageSnapshot={planUsageSnapshot}
-        onRefreshUsage={() => refreshPlanUsage(true)}
-        onModelsChanged={() => void loadModels()}
-        onModesChanged={() => void loadModes()}
-        onLogout={() => void logout()}
-        onResetMetis={resetMetis}
-        onUpdateMetis={updateMetis}
-        isHostAdmin={Boolean(status?.isHostAdmin)}
-      />
 
       <Dialog open={Boolean(activeDiff)} onOpenChange={(open) => !open && setActiveDiff(null)}>
         <DialogContent className="h-[100dvh] max-h-none w-screen min-w-0 max-w-none overflow-x-hidden rounded-none p-4 sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-xl sm:p-6">
