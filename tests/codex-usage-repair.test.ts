@@ -57,7 +57,7 @@ test("ambiguous or old native completions cannot change reported usage", async (
     db.exec("CREATE TABLE account_usage(owner_id TEXT,message_id TEXT,provider_id TEXT,completed_at TEXT,input_tokens INTEGER,output_tokens INTEGER,total_tokens INTEGER,cached_input_tokens INTEGER,cache_write_input_tokens INTEGER);");
     const session=path.join(dataDir,"provider-sessions","codex","fixture","conn","sessions");
     mkdirSync(session,{recursive:true});
-    const events=[{type:"session_meta"},{type:"event_msg",payload:{type:"task_started"}},{type:"event_msg",payload:{type:"token_count",info:{total_token_usage:{input_tokens:100,output_tokens:10}}}},{timestamp:"2026-10-11T10:00:00Z",type:"event_msg",payload:{type:"task_complete"}}].map(JSON.stringify).join("\n");
+    const events=[{type:"session_meta"},{type:"event_msg",payload:{type:"task_started"}},{type:"event_msg",payload:{type:"token_count",info:{total_token_usage:{input_tokens:100,output_tokens:10}}}},{timestamp:"2026-10-11T10:00:00Z",type:"event_msg",payload:{type:"task_complete"}}].map(value=>JSON.stringify(value)).join("\n");
     writeFileSync(path.join(session,"rollout-date-01a122c2-44a9-71a1-b650-14ae87424025.jsonl"),events);
     db.prepare("INSERT INTO account_usage VALUES (?,?,?,?,?,?,?,?,?)").run("fixture","old","codex","2026-10-11T11:00:00Z",100,10,110,null,null);
     assert.equal((await repairCodexUsage({db,ownerId:"fixture",dataDir})).proven,0);
