@@ -1156,7 +1156,7 @@ export function saveMemories(memories: Memory[], ownerId?: string) {
 
 export function getGlobalModelSettings(ownerId?: string): GlobalModelSettings {
   const row = getDatabase().prepare("SELECT data FROM settings WHERE key = ?").get(ownerId ? `global:${ownerId}` : "global");
-  return parseData<GlobalModelSettings>({ data: (row as { data?: string } | undefined)?.data }) || {};
+  return { ...(parseData<GlobalModelSettings>({ data: (row as { data?: string } | undefined)?.data }) || {}), skillOwnerId: ownerId };
 }
 
 export function saveGlobalModelSettings(settings: GlobalModelSettings, ownerId?: string) {
