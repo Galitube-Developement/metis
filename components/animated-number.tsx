@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { reconcileTicker, tickerCharacters, type TickerCharacter } from "@/lib/number-ticker";
 import { useReducedMotion } from "./use-chart-motion";
 
 const formats = {
@@ -8,6 +9,7 @@ const formats = {
   compact: new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }),
   money: new Intl.NumberFormat("en", { style: "currency", currency: "USD", maximumFractionDigits: 4 }),
 };
+const transitionMs = 650;
 
 function Digit({ value, reduced }: { value: number; reduced: boolean }) {
   const [ready, setReady] = useState(false);
@@ -20,7 +22,33 @@ function Digit({ value, reduced }: { value: number; reduced: boolean }) {
   </span></span>;
 }
 
-/** Keep the last settled value during refresh; unknown values remain unknown. */
+function Column({ item, enter, reduced }: { item: TickerCharacter; enter: boolean; reduced: boolean }) {
+  const content = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number>();
+  const [ready, setReady] = useState(!enter);
+  useLayoutEffect(() => {
+    const element = content.current;
+    if (!element) return;
+    const measure = () => setWidth(element.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const visible = item.active && (ready || reduced);
+  return <span className="number-ticker-column" data-ticker-key={item.key} data-ticker-active={item.active}
+    style={{ width: visible ? width : 0, opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(-0.12em)", transitionDuration: reduced ? "0ms" : undefined }}>
+    <span ref={content} className="number-ticker-column-content">
+      {/[0-9]/.test(item.character) ? <Digit value={Number(item.character)} reduced={reduced}/> : item.character}
+    </span>
+  </span>;
+}
+
+/** Retain the last report during refresh and preserve columns across metric switches. */
 export function AnimatedNumber({ value, loading = false, format = "integer" }: {
   value: number | null | undefined; loading?: boolean; format?: keyof typeof formats;
 }) {
@@ -29,14 +57,26 @@ export function AnimatedNumber({ value, loading = false, format = "integer" }: {
   const [settled, setSettled] = useState(valid);
   if (!loading && settled !== valid) setSettled(valid);
   const shown = loading ? settled : valid;
+  const text = shown === null ? "" : formats[format].format(shown);
+  const [layout, setLayout] = useState(() => ({ text, reduced, initial: true,
+    columns: shown === null ? [] : tickerCharacters(formats[format].formatToParts(shown)) }));
+  if (layout.text !== text || layout.reduced !== reduced) {
+    const next = shown === null ? [] : tickerCharacters(formats[format].formatToParts(shown));
+    setLayout({ text, reduced, initial: false, columns: reconcileTicker(layout.columns, next, reduced) });
+  }
+  useEffect(() => {
+    if (reduced) return;
+    const timer = setTimeout(() => setLayout(current => {
+      const columns = current.columns.filter(item => item.active);
+      return columns.length === current.columns.length ? current : { ...current, columns };
+    }), transitionMs + 100);
+    return () => clearTimeout(timer);
+  }, [text, reduced]);
   if (shown === null) return <span>{loading ? "…" : "—"}</span>;
-  const text = formats[format].format(shown);
-  const digits = text.replace(/\D/g, "").length;
-  let position = digits;
   return <span className="number-ticker" data-number-value={shown}>
     <span className="sr-only">{text}</span>
-    <span aria-hidden="true" className="number-ticker-visual">{Array.from(text).map((character, index) =>
-      /[0-9]/.test(character) ? <Digit key={"digit-" + --position} value={Number(character)} reduced={reduced}/> : <span key={"separator-" + index}>{character}</span>
+    <span aria-hidden="true" className="number-ticker-visual">{layout.columns.map(item =>
+      <Column key={item.key} item={item} enter={!layout.initial} reduced={reduced}/>
     )}</span>
   </span>;
 }
