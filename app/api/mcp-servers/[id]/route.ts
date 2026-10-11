@@ -1,3 +1,4 @@
+import { gatewayToolForRequest as gatewayTool } from "@/lib/gateway-request";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { isHostAdmin } from "@/lib/user-access";
 
@@ -5,25 +6,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
-
-async function gatewayTool(req: Request, name: string, args: Record<string, unknown>) {
-  const userId = (await getAuthenticatedUserId(req)) ?? undefined;
-  // @ts-expect-error The shared gateway core is an ESM runtime module.
-  const { dispatchGatewayTool } = await import("@/packages/mcp-gateway/index.mjs");
-  const result = (await dispatchGatewayTool(name, args, {
-    context: { userId, isHostAdmin: isHostAdmin(userId) },
-  })) as {
-    content?: Array<{ text?: string }>;
-    isError?: boolean;
-  };
-  const text = result.content?.map((item) => item.text || "").join("\n") || "";
-  if (result.isError) throw new Error(text || "MCP operation failed");
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("MCP operation returned invalid JSON");
-  }
-}
 
 export async function PATCH(req: Request, { params }: Params) {
   if (!(await isAuthenticated(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });

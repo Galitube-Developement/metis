@@ -44,7 +44,7 @@ test("chart board renders Recharts and supports fullscreen and resize", () => {
   assert.match(board, /data-chart-resize/);
   assert.match(board, /cursor-ns-resize/);
   assert.match(board, /createPortal\(overlay/);
-  assert.match(board, /event\.key === "Escape"/);
+  assert.match(board, /useEscapeDismiss\(fullscreen, setFullscreen\)/);
   assert.match(board, /charts\.map\(/);
   assert.match(board, /data-chart-renderer/);
   assert.match(board, /top: 18, right: 24, bottom: 4, left: 0/);

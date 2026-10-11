@@ -1,10 +1,10 @@
 "use client";
+import { subscribeToWindowEvents } from "@/lib/browser-events";
 import { useSyncExternalStore } from "react";
 import type { UsageCostMode } from "@/lib/usage-cost-view";
 const KEY="metis-usage-cost-mode", EVENT="metis-usage-cost-mode-change";
 function subscribe(callback:()=>void) {
-  window.addEventListener("storage",callback);window.addEventListener(EVENT,callback);
-  return ()=>{window.removeEventListener("storage",callback);window.removeEventListener(EVENT,callback);};
+  return subscribeToWindowEvents(["storage", EVENT], callback);
 }
 function read(): UsageCostMode {
   try {const value=localStorage.getItem(KEY);if(value==="reported" || value==="hidden")return value;} catch {}

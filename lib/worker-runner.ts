@@ -1,3 +1,4 @@
+import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
 import { readFileSync } from "node:fs";
@@ -14,8 +15,8 @@ import {
 } from "@/lib/db-store";
 import { getProjectAgentForChat, projectTeamContextBlock } from "@/lib/project-team";
 import { getProject, projectContextBlock } from "@/lib/projects";
-import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
-import { autoSkillActivationPrompt } from "@/lib/skill-routing";
+import { projectSkillSettings } from "@/lib/skills";
+import { buildSkillContext } from "@/lib/skill-context";
 import { getUserAgentCwd, getMcpServers } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
 import { appendRunEvent, enqueueJob, getJob, touchJob, updateJob } from "@/lib/db-jobs";
@@ -63,6 +64,8 @@ import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { captureKnowledgeFromUserTurn } from "@/lib/knowledge-lifecycle";
 import { isJobWaitingForUser } from "@/lib/user-input-resume";
 import { armAgentRuntime } from "@/lib/agent-runtime";
+
+const asRecord = (value: unknown) => payloadRecord(value);
 
 const AGENT_INIT_TIMEOUT_MS = 90_000;
 const AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
@@ -153,40 +156,6 @@ function extractProvidedAttachment(value: unknown): ProvidedAttachment | null {
     }
   }
   return null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function asText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        const block = asRecord(item);
-        return asText(block.text ?? block.content ?? block.message);
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (value && typeof value === "object") {
-    const object = asRecord(value);
-    return asText(object.text ?? object.content ?? object.message);
-  }
-  return value == null ? "" : String(value);
 }
 
 function readFileSnapshot(rawPath: string, agentCwd: string): string | undefined {
@@ -1006,9 +975,7 @@ export async function runQueuedJob(job: AgentJob) {
     metisAgentIdentity(),
     project ? projectContextBlock(project, job.userId) : "",
     projectTeamContextBlock(chat.id, job.userId),
-    skillsCatalogPrompt(skillSettings),
-    alwaysOnSkillsPrompt(skillSettings),
-    autoSkillActivationPrompt(job.message, skillSettings, {
+    buildSkillContext(job.message, skillSettings, {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
       `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,

@@ -34,7 +34,7 @@ type SkillsLock = {
  }>;
 };
 
-export const DEFAULT_ALWAYS_ON_SKILL_IDS = ["i-have-adhd"] as const;
+export const DEFAULT_ALWAYS_ON_SKILL_IDS = ["i-have-adhd", "skill-creator"] as const;
 
 function lockPath() {
  return path.join(config.root, "skills-lock.json");
@@ -130,7 +130,10 @@ export function enabledSkills(settings?: GlobalModelSettings): SkillRecord[] {
 }
 
 export function readSkillMarkdown(id: string, settings?: GlobalModelSettings) {
- const skill = listInstalledSkills(settings).find((item) => item.id === id);
+ return readInstalledSkillMarkdown(listInstalledSkills(settings).find((item) => item.id === id));
+}
+
+function readInstalledSkillMarkdown(skill?: SkillRecord) {
  if (!skill?.skillPath) return null;
  try {
  return readFileSync(path.resolve(config.root, skill.skillPath), "utf8").slice(0, 20_000);
@@ -141,7 +144,7 @@ export function readSkillMarkdown(id: string, settings?: GlobalModelSettings) {
 
 export function listSkillSettings(settings?: GlobalModelSettings): SkillSettingsView[] {
  return listInstalledSkills(settings).map((skill) => {
- const meta = parseSkillFrontmatter(readSkillMarkdown(skill.id, settings) || "");
+ const meta = parseSkillFrontmatter(readInstalledSkillMarkdown(skill) || "");
  return {
  ...skill,
  title: meta.title || skill.id,
@@ -183,8 +186,8 @@ export function addManualSkill(id: string, content: string): SkillRecord {
  return { id: normalizedId, ...record };
 }
 
-export function skillsCatalogPrompt(settings?: GlobalModelSettings) {
- const skills = enabledSkills(settings).filter((skill) => !isAlwaysOnSkill(skill.id, settings));
+export function skillsCatalogPrompt(settings?: GlobalModelSettings, installed = enabledSkills(settings)) {
+ const skills = installed.filter((skill) => !isAlwaysOnSkill(skill.id, settings));
  if (!skills.length) return "";
  return [
  "Installed skills (enabled in Agent Hub → Skills). Read a listed SKILL.md with the read_file tool when the task matches; do not invent skills that are not listed.",
@@ -192,11 +195,11 @@ export function skillsCatalogPrompt(settings?: GlobalModelSettings) {
  ].join("\n");
 }
 
-export function alwaysOnSkillsPrompt(settings?: GlobalModelSettings) {
- const skills = enabledSkills(settings).filter((skill) => isAlwaysOnSkill(skill.id, settings));
+export function alwaysOnSkillsPrompt(settings?: GlobalModelSettings, installed = enabledSkills(settings)) {
+ const skills = installed.filter((skill) => isAlwaysOnSkill(skill.id, settings));
  if (!skills.length) return "";
  return skills.map((skill) => {
- const content = readSkillMarkdown(skill.id, settings)?.trim();
+ const content = readInstalledSkillMarkdown(skill)?.trim();
  if (!content) return "";
  return [
  `Always-on skill ${skill.id} is active for every response in this run.`,

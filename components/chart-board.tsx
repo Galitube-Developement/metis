@@ -1,5 +1,7 @@
 "use client";
 
+import { useEscapeDismiss } from "@/components/use-escape-dismiss";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Fullscreen, Minimize2 } from "lucide-react";
@@ -364,14 +366,7 @@ export function ChartBoard({
     }
   };
 
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+  useEscapeDismiss(fullscreen, setFullscreen);
 
   const toggleSeries = (name: string) => {
     setHidden((current) => {

@@ -1,3 +1,4 @@
+import { normalizeContextText as normalized } from "@/lib/text-normalization";
 export type LayeredContextFact = {
   id: string;
   content: string;
@@ -13,14 +14,6 @@ const STOP_WORDS = new Set([
   "aber", "also", "auch", "auf", "aus", "bei", "bin", "bis", "bitte", "das", "dass", "dem", "den", "der", "die", "dir", "du", "ein", "eine", "einer", "eines", "er", "es", "für", "ganz", "hat", "haben", "ich", "im", "in", "ist", "ja", "kann", "mal", "man", "mehr", "mit", "muss", "nach", "nicht", "noch", "nur", "oder", "sein", "sie", "so", "und", "uns", "von", "war", "was", "wenn", "wie", "wir", "zu", "zum", "zur",
   "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "for", "from", "has", "have", "how", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or", "our", "that", "the", "this", "to", "use", "was", "we", "what", "when", "with", "you", "your",
 ]);
-
-function normalized(value: string) {
-  return value
-    .normalize("NFKD")
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}._/-]+/gu, " ")
-    .trim();
-}
 
 function terms(value: string): string[] {
   const unique = new Set<string>();

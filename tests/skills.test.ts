@@ -90,7 +90,7 @@ test("i-have-adhd is always-on while enabled and omitted from the match catalog"
   const alwaysOn = alwaysOnSkillsPrompt();
   assert.match(alwaysOn, /Always-on skill i-have-adhd/);
   assert.match(alwaysOn, /Lead with the next action/);
-  assert.equal(alwaysOnSkillsPrompt({ enabledSkills: { "i-have-adhd": false } }), "");
+  assert.doesNotMatch(alwaysOnSkillsPrompt({ enabledSkills: { "i-have-adhd": false } }), /Always-on skill i-have-adhd/);
 });
 
 test("users can turn always-on off or on per skill", () => {
@@ -99,7 +99,7 @@ test("users can turn always-on off or on per skill", () => {
   assert.equal(isAlwaysOnSkill("playwright", { alwaysOnSkills: { playwright: true } }), true);
   const off = skillsCatalogPrompt({ alwaysOnSkills: { "i-have-adhd": false } });
   assert.match(off, /i-have-adhd/);
-  assert.equal(alwaysOnSkillsPrompt({ alwaysOnSkills: { "i-have-adhd": false } }), "");
+  assert.doesNotMatch(alwaysOnSkillsPrompt({ alwaysOnSkills: { "i-have-adhd": false } }), /Always-on skill i-have-adhd/);
   const extra = alwaysOnSkillsPrompt({ alwaysOnSkills: { playwright: true } });
   assert.match(extra, /Always-on skill i-have-adhd/);
   assert.match(extra, /Always-on skill playwright/);
