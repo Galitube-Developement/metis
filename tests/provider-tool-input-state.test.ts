@@ -24,7 +24,7 @@ test("tool-input counts reach SSE and same-row persistence without per-delta for
  const f=fixture();f.handle({id:"a",name:"read_file",status:"running",phase:"preparing",inputChars:0});
  f.handle({id:"a",name:"read_file",status:"running",phase:"preparing",inputChars:123});
  assert.equal(f.tools.length,1);assert.equal(f.parts.length,1);
- assert.equal(f.events.at(-1)?.inputChars,123);assert.equal(f.events.at(-1)?.phase,"preparing");
+ assert.equal(f.events.at(-1)?.inputChars,123);assert.equal(f.events.at(-1)?.phase,"preparing");assert.equal(f.events.at(-1)?.source,"mcp");
  assert.deepEqual(f.checkpoints,[true,false]);
  f.handle({id:"a",name:"read_file",status:"running",phase:"executing",input:'{"path":"/tmp/a"}'});
  assert.equal(f.tools.length,1);assert.equal(f.events.at(-1)?.phase,"executing");
