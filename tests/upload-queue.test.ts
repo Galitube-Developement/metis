@@ -36,12 +36,13 @@ test("background transfers remain independent of the originating view, expose pr
     return Response.json({offset:offsets.get(id)});
   };
   try {
-    const {startUpload,waitForUpload,getUploadSnapshot,dismissUpload}=await import("../lib/background-uploads");
+    const {startUpload,waitForUpload,getUploadSnapshot,getUploadStatus,dismissUpload}=await import("../lib/background-uploads");
     let currentView="Chat A", completedIn="";
     const id=startUpload(new File(["background"],"background.bin"),{label:"Chat A",onComplete:async()=>{completedIn=currentView;}});
     currentView="Chat B";
     await new Promise(resolve=>setImmediate(resolve));
     assert.equal(getUploadSnapshot().find(task=>task.id===id)?.status,"uploading");
+    assert.equal(getUploadStatus(id), "uploading");
     pending.shift()!();
     const result=await waitForUpload(id);
     assert.equal(completedIn,"Chat B");
@@ -49,5 +50,6 @@ test("background transfers remain independent of the originating view, expose pr
     dismissUpload(id);
     assert.equal(getUploadSnapshot().some(task=>task.id===id),false);
     assert.equal((await waitForUpload(id)).id,result.id);
+    assert.equal(getUploadStatus(id), "completed");
   } finally {globalThis.fetch=originalFetch;globalThis.XMLHttpRequest=originalXhr;}
 });
