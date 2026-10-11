@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "@/lib/config";
+import { personalSkills } from "@/lib/personal-skills";
 import type { GlobalModelSettings, Project } from "@/lib/store";
 
 export type SkillRecord = {
@@ -20,6 +21,7 @@ export type SkillSettingsView = SkillRecord & {
  tags: string[];
  enabled: boolean;
  alwaysOn: boolean;
+ shareable?: boolean;
 };
 
 type SkillsLock = {
@@ -84,7 +86,7 @@ export function parseSkillFrontmatter(content: string) {
  };
 }
 
-export function listInstalledSkills(): SkillRecord[] {
+function sharedInstalledSkills(): SkillRecord[] {
  try {
  const lock = JSON.parse(readFileSync(lockPath(), "utf8")) as SkillsLock;
  return Object.entries(lock.skills || {}).map(([id, skill]) => ({
@@ -99,11 +101,15 @@ export function listInstalledSkills(): SkillRecord[] {
  }
 }
 
+export function listInstalledSkills(settings?: GlobalModelSettings): SkillRecord[] {
+ return [...sharedInstalledSkills(), ...personalSkills(settings?.skillOwnerId)];
+}
+
 export function projectSkillSettings(settings: GlobalModelSettings | undefined, project?: Pick<Project, "disabledSkillIds"> | null): GlobalModelSettings | undefined {
  if (!project) return settings;
  const disabled = new Set(project.disabledSkillIds || []);
  const flags = { ...(settings?.enabledSkills || {}) };
- for (const skill of listInstalledSkills()) flags[skill.id] = !disabled.has(skill.id);
+ for (const skill of listInstalledSkills(settings)) flags[skill.id] = !disabled.has(skill.id);
  return { ...(settings || {}), enabledSkills: flags };
 }
 
@@ -120,22 +126,22 @@ export function isAlwaysOnSkill(id: string, settings?: GlobalModelSettings) {
 }
 
 export function enabledSkills(settings?: GlobalModelSettings): SkillRecord[] {
- return listInstalledSkills().filter((skill) => skillEnabled(skill.id, settings));
+ return listInstalledSkills(settings).filter((skill) => skillEnabled(skill.id, settings));
 }
 
-export function readSkillMarkdown(id: string) {
- const skill = listInstalledSkills().find((item) => item.id === id);
+export function readSkillMarkdown(id: string, settings?: GlobalModelSettings) {
+ const skill = listInstalledSkills(settings).find((item) => item.id === id);
  if (!skill?.skillPath) return null;
  try {
- return readFileSync(path.join(config.root, skill.skillPath), "utf8").slice(0, 20_000);
+ return readFileSync(path.resolve(config.root, skill.skillPath), "utf8").slice(0, 20_000);
  } catch {
  return null;
  }
 }
 
 export function listSkillSettings(settings?: GlobalModelSettings): SkillSettingsView[] {
- return listInstalledSkills().map((skill) => {
- const meta = parseSkillFrontmatter(readSkillMarkdown(skill.id) || "");
+ return listInstalledSkills(settings).map((skill) => {
+ const meta = parseSkillFrontmatter(readSkillMarkdown(skill.id, settings) || "");
  return {
  ...skill,
  title: meta.title || skill.id,
@@ -190,7 +196,7 @@ export function alwaysOnSkillsPrompt(settings?: GlobalModelSettings) {
  const skills = enabledSkills(settings).filter((skill) => isAlwaysOnSkill(skill.id, settings));
  if (!skills.length) return "";
  return skills.map((skill) => {
- const content = readSkillMarkdown(skill.id)?.trim();
+ const content = readSkillMarkdown(skill.id, settings)?.trim();
  if (!content) return "";
  return [
  `Always-on skill ${skill.id} is active for every response in this run.`,

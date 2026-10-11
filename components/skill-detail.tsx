@@ -4,6 +4,7 @@ import { ArrowLeft, Code2, FileText, Folder, Puzzle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
+import { SkillShareControls } from "@/components/skill-share-controls";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { SkillSettingsView } from "@/lib/skills";
@@ -67,6 +68,7 @@ export function SkillDetail({ skill, onBack, onChange, onTry }: { skill: SkillSe
             <label className="flex items-center gap-3 text-sm"><Switch checked={skill.alwaysOn} disabled={busy} aria-label={"Always on for " + skill.title} onCheckedChange={value => void toggle("alwaysOnSkills", value)} />Always on</label>
           </div><p className="text-xs text-muted-foreground">Enabled skills are available when a task matches. Always on adds this skill to every response.</p>
         </div> : <h4 className="mb-4 break-all font-mono text-sm">{selected}</h4>}
+        {skill.shareable && selected === "SKILL.md" ? <SkillShareControls id={skill.id} /> : null}
         {loading ? <p role="status" className="text-sm text-muted-foreground">Loading file…</p> : null}
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         {preview?.kind === "image" ? <img src={"data:" + preview.mimeType + ";base64," + preview.content} alt={preview.path} className="max-h-96 max-w-full object-contain" /> : markdown ? <div className="text-sm leading-6 break-words [&_h1]:mb-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-7 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:font-semibold [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted/40 [&_pre]:p-4 [&_pre]:text-xs [&_code]:font-mono [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-4"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => {
