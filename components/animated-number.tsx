@@ -49,14 +49,15 @@ function Column({ item, enter, reduced }: { item: TickerCharacter; enter: boolea
 }
 
 /** Retain the last report during refresh and preserve columns across metric switches. */
-export function AnimatedNumber({ value, loading = false, format = "integer" }: {
-  value: number | null | undefined; loading?: boolean; format?: keyof typeof formats;
+export function AnimatedNumber({ value, loading = false, format = "integer", valueKey = format }: {
+  value: number | null | undefined; loading?: boolean; format?: keyof typeof formats; valueKey?: string;
 }) {
   const reduced = useReducedMotion();
   const valid = typeof value === "number" && Number.isFinite(value) ? value : null;
-  const [settled, setSettled] = useState(valid);
-  if (!loading && settled !== valid) setSettled(valid);
-  const shown = loading ? settled : valid;
+  const [settled, setSettled] = useState({ key: valueKey, value: valid });
+  if (!loading && (settled.value !== valid || settled.key !== valueKey)) setSettled({ key: valueKey, value: valid });
+  // Refreshes can retain a report, but never reinterpret a different metric's value.
+  const shown = loading ? settled.key === valueKey ? settled.value : null : valid;
   const text = shown === null ? "" : formats[format].format(shown);
   const [layout, setLayout] = useState(() => ({ text, reduced, initial: true,
     columns: shown === null ? [] : tickerCharacters(formats[format].formatToParts(shown)) }));
