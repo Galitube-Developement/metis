@@ -121,6 +121,7 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
 
   function editMcpServer(server: McpServer) {
     setFormOpen(true);
+    requestAnimationFrame(() => document.getElementById("custom-connection-form")?.scrollIntoView({ block: "start" }));
     setMcpDraft({
       id: server.id,
       name: server.name,
@@ -157,14 +158,24 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
     toast.success("Connection deleted");
   }
 
-return <div className="space-y-8 p-5 sm:p-7"><ConnectionCatalog isHostAdmin={isHostAdmin} onInstalled={() => { void loadMcpServers(); toast.success("Connection ready"); }} /><section className="flex flex-col gap-4">
+return <div className="space-y-8 p-5 sm:p-7"><ConnectionCatalog isHostAdmin={isHostAdmin} onCustomize={async id => {
+    try {
+      const response = await fetch("/api/mcp-servers", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load the connection configuration.");
+      const body = await response.json() as { servers?: McpServer[] };
+      const server = body.servers?.find(item => item.id === id);
+      if (!server) throw new Error("The connection configuration is no longer available.");
+      setMcpServers(body.servers || []);
+      editMcpServer(server);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not open configuration."); }
+  }} onInstalled={() => { void loadMcpServers(); toast.success("Connection ready"); }} /><section className="flex flex-col gap-4">
                 <div>
-                  <h3 className="text-lg font-semibold">Your connections</h3>
+                  <h3 className="text-lg font-semibold">Your connections/MCPs</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Manage registered connections, including those configured by your agent. Credentials remain write-only.
                   </p>
                 </div>
-<details className="rounded-xl border border-border p-4" open={formOpen} onToggle={event => setFormOpen(event.currentTarget.open)}><summary className="min-h-10 cursor-pointer text-sm font-medium">Add or edit a custom connection</summary><fieldset disabled={!isHostAdmin || mcpBusy} className="space-y-4 pt-3">                <div className="grid gap-2 sm:grid-cols-2">
+<details id="custom-connection-form" className="rounded-xl border border-border p-4" open={formOpen} onToggle={event => setFormOpen(event.currentTarget.open)}><summary className="min-h-10 cursor-pointer text-sm font-medium">Add or edit a custom connection</summary><fieldset disabled={!isHostAdmin || mcpBusy} className="space-y-4 pt-3">                <div className="grid gap-2 sm:grid-cols-2">
                   <Input
                     value={mcpDraft.name}
                     onBlur={() => setMcpDraft(current => ({ ...current, id: current.id || current.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64) }))}
