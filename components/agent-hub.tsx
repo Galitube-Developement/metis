@@ -8,7 +8,7 @@ import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import type { SkillSettingsView } from "@/lib/skills";
 const sections = [
   { id: "skills", label: "Skills", icon: BookOpen },
-  { id: "connections", label: "Connections", icon: PlugZap },
+  { id: "connections", label: "Connections/MCPs", icon: PlugZap },
   { id: "modes", label: "Modes", icon: SlidersHorizontal },
   { id: "rules", label: "Rules", icon: MessagesSquare },
 ];
