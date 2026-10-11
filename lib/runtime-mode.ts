@@ -36,6 +36,16 @@ export const RUNTIME_MODE_TO_CLAUDE_PERMISSION: Record<RuntimeMode, {
   "full-access": { permissionMode: "bypassPermissions", canUseToolRequired: false },
 };
 
+/** Resolve against the provider process UID, independently of the Metis account role. */
+export function claudePermissionPolicy(runtimeMode: RuntimeMode, executionUid: number | undefined) {
+  // Claude Code rejects bypassPermissions under root. Native tools stay disabled;
+  // the SDK callback permits Metis MCP calls, whose permissions the gateway owns.
+  if (runtimeMode === "full-access" && executionUid === 0) {
+    return RUNTIME_MODE_TO_CLAUDE_PERMISSION["approval-required"];
+  }
+  return RUNTIME_MODE_TO_CLAUDE_PERMISSION[runtimeMode];
+}
+
 export type ApprovalDecision = "allow" | "allow-session" | "deny";
 
 /** Canonical prefix key shared by Claude approvals and MCP gateway approvals. */
