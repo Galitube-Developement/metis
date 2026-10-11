@@ -30,6 +30,7 @@ import { ThinkingBlock } from "@/components/thinking-block";
 import { GraphBoard } from "@/components/graph-board";
 import rehypeStreamingText from "@/lib/rehype-streaming-text";
 import { StreamingSpan, StreamingText } from "@/components/streaming-text";
+import { STREAM_FADE_MS } from "@/lib/streaming-text";
 import { ChartBoard } from "@/components/chart-board";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { isChartSource } from "@/lib/chart-spec";
@@ -426,11 +427,23 @@ export const Markdown = memo(function Markdown({
 export const StreamingMarkdown = memo(function StreamingMarkdown({
   content,
   thinkingDurationMs,
+  streaming = true,
+  animate = streaming,
 }: {
   content: string;
   thinkingDurationMs?: number;
+  streaming?: boolean;
+  animate?: boolean;
 }) {
   const [shown, setShown] = useState(content);
+  const [settling, setSettling] = useState(animate);
+  useEffect(() => {
+    if (!animate) { setSettling(false); return; }
+    setSettling(true);
+    if (streaming) return;
+    const timer = window.setTimeout(() => setSettling(false), STREAM_FADE_MS + STREAMING_RENDER_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [animate, streaming, content]);
   const latestRef = useRef(content);
   const shownRef = useRef(shown);
   const timerRef = useRef<number | null>(null);
@@ -441,7 +454,7 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
     const next = latestRef.current;
     const current = shownRef.current;
     if (next === current) return;
-    if (shouldFlushStreamingRender(current, next)) {
+    if (!streaming || shouldFlushStreamingRender(current, next)) {
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -454,11 +467,11 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
       timerRef.current = null;
       setShown(latestRef.current);
     }, STREAMING_RENDER_INTERVAL_MS);
-  }, [content]);
+  }, [content, streaming]);
 
   useEffect(() => () => {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
   }, []);
 
-  return <Markdown content={shown} streaming thinkingDurationMs={thinkingDurationMs} />;
+  return <Markdown content={streaming ? shown : content} streaming={streaming || settling} thinkingDurationMs={thinkingDurationMs} />;
 });

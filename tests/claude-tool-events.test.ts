@@ -5,6 +5,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { claudeMessageContent, createClaudeToolEvents } from "../lib/providers/claude-tool-events";
 import { upsertToolMessagePart } from "../lib/message-parts";
+import type { ToolInputPart } from "../lib/tool-input-progress";
 import type { MessagePart, ToolPart } from "../lib/store";
 
 function fixture() {
@@ -182,4 +183,51 @@ test("the actual Claude run loop forwards SDK tool lifecycle into UI parts witho
   assert.equal(f.parts.length, 1);
   assert.equal(text.join(""), "Checking. Finished.");
   assert.equal(result.usage.usedTokens, 123);
+});
+
+
+test("Claude genuine deltas publish throttled preparing counts and immediately transition with full input", () => {
+  let time = 0;
+  const events: ToolInputPart[] = [];
+  const handle = createClaudeToolEvents(t => events.push(t), () => time);
+  handle(stream({ type: "content_block_start", index: 0, content_block: use("one", undefined, {}) }));
+  assert.equal(events[0].phase, "preparing");
+  assert.equal(events[0].inputChars, 0);
+  assert.equal(events[0].input, undefined);
+  const delta = (fragment: string) => handle(stream({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: fragment } }));
+  delta('{"path":');
+  assert.equal(events.length, 1);
+  time = 100;
+  delta('"/tmp/a"');
+  assert.equal(events.at(-1)?.inputChars, 16);
+  assert.equal(events.at(-1)?.input, undefined);
+  delta('}');
+  handle(stream({ type: "content_block_stop", index: 0 }));
+  assert.equal(events.at(-1)?.inputChars, 17);
+  assert.equal(events.at(-1)?.phase, "executing");
+  assert.equal(events.at(-1)?.status, "running");
+  assert.equal(events.at(-1)?.input, '{"path":"/tmp/a"}');
+  assert.deepEqual([...new Set(events.map(t => t.id))], ["one"]);
+  handle(message("user", [{ type: "tool_result", tool_use_id: "one", content: "ok" }]));
+  const count = events.length;
+  handle(stream({ type: "content_block_start", index: 0, content_block: use("one", undefined, {}) }));
+  time = 200;
+  delta('{"wrong":true}');
+  handle(stream({ type: "content_block_stop", index: 0 }));
+  assert.equal(events.length, count);
+  assert.equal(events.at(-1)?.result, "ok");
+});
+
+test("incomplete Claude input flushes its count without exposing input or executing; snapshot is authoritative", () => {
+  const events: ToolInputPart[] = [];
+  const handle = createClaudeToolEvents(t => events.push(t), () => 0);
+  handle(stream({ type: "content_block_start", index: 0, content_block: use("todo", "mcp__gateway__write_todos", {}) }));
+  handle(stream({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"todos":' } }));
+  handle(stream({ type: "content_block_stop", index: 0 }));
+  assert.equal(events.at(-1)?.inputChars, 9);
+  assert.equal(events.at(-1)?.phase, "preparing");
+  assert.ok(events.every(t => t.input === undefined && t.todos === undefined));
+  handle(message("assistant", [use("todo", "mcp__gateway__write_todos", { todos: [{ id: "one", content: "Inspect", status: "pending" }] })]));
+  assert.equal(events.at(-1)?.phase, "executing");
+  assert.equal(events.at(-1)?.todos?.[0].content, "Inspect");
 });

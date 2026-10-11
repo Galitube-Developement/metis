@@ -1143,8 +1143,10 @@ export async function runQueuedJob(job: AgentJob) {
           (eventType === "tool_result" || eventType === "tool-call-completed" || toolResult !== undefined
             ? "completed"
             : "running");
-      const detail = toolDetailFromArgs(toolArgs) || existingTool?.detail;
-      const subagent = extractSubagent(toolName, toolArgs, toolResult);
+      const preparing = eventType === "partial-tool-call" && toolResult === undefined && isActiveToolStatus(toolStatus);
+      const inputChars = preparing && toolArgs !== undefined ? (typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs)).length : undefined;
+      const detail = preparing ? existingTool?.detail : toolDetailFromArgs(toolArgs) || existingTool?.detail;
+      const subagent = preparing ? undefined : extractSubagent(toolName, toolArgs, toolResult);
       let editArgs = toolArgs;
       if (editArgs === undefined && existingTool?.input) {
         try {
@@ -1154,7 +1156,7 @@ export async function runQueuedJob(job: AgentJob) {
         }
       }
       const editMetadata =
-        toolStatus === "running" || isFinishedToolStatus(toolStatus)
+        !preparing && (toolStatus === "running" || isFinishedToolStatus(toolStatus))
           ? extractEditMetadata(
               toolName,
               editArgs,
@@ -1165,7 +1167,7 @@ export async function runQueuedJob(job: AgentJob) {
           : {};
       const resolvedName = resolveMcpToolName(toolName, toolArgs, existingTool?.input);
       const displayName = innerToolName(resolvedName, editArgs, toolResult);
-      const inputText = editArgs !== undefined ? JSON.stringify(editArgs) : undefined;
+      const inputText = !preparing && editArgs !== undefined ? JSON.stringify(editArgs) : undefined;
       const resultText = toolResult !== undefined && !subagent ? JSON.stringify(toolResult) : undefined;
       const todos = todosFromToolPayload(inputText, resultText);
       const kind = classifyToolKind(displayName || resolvedName, editArgs, toolResult);
@@ -1174,6 +1176,8 @@ export async function runQueuedJob(job: AgentJob) {
         id: stableId,
         name: displayName || resolvedName,
         status: toolStatus,
+        phase: preparing ? "preparing" : "executing",
+        ...(inputChars !== undefined ? { inputChars } : {}),
         kind,
         ...(detail ? { detail } : {}),
         ...(editMetadata.path ? { path: editMetadata.path } : {}),
@@ -1196,7 +1200,7 @@ export async function runQueuedJob(job: AgentJob) {
       } else {
         parts.push({ type: "tool", ...nextTool });
       }
-      checkpoint(true);
+      checkpoint(!preparing || existingToolIndex < 0);
       const toolResultText = typeof toolResult === "string"
         ? toolResult
         : toolResult ? JSON.stringify(toolResult) : "";
@@ -1270,6 +1274,8 @@ export async function runQueuedJob(job: AgentJob) {
         name: nextTool.name,
         status: toolStatus,
         kind: nextTool.kind,
+        phase: nextTool.phase,
+        ...(nextTool.inputChars !== undefined ? { inputChars: nextTool.inputChars } : {}),
    ...(nextTool.source ? { source: nextTool.source } : {}),
         ...(nextTool.detail ? { detail: nextTool.detail } : {}),
         ...(nextTool.path ? { path: nextTool.path } : {}),

@@ -119,6 +119,8 @@ import { FileEmbed } from "@/components/file-embed";
 import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
+import { useLiveMessageMotion } from "@/components/use-live-message-motion";
+import { AgentActivity } from "@/components/agent-activity";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
@@ -2848,6 +2850,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- drop a stale waveform after view/chat changes
   }, [activeChatId, automationsOpen, notesOpen]);
 
+  const liveMessageMotionIds = useLiveMessageMotion(activeChatId, messages);
   const isDraft = !activeChatId;
   const isEmpty = messages.length === 0;
   const activeChatIsRunning = Boolean(
@@ -7677,6 +7680,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               payload.diff && typeof payload.diff === "object"
                 ? payload.diff as ToolPart["diff"]
                 : undefined;
+            const phase = payload.phase === "preparing" || payload.phase === "executing" ? payload.phase : undefined;
+            const inputChars = typeof payload.inputChars === "number" && Number.isFinite(payload.inputChars) && payload.inputChars >= 0 ? payload.inputChars : undefined;
             const input = typeof payload.input === "string" ? payload.input : undefined;
             const result = typeof payload.result === "string" ? payload.result : undefined;
             const subagent =
@@ -7746,6 +7751,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   id: prevTool?.id || callId,
                   name,
                   status,
+                  phase: phase ?? (status === "running" ? prevTool?.phase : undefined),
+                  inputChars: inputChars ?? prevTool?.inputChars,
                   detail: detail ?? prevTool?.detail,
                   kind: resolvedKind ?? prevTool?.kind,
                   path: path ?? prevTool?.path,
@@ -10827,11 +10834,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                 bi > 0 && blocks[bi - 1]?.type === "text" && "mt-3",
                               )}
                             >
-                              {m.streaming ? (
-                                <StreamingMarkdown content={displayContent} thinkingDurationMs={m.thinkingDurationMs} />
-                              ) : (
-                                <Markdown content={displayContent} thinkingDurationMs={m.thinkingDurationMs} />
-                              )}
+                              <StreamingMarkdown content={displayContent} streaming={Boolean(m.streaming)} animate={Boolean(m.streaming) || liveMessageMotionIds.has(m.id)} thinkingDurationMs={m.thinkingDurationMs} />
                             </div>
                           );
                         })}
@@ -10989,8 +10992,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     role="status"
                     aria-label="Agent running"
                   >
-                    <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-                    <span className="min-w-0 truncate">{liveStatus || "Agent running…"}</span>
+                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
                   </div>
                 ) : null}
                 {pendingApproval ? (
@@ -11079,8 +11081,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       role="status"
                       aria-label="Agent running"
                     >
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                      <span>{liveStatus || "Agent running…"}</span>
+                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
                     </div>
                   ) : null}
                   {runningSubagents.length > 0 ? (
