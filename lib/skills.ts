@@ -181,7 +181,7 @@ export function skillsCatalogPrompt(settings?: GlobalModelSettings) {
  const skills = enabledSkills(settings).filter((skill) => !isAlwaysOnSkill(skill.id, settings));
  if (!skills.length) return "";
  return [
- "Installed skills (enabled in Settings → Agent → Skills). Read a listed SKILL.md with the read_file tool when the task matches; do not invent skills that are not listed.",
+ "Installed skills (enabled in Agent Hub → Skills). Read a listed SKILL.md with the read_file tool when the task matches; do not invent skills that are not listed.",
  skills.map((skill) => `- ${skill.id} (${skill.source}): ${skill.skillPath}`).join("\n"),
  ].join("\n");
 }
@@ -195,7 +195,7 @@ export function alwaysOnSkillsPrompt(settings?: GlobalModelSettings) {
  return [
  `Always-on skill ${skill.id} is active for every response in this run.`,
  "Treat the rules below as already loaded; do not spend a tool call re-reading this SKILL.md unless asked.",
- "To disable always-on, turn it off for this skill in Settings → Agent → Skills.",
+ "To disable always-on, turn it off for this skill in Agent Hub → Skills.",
  content,
  ].join("\n");
  }).filter(Boolean).join("\n\n");

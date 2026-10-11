@@ -28,7 +28,7 @@ test("search matches labels, categories, keywords and multiple words regardless 
   assert.ok(find("BENACHRICHTIGUNGEN").includes("settings-notifications"));
   assert.ok(find("laufzeit").includes("settings-agent-runtime"));
   assert.ok(find("gerate").includes("settings-remote-clients"));
-  assert.ok(find("agent rules").includes("settings-agent-rules"));
+  assert.deepEqual(find("agent rules"), []);
   assert.ok(find("provider limits").includes("settings-agent-runtime"));
   assert.deepEqual(find("cookies sound"), []);
 });

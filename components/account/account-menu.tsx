@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChartNoAxesCombined, ChevronsUpDown, Settings, UserRound } from "lucide-react";
+import { ChartNoAxesCombined, ChevronsUpDown, Settings, UserRound, Puzzle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -25,9 +25,9 @@ export function ProfileAvatar({profile,name,className}: {profile:AccountProfile|
     <AvatarFallback className="bg-muted text-foreground">{(profile?.displayName || name).slice(0,2).toUpperCase()}</AvatarFallback>
   </Avatar>;
 }
-export function AccountMenu({profile,username,updateAvailable,onSettings,onProfile,onUsage}: {
+export function AccountMenu({profile,username,updateAvailable,onSettings,onProfile,onUsage,onAgentHub}: {
   profile:AccountProfile|null;username:string;updateAvailable:boolean;
-  onSettings:()=>void;onProfile:()=>void;onUsage:()=>void;
+  onSettings:()=>void;onProfile:()=>void;onUsage:()=>void;onAgentHub?:()=>void;
 }) {
   return <DropdownMenu>
     <DropdownMenuTrigger asChild>
@@ -42,8 +42,9 @@ export function AccountMenu({profile,username,updateAvailable,onSettings,onProfi
     <DropdownMenuContent side="top" align="start" sideOffset={8} className="min-w-52">
       <div className="truncate px-2 py-2 text-xs text-muted-foreground">{username}</div>
       <DropdownMenuSeparator />
-      <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onSettings}><Settings /> Settings{updateAvailable ? <span className="ml-auto size-1.5 rounded-full bg-primary" /> : null}</DropdownMenuItem>
       <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onProfile}><UserRound /> Profile</DropdownMenuItem>
+      {onAgentHub ? <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onAgentHub}><Puzzle /> Agent Hub</DropdownMenuItem> : null}
+      <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onSettings}><Settings /> Settings{updateAvailable ? <span className="ml-auto size-1.5 rounded-full bg-primary" /> : null}</DropdownMenuItem>
       <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onUsage}><ChartNoAxesCombined /> Usage</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
