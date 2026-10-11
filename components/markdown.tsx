@@ -5,6 +5,7 @@ import {
   Children,
   isValidElement,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type AnchorHTMLAttributes,
@@ -27,6 +28,8 @@ import { normalizeMath, splitStreamingMath } from "@/lib/math";
 import { LinkPreview } from "@/components/link-preview";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { GraphBoard } from "@/components/graph-board";
+import rehypeStreamingText from "@/lib/rehype-streaming-text";
+import { StreamingSpan, StreamingText } from "@/components/streaming-text";
 import { ChartBoard } from "@/components/chart-board";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { isChartSource } from "@/lib/chart-spec";
@@ -338,6 +341,19 @@ export const Markdown = memo(function Markdown({
   thinkingDurationMs?: number;
   editableFiles?: boolean;
 }) {
+  const markdownComponentsWithCode = useMemo(() => ({
+    ...markdownComponents,
+    span: StreamingSpan,
+    pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
+    code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
+    a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => props.href && isFileUrl(props.href) ? <FileEmbed file={{url:props.href,name:String(props.children || "File"),mimeType:mimeTypeFromFileName(String(props.children || "File"))}} className="my-2 max-h-96"/> : <MarkdownLink {...props}/>,
+    img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,
+    p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.href || child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
+    input: (props: InputHTMLAttributes<HTMLInputElement>) => (
+      <TaskCheckbox {...props} interactive={interactiveTasks} />
+    ),
+  }), [editableFiles, interactiveTasks]);
+
   const thinkingSegments = splitThinkingBlocks(content);
   if (thinkingSegments.some((segment) => segment.kind === "thinking")) {
     return (
@@ -365,17 +381,6 @@ export const Markdown = memo(function Markdown({
     );
   }
 
-  const markdownComponentsWithCode = {
-    ...markdownComponents,
-    pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
-    code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
-    a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => props.href && isFileUrl(props.href) ? <FileEmbed file={{url:props.href,name:String(props.children || "File"),mimeType:mimeTypeFromFileName(String(props.children || "File"))}} className="my-2 max-h-96"/> : <MarkdownLink {...props}/>,
-    img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,
-    p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.href || child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
-    input: (props: InputHTMLAttributes<HTMLInputElement>) => (
-      <TaskCheckbox {...props} interactive={interactiveTasks} />
-    ),
-  };
   if (streaming) {
     const { ready, pending } = splitStreamingMath(content);
     return (
@@ -385,6 +390,7 @@ export const Markdown = memo(function Markdown({
             remarkPlugins={[remarkGfm, remarkMath, remarkChatIcons]}
             rehypePlugins={[
               [rehypeKatex, { throwOnError: false, strict: "ignore" }],
+              rehypeStreamingText,
             ]}
             urlTransform={transformMarkdownUrl}
             components={markdownComponentsWithCode}
@@ -394,7 +400,7 @@ export const Markdown = memo(function Markdown({
         ) : null}
         {pending ? (
           <span className="whitespace-pre-wrap text-muted-foreground/80">
-            {pending}
+            <StreamingText text={pending}/>
           </span>
         ) : null}
       </div>

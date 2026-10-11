@@ -2,7 +2,9 @@
 
 import { useEscapeDismiss } from "@/components/use-escape-dismiss";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ChartBoundary } from "@/components/chart-boundary";
+import { useChartMotion } from "@/components/use-chart-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Fullscreen, Minimize2 } from "lucide-react";
 import {
@@ -98,15 +100,14 @@ const axisTick = { fill: axisColor, fontSize: 11 };
 const plotMargin = { top: 18, right: 24, bottom: 4, left: 0 };
 
 function ChartPlot({ spec, hidden }: { spec: ChartSpec; hidden: Set<string> }) {
-  const allSeries = normalizedSeries(spec);
-  const visible = allSeries.filter((series) => !hidden.has(series.name));
-  const data = chartRows(spec);
+  const motion = useChartMotion();
+  const allSeries = useMemo(() => normalizedSeries(spec), [spec]);
+  const visible = useMemo(() => allSeries.filter((series) => !hidden.has(series.name)), [allSeries, hidden]);
+  const data = useMemo(() => chartRows(spec), [spec]);
+  const pieData = useMemo(() => labelsFor(spec).map((name, index) => ({ name, value: allSeries[0]?.values?.[index] ?? 0 })).filter(item => !hidden.has(item.name)), [spec, allSeries, hidden]);
+  const scatterData = useMemo(() => new Map(allSeries.map(series => [series.name, (series.points || (series.values || []).map((value, point) => [point, value] as [number, number])).map(([x, y]) => ({ x, y }))])), [allSeries]);
 
   if (spec.type === "pie" || spec.type === "donut") {
-    const first = allSeries[0];
-    const pieData = labelsFor(spec)
-      .map((name, index) => ({ name, value: first?.values?.[index] ?? 0 }))
-      .filter((item) => !hidden.has(item.name));
     return (
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
@@ -119,7 +120,7 @@ function ChartPlot({ spec, hidden }: { spec: ChartSpec; hidden: Set<string> }) {
             outerRadius="68%"
             innerRadius={spec.type === "donut" ? "42%" : 0}
             paddingAngle={1}
-            isAnimationActive={false}
+            {...motion}
             stroke="var(--background)"
           >
             {pieData.map((item, index) => (
@@ -143,9 +144,9 @@ function ChartPlot({ spec, hidden }: { spec: ChartSpec; hidden: Set<string> }) {
             <Scatter
               key={series.name}
               name={series.name}
-              data={(series.points || (series.values || []).map((value, point) => [point, value] as [number, number])).map(([x, y]) => ({ x, y }))}
+              data={scatterData.get(series.name)}
               fill={seriesColor(series, index)}
-              isAnimationActive={false}
+              {...motion}
             />
           ))}
         </ScatterChart>
@@ -164,12 +165,12 @@ function ChartPlot({ spec, hidden }: { spec: ChartSpec; hidden: Set<string> }) {
           const index = allSeries.indexOf(series);
           const color = seriesColor(series, index);
           if (spec.type === "bar") {
-            return <Bar key={series.name} dataKey={series.name} fill={color} stackId={spec.stacked ? "stack" : undefined} isAnimationActive={false} />;
+            return <Bar key={series.name} dataKey={series.name} fill={color} stackId={spec.stacked ? "stack" : undefined} {...motion} />;
           }
           if (spec.type === "area") {
-            return <Area key={series.name} dataKey={series.name} type="monotone" stroke={color} fill={color} fillOpacity={0.18} stackId={spec.stacked ? "stack" : undefined} isAnimationActive={false} />;
+            return <Area key={series.name} dataKey={series.name} type="monotone" stroke={color} fill={color} fillOpacity={0.18} stackId={spec.stacked ? "stack" : undefined} {...motion} />;
           }
-          return <Line key={series.name} dataKey={series.name} type="monotone" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />;
+          return <Line key={series.name} dataKey={series.name} type="monotone" stroke={color} strokeWidth={2} dot={false} {...motion} />;
         })}
       </Chart>
     </ResponsiveContainer>
@@ -301,7 +302,7 @@ function InteractiveChart({
         }}
       >
         <div className="absolute inset-0 pb-2 pl-1 pr-4 pt-4">
-          <ChartPlot spec={spec} hidden={hidden} />
+          <ChartBoundary resetKey={JSON.stringify(spec)} label="agent-chart"><ChartPlot spec={spec} hidden={hidden} /></ChartBoundary>
         </div>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-12 bg-gradient-to-b from-background to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-12 bg-gradient-to-t from-background to-transparent" />

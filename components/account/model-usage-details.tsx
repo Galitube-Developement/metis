@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartBoundary } from "@/components/chart-boundary";
+import { useChartMotion } from "@/components/use-chart-motion";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -31,7 +33,7 @@ function Distribution({dimension,buckets,requests}: {dimension:keyof UsageConfig
           <span className="min-w-0 truncate" title={bucketLabel(dimension,bucket.value)}>{bucketLabel(dimension,bucket.value)}</span>
           <span className="shrink-0 tabular-nums text-muted-foreground">{bucket.requests.toLocaleString()} · {Math.round(bucket.requests/requests*100)}%</span>
         </div>
-        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground/60" style={{width:bucket.requests/requests*100+"%"}} /></div>
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted"><div className="usage-distribution-fill h-full bg-foreground/60" style={{width:bucket.requests/requests*100+"%"}} /></div>
       </li>)}
     </ul>:<p className="mt-3 text-xs text-muted-foreground">No recorded settings.</p>}
     {unknown ? <p className="mt-2 text-[11px] text-muted-foreground">{unknown.toLocaleString()} not recorded</p>:null}
@@ -44,6 +46,7 @@ export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:Us
   const [retry,setRetry]=useState(0);
   const [metric,setMetric]=useState<Metric>("tokens");
   const id=useId();
+  const motion=useChartMotion();
   useEffect(()=>{
     const controller=new AbortController();
     setDetails(null);setError("");
@@ -88,16 +91,16 @@ export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:Us
       </select>
     </div>
     <div className="h-44 min-w-0" role="img" aria-label={metricLabel+" by day for "+model.modelId}>
-      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+      <ChartBoundary resetKey={activeMetric+costMode+from+to+retry} label="usage-model-details"><ResponsiveContainer width="100%" height="100%" minWidth={0}>
         <BarChart data={chart.data} margin={{top:4,right:0,left:0,bottom:0}}>
           <CartesianGrid stroke="var(--border)" vertical={false} strokeDasharray="3 5" opacity={0.5}/>
           <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={32} tick={{fill:"var(--muted-foreground)",fontSize:10}} tickLine={false} axisLine={false}/>
           <YAxis width={40} allowDecimals={activeMetric==="tokens" || activeMetric==="cost"} tickFormatter={value=>activeMetric==="cost"?"$"+compact.format(value):compact.format(value)} tick={{fill:"var(--muted-foreground)",fontSize:10}} tickLine={false} axisLine={false}/>
           <Tooltip contentStyle={{background:"var(--popover)",border:"1px solid var(--border)",borderRadius:8,fontSize:12,color:"var(--foreground)"}} formatter={value=>activeMetric==="cost"?money.format(Number(value)):Number(value).toLocaleString()} />
           {chart.series.length>1 ? <Legend wrapperStyle={{fontSize:10}} formatter={value=><span className="text-muted-foreground">{value}</span>} iconType="circle" iconSize={6}/>:null}
-          {chart.series.map((series,index)=><Bar key={series.key} dataKey={series.key} name={series.label} stackId="usage" fill={colors[index]} maxBarSize={18} isAnimationActive={false}/>)}
+          {chart.series.map((series,index)=><Bar key={series.key} dataKey={series.key} name={series.label} stackId="usage" fill={colors[index]} maxBarSize={18} {...motion}/>)}
         </BarChart>
-      </ResponsiveContainer>
+      </ResponsiveContainer></ChartBoundary>
     </div>
     <div className="grid gap-5 border-t border-border/50 pt-4 sm:grid-cols-3">
       {(["context","speed","reasoning"] as const).map(dimension=><Distribution key={dimension} dimension={dimension} buckets={details.configurations[dimension]} requests={details.requests}/>)}
