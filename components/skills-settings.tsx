@@ -22,7 +22,7 @@ type SkillItem = {
   alwaysOn: boolean;
 };
 
-export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean } = {}) {
+export function SkillsSettings({ hideHeading = false, importOnly = false, onAdded }: { hideHeading?: boolean; importOnly?: boolean; onAdded?: () => void } = {}) {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -94,6 +94,7 @@ export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean 
       setManualId("");
       setManualContent("");
       setManualFile(null);
+      onAdded?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not add skill.");
     } finally {
@@ -124,7 +125,7 @@ export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean 
         }} />
         <Button type="button" size="sm" className="w-fit" disabled={adding || !manualId.trim() || (!manualFile && !manualContent.trim())} onClick={() => void addSkill()}>{adding ? "Adding…" : "Add skill"}</Button>
       </div>
-      {skills.length === 0 ? (
+      {importOnly ? null : skills.length === 0 ? (
         <p className="text-sm text-muted-foreground">No skills installed.</p>
       ) : (
         <ul className="divide-y rounded-xl border border-border/60">

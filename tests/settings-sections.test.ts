@@ -92,35 +92,13 @@ test("browser storage uses a dedicated manager instead of an inline origin list 
   assert.match(settingsSource, /const pane = SETTINGS_SECTION_TO_PANE\[item\.id\];/);
 });
 
-test("Models and Agent pack dense features behind settings tiles", () => {
-  const models = headingIdsInTab(settingsSource, "models");
-  const agent = headingIdsInTab(settingsSource, "agent");
-  assert.deepEqual(models, ["settings-usage", "settings-providers", "settings-versions"]);
-  assert.deepEqual(agent, ["settings-agent-runtime", "settings-skills", "settings-modes", "settings-mcp", "settings-memories", "settings-agent-rules"]);
-  assert.match(settingsSource, /data-settings-tile=\{id\}/);
-  assert.match(settingsSource, /id=\"settings-providers\"/);
-  assert.match(settingsSource, /id=\"settings-versions\"/);
-  assert.match(settingsSource, /id=\"settings-skills\"/);
-  assert.match(settingsSource, /setSettingsPane\("providers"\)/);
-  assert.match(settingsSource, /setSettingsPane\("versions"\)/);
-  assert.match(settingsSource, /setSettingsPane\("skills"\)/);
+test("Settings keep models, runtime and memories while extensions move to Agent Hub", () => {
+  assert.deepEqual(headingIdsInTab(settingsSource, "models"), ["settings-usage", "settings-providers", "settings-versions"]);
+  assert.deepEqual(headingIdsInTab(settingsSource, "agent"), ["settings-agent-runtime", "settings-memories"]);
+  for (const section of ["skills", "modes", "mcp", "agent-rules"]) assert.doesNotMatch(settingsSource, new RegExp('id="settings-' + section + '"'));
+  assert.match(settingsSource, /<PlanUsagePanel/);
   assert.match(settingsSource, /slot="providers-manager"/);
-  assert.match(settingsSource, /slot="versions-manager"/);
-  assert.match(settingsSource, /slot="skills-manager"/);
-  assert.match(settingsSource, /slot="modes-manager"/);
-  assert.match(settingsSource, /slot="mcp-manager"/);
   assert.match(settingsSource, /slot="memories-manager"/);
-  assert.match(settingsSource, /title="Agent Rules"/);
-  assert.match(settingsSource, /Manage individual instructions for how the agent responds across your chats/);
-  assert.match(settingsSource, /setSettingsPane\("agent-rules"\)/);
-  assert.match(settingsSource, /data-slot=\{slot\}/);
-  const modelsTab = settingsSource.slice(
-    settingsSource.indexOf('<TabsContent value="models"'),
-    settingsSource.indexOf("</TabsContent>", settingsSource.indexOf('<TabsContent value="models"')),
-  );
-  assert.match(modelsTab, /<PlanUsagePanel/);
-  assert.doesNotMatch(modelsTab, /provider-connection-form/);
-  assert.doesNotMatch(modelsTab, /<SkillsSettings/);
 });
 
 test("provider editing stays inside the Models settings tab and OAuth names can be saved without reconnecting", () => {

@@ -276,6 +276,7 @@ const RemoteTerminal = dynamic(
 );
 const AccountPanel = dynamic(() => import("@/components/account/account-panel").then(mod => mod.AccountPanel));
 const SettingsPanel = dynamic(() => import("@/components/settings-panel").then((mod) => mod.SettingsPanel));
+const AgentHub = dynamic(() => import("@/components/agent-hub").then((mod) => mod.AgentHub));
 const SetupWizard = dynamic(() => import("@/components/setup-wizard").then((mod) => mod.SetupWizard));
 const SubagentChatView = dynamic(() => import("@/components/subagent-chat-view").then((mod) => mod.SubagentChatView));
 
@@ -2036,6 +2037,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => setAccountView(null), [routeChatId, routeView]);
   const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentHubOpen, setAgentHubOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("general");
   const [settingsUpdateAvailable, setSettingsUpdateAvailable] = useState(false);
   const [chatLogsOpen, setChatLogsOpen] = useState(false);
@@ -9753,6 +9755,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       <div className="shrink-0 p-2">
         <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable}
           onSettings={() => { setMobileNavOpen(false); void loadMemories(); void refreshStatus(); setSettingsOpen(true); }}
+          onAgentHub={() => { setMobileNavOpen(false); setAgentHubOpen(true); }}
           onProfile={() => { setAccountView("profile"); setMobileNavOpen(false); setWorkspaceOpen(false); }}
           onUsage={() => { setAccountView("usage"); setMobileNavOpen(false); setWorkspaceOpen(false); }} />
       </div>
@@ -9894,7 +9897,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   return (
     <ChatFileDropZone
-      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !agentHubOpen && !providerSetupRequired && !loadingChatId}
       onFiles={addPendingFiles}
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
@@ -11913,6 +11916,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </DialogContent>
       </Dialog>
 
+      {agentHubOpen ? <AgentHub open={agentHubOpen} onOpenChange={setAgentHubOpen} isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
+        setAgentHubOpen(false); setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
+        setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
+        setComposerSyncNonce(current => current + 1);
+      }} /> : null}
       <SettingsPanel
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
