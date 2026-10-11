@@ -109,7 +109,7 @@ export function UsageDashboard() {
       </div>
       <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
         <div><p className="text-xs text-muted-foreground">{activeMetric==="costUsd"?costLabel:activeMetric==="tokens"?"Reported tokens":"Requests"}</p>
-          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl"><AnimatedNumber key={activeMetric} value={totals ? activeMetric==="costUsd"?usageCost(totals,costMode):activeMetric==="tokens" && !totals.tokenReports ? null:totals[activeMetric]:undefined} loading={loading} format={activeMetric==="costUsd"?"money":"integer"}/></p>
+          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl"><AnimatedNumber value={totals ? activeMetric==="costUsd"?usageCost(totals,costMode):activeMetric==="tokens" && !totals.tokenReports ? null:totals[activeMetric]:undefined} loading={loading} format={activeMetric==="costUsd"?"money":"integer"}/></p>
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{usage?.from} — {usage?.to}<br />Daily totals · UTC</p>
           {activeMetric==="costUsd" && totals ? <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{reports ? reports.toLocaleString()+" of "+totals.requests.toLocaleString()+" runs "+(costMode==="estimated"?"estimated":"reported")+(reports<totals.requests?" · Partial total":"") : costMode==="estimated"?"No matching prices and complete token splits for these runs.":"Your providers have not reported costs for these runs."}</p>:null}
         </div>
