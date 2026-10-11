@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
-import { Search, PlugZap, ExternalLink } from "lucide-react";
+import { ArrowLeft, PlugZap, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,10 +14,10 @@ function documentationUrl(item: Candidate) {
   const url = item.websiteUrl || item.repository?.url;
   try { return url && new URL(url).protocol === "https:" ? url : undefined; } catch { return undefined; }
 }
-export function ConnectionCatalog({ isHostAdmin, onInstalled, onCustomize }: { isHostAdmin: boolean; onInstalled: () => void; onCustomize: (gatewayId: string) => void }) {
+export function ConnectionCatalog({ query, isHostAdmin, onInstalled, onCustomize, onBusyChange }: { query: string; isHostAdmin: boolean; onInstalled: () => void; onCustomize: (gatewayId: string) => void; onBusyChange: (busy: boolean) => void }) {
   const formId = useId();
   const setupForm = useRef<HTMLFormElement>(null);
-  const [query, setQuery] = useState("");
+  const [retry, setRetry] = useState(0);
   const [results, setResults] = useState<Candidate[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
@@ -42,22 +42,28 @@ export function ConnectionCatalog({ isHostAdmin, onInstalled, onCustomize }: { i
     setSelected(item); setSetupError(""); setGatewayId("");
     if (item.connectionOptions[0]) selectOption(item.connectionOptions[0]);
   }
-  async function search() {
-    setLoading(true); setError(""); setResults(null); setSelected(null); setValues({});
-    try {
-      const response = await fetch("/api/connections/catalog?q=" + encodeURIComponent(query), { cache: "no-store" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not search connections.");
-      setResults(body.results || []);
-      try { if (new URL(body.source).hostname === "registry.modelcontextprotocol.io") setSource(body.source); } catch { /* Keep the official Registry link when no source is supplied. */ }
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Could not search connections.";
-      setError(message); toast.error(message);
-    } finally { setLoading(false); }
-  }
+  useEffect(() => {
+    const controller = new AbortController();
+    setResults(null); setSelected(null); setValues({}); setError(""); setSource("");
+    if (!query.trim()) { setLoading(false); return () => controller.abort(); }
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/connections/catalog?q=" + encodeURIComponent(query.trim()), { cache: "no-store", signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Could not search connections.");
+        if (controller.signal.aborted) return;
+        setResults(body.results || []);
+        try { if (new URL(body.source).hostname === "registry.modelcontextprotocol.io") setSource(body.source); } catch { /* Keep the official Registry link. */ }
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not search connections.");
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    }, 350);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query, retry]);
   async function install() {
-    if (!selected || !option || busy) return;
-    setBusy(selected.name); setSetupError("");
+    if (!isHostAdmin || !selected || !option || busy) return;
+    setBusy(selected.name); onBusyChange(true); setSetupError("");
     try {
       const response = await fetch("/api/connections/catalog", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selected.name, optionId, configuration: values }) });
       const body = await response.json();
@@ -67,22 +73,16 @@ export function ConnectionCatalog({ isHostAdmin, onInstalled, onCustomize }: { i
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not connect.";
       setSetupError(message); toast.error("Connection could not be enabled", { description: message });
-    } finally { setBusy(""); }
+    } finally { setBusy(""); onBusyChange(false); }
   }
   return <section aria-label="Discover connections/MCPs" className="space-y-4">
-    <div>
-      <h3 className="text-lg font-semibold">Discover connections/MCPs</h3>
-      <p className="mt-1 text-sm text-muted-foreground">Services and tools fetched from the <a href="https://registry.modelcontextprotocol.io" target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">official MCP Registry</a>.</p>
-      <p className="mt-1 text-xs text-muted-foreground">Configuration comes from each publisher’s registry entry. Package connections require Docker on the Metis server.{source ? <> <a href={source} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">Catalog API</a></> : null}</p>
-    </div>
-    <form className="flex gap-2" onSubmit={event => { event.preventDefault(); if (query.trim()) void search(); }}>
-      <Input className="min-w-0" value={query} disabled={Boolean(busy)} onChange={event => setQuery(event.target.value)} placeholder="Search services, tools or capabilities…" aria-label="Search connections" />
-      <Button type="submit" disabled={loading || Boolean(busy) || !query.trim()}><Search className="size-4" /><span className="hidden sm:inline">Search</span></Button>
-    </form>
+    <p className="text-xs leading-5 text-muted-foreground">Discover services and tools from the <a href={source || "https://registry.modelcontextprotocol.io"} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">official MCP Registry</a>.</p>
+    {!query.trim() ? <p className="text-sm text-muted-foreground">Search for a service, tool or capability to discover connections.</p> : null}
     {loading ? <p role="status" className="text-sm text-muted-foreground">Searching connection catalog…</p> : null}
-    {error ? <p role="alert" className="break-words text-sm text-destructive">{error}</p> : null}
-    {results?.length === 0 ? <p className="text-sm text-muted-foreground">No supported connections found. Try a capability name or add a custom connection below.</p> : null}
+    {error ? <div role="alert" className="break-words text-sm text-destructive">{error}<Button variant="ghost" onClick={() => setRetry(value => value + 1)}>Try again</Button></div> : null}
+    {results?.length === 0 ? <p className="text-sm text-muted-foreground">No supported connections found. Try a capability name or use the Custom tab.</p> : null}
     {selected && option ? <form ref={setupForm} aria-label={"Configure " + (selected.title || selected.name)} className="space-y-4 border-y border-border py-5" onSubmit={event => { event.preventDefault(); void install(); }}>
+      <Button type="button" variant="ghost" className="h-9 px-0 text-muted-foreground" disabled={Boolean(busy)} onClick={() => { setSelected(null); setValues({}); }}><ArrowLeft /> All results</Button>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><h4 className="break-words font-medium">Configure {selected.title || selected.name}</h4><p className="mt-1 break-all text-xs text-muted-foreground">{selected.name}</p></div>
         <Button type="button" variant="ghost" size="sm" disabled={Boolean(busy)} onClick={() => { setSelected(null); setValues({}); }}>Cancel</Button>
@@ -103,11 +103,11 @@ export function ConnectionCatalog({ isHostAdmin, onInstalled, onCustomize }: { i
         <div className="flex flex-wrap gap-2"><Button type="submit" disabled={Boolean(busy)}>{busy ? "Testing connection…" : "Save & test connection"}</Button>{setupError && gatewayId ? <Button type="button" variant="outline" onClick={() => onCustomize(gatewayId)}>Edit advanced configuration</Button> : null}</div>
       </fieldset>
     </form> : null}
-    <div className="grid gap-3 sm:grid-cols-2">{results?.map(item => <article key={item.name} className="min-w-0 rounded-xl border border-border p-4">
-      <PlugZap className="mb-3 size-5 text-muted-foreground" /><h4 className="break-words text-sm font-medium">{item.title || item.name}</h4>
-      <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">{item.description}</p>
-      <Button className="mt-3" size="sm" variant="outline" disabled={!isHostAdmin || Boolean(busy) || !item.connectionOptions?.length} onClick={() => configure(item)}>Set up connection</Button>
-    </article>)}</div>
+    {!selected ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{results?.map(item => <article key={item.name} className="flex min-h-44 min-w-0 flex-col rounded-xl border border-border bg-card p-4">
+      <PlugZap className="size-5 text-muted-foreground" /><h4 className="mt-4 break-words text-sm font-semibold">{item.title || item.name}</h4>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
+      <div className="mt-auto pt-4"><Button size="sm" variant="outline" disabled={!isHostAdmin || Boolean(busy) || !item.connectionOptions?.length} onClick={() => configure(item)}>Set up connection</Button></div>
+    </article>)}</div> : null}
     {!isHostAdmin ? <p className="text-xs text-muted-foreground">A host administrator can set up new server connections.</p> : null}
   </section>;
 }
