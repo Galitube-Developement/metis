@@ -123,6 +123,7 @@ import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { useLiveMessageMotion } from "@/components/use-live-message-motion";
 import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
+import { latestPreparingTool } from "@/lib/tool-preparation";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
@@ -2884,6 +2885,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const runningSubagents = subagentOutputs.filter((tool) =>
     isBarSubagentLive(tool, childRunByChatId[tool.subagent?.chatId || ""], isToolRunning),
   );
+  const latestAssistantPreparingTool = useMemo(() => latestPreparingTool(
+    (latestAssistantMessage?.parts ?? (latestAssistantMessage ? partsFromFlat(latestAssistantMessage) : []))
+      .filter((part): part is ToolMsgPart => part.type === "tool"),
+  ), [latestAssistantMessage]);
   const latestAssistantHasRunningTool = Boolean(
     latestAssistantMessage &&
       (latestAssistantMessage.parts ?? partsFromFlat(latestAssistantMessage))
@@ -7670,6 +7675,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 ? payload.diff as ToolPart["diff"]
                 : undefined;
             const phase = payload.phase === "preparing" || payload.phase === "executing" ? payload.phase : undefined;
+            const source = payload.source === "mcp" || payload.source === "native" || payload.source === "browser" ? payload.source : undefined;
             const inputChars = typeof payload.inputChars === "number" && Number.isFinite(payload.inputChars) && payload.inputChars >= 0 ? payload.inputChars : undefined;
             const input = typeof payload.input === "string" ? payload.input : undefined;
             const result = typeof payload.result === "string" ? payload.result : undefined;
@@ -7742,6 +7748,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   status,
                   phase: phase ?? (status === "running" ? prevTool?.phase : undefined),
                   inputChars: inputChars ?? prevTool?.inputChars,
+                  source: source ?? prevTool?.source,
                   detail: detail ?? prevTool?.detail,
                   kind: resolvedKind ?? prevTool?.kind,
                   path: path ?? prevTool?.path,
@@ -10976,13 +10983,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </article>
                   );
                 })}
-                {activeChatIsRunning && !latestAssistantHasRunningTool ? (
+                {activeChatIsRunning && (!latestAssistantHasRunningTool || Boolean(latestAssistantPreparingTool)) ? (
                   <div
                     className="flex min-w-0 items-center gap-2 px-1 text-xs text-muted-foreground md:hidden"
                     role="status"
                     aria-label="Agent running"
                   >
-                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
+                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined} tool={latestAssistantPreparingTool}/>
                   </div>
                 ) : null}
                 {pendingApproval ? (
@@ -11065,13 +11072,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ) : null}
                     </Button>
                   ) : null}
-                  {activeChatIsRunning && !latestAssistantHasRunningTool ? (
+                  {activeChatIsRunning && (!latestAssistantHasRunningTool || Boolean(latestAssistantPreparingTool)) ? (
                     <div
                       className="mb-2 hidden items-center justify-center gap-2 text-xs text-muted-foreground md:flex"
                       role="status"
                       aria-label="Agent running"
                     >
-                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
+                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined} tool={latestAssistantPreparingTool}/>
                     </div>
                   ) : null}
                   {runningSubagents.length > 0 ? (
