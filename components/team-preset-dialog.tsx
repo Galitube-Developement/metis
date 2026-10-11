@@ -1,4 +1,5 @@
 "use client";
+import { createClientId } from "@/lib/client-id";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Loader2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
@@ -154,7 +155,7 @@ export function TeamPresetDialog({ open, onOpenChange, projectId, onUse, useLabe
      </div><p className="text-xs text-muted-foreground">Uses your chosen provider. The response becomes an editable draft; agents are created only after review.</p>
     </div> : draft ? <div className="grid grid-cols-1 gap-4">
      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="grid gap-1.5 text-sm">Preset name<Input value={draft.name} maxLength={120} onChange={e => setDraft({ ...draft, name: e.target.value })}/></label><label className="grid gap-1.5 text-sm">Description<Input value={draft.description} maxLength={1000} onChange={e => setDraft({ ...draft, description: e.target.value })}/></label></div>
-     <div className="flex items-center justify-between"><h3 className="text-sm font-medium">{draft.agents.length} agents to review</h3><Button variant="ghost" size="sm" disabled={draft.agents.length >= TEAM_DRAFT_LIMIT} onClick={() => setDraft({ ...draft, agents: [...draft.agents, { key: crypto.randomUUID(), name: "New agent", role: "", systemPrompt: "", color: "#1767ed" }] })}><Plus className="size-3.5"/>Add agent</Button></div>
+     <div className="flex items-center justify-between"><h3 className="text-sm font-medium">{draft.agents.length} agents to review</h3><Button variant="ghost" size="sm" disabled={draft.agents.length >= TEAM_DRAFT_LIMIT} onClick={() => setDraft({ ...draft, agents: [...draft.agents, { key: createClientId(), name: "New agent", role: "", systemPrompt: "", color: "#1767ed" }] })}><Plus className="size-3.5"/>Add agent</Button></div>
      <div className="divide-y divide-border/60">{draft.agents.map((a, index) => <details key={a.key} open={index === 0 ? true : undefined} className="py-3" data-agent-key={a.key}>
       <summary className="flex cursor-pointer items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
        <TeamAgentAvatar name={a.name} color={a.color} className="size-9"/>
