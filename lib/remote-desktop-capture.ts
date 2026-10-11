@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { windowsDesktopPreviewCommand } from "@/remote-client/desktop-preview.mjs";
+import { windowsDesktopPreviewCommand } from "@/remote-client/desktop-preview-command.mjs";
 import { authorizeRemoteAction, getRemoteClient } from "@/lib/remote-clients";
 import { requestRemoteClient } from "@/lib/remote-client-gateway";
 
