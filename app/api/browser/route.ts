@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 type BrowserRequest = {
   action?: string;
+  uploadIds?: string[];
   chatId?: string;
   tabId?: string;
   url?: string;

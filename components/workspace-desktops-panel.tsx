@@ -1,6 +1,10 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { LoaderCircle, Monitor, Pause, Play, RefreshCw, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LoaderCircle, Monitor, Pause, Play, RefreshCw, Settings2, Upload } from "lucide-react";
+import { FileDropZone } from "@/components/file-drop-zone";
+import { startUpload } from "@/lib/background-uploads";
+import { toast } from "sonner";
+import { MAX_ATTACHMENTS, MAX_FILE_BYTES } from "@/lib/upload-limits";
 import { Button } from "@/components/ui/button";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { chooseDesktopClient, desktopUnavailableReason } from "@/lib/remote-desktop-view";
@@ -14,6 +18,7 @@ async function responseError(response: Response, fallback: string) {
 export function WorkspaceDesktopsPanel({ active, agentClientId, agentActive, activityTimestamp, onOpenDevices }: {
   active: boolean; agentClientId?: string | null; agentActive?: boolean; activityTimestamp?: number; onOpenDevices: () => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [clients, setClients] = useState<RemoteClient[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,8 +106,29 @@ export function WorkspaceDesktopsPanel({ active, agentClientId, agentActive, act
     };
   }, [active, deviceId, unavailable, paused, retry, inventoryError]);
 
+  const transferReady = active && selected?.status === "online" && selected.policy.mode === "full_access" && !inventoryError;
+  function uploadFiles(files: FileList) {
+    if (!transferReady || !selected) { toast.error("Select an online Remote Device with Full access to transfer files."); return; }
+    const incoming = Array.from(files), targetId = selected.id, targetName = selected.name || selected.hostname || "Remote Device";
+    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size || file.size > MAX_FILE_BYTES)) {
+      toast.error("Choose up to 10 files, each 1 GB or smaller."); return;
+    }
+    for (const file of incoming) startUpload(file, { label: targetName + " · Desktop", onComplete: async upload => {
+      const response = await fetch("/api/remote-clients/" + encodeURIComponent(targetId) + "/files", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId: upload.id }),
+      });
+      if (!response.ok) throw new Error(await responseError(response, "File transfer failed"));
+      const result = await response.json();
+      toast.success("File saved on " + targetName, { description: result.path });
+    } });
+  }
+
   const error = inventoryError || unavailable || frameError;
-  return <div className="flex min-h-0 flex-1 flex-col gap-2" aria-label="Remote desktops">
+  return <FileDropZone className="relative flex min-h-0 flex-1 flex-col gap-2" enabled={Boolean(transferReady)}
+    title={"Drop files onto " + (selected?.name || "this desktop")} detail="Files are saved in this device’s Desktop folder." onFiles={uploadFiles}>
+    <input ref={fileInputRef} type="file" multiple className="hidden" aria-label="Upload files to remote desktop" onChange={event => {
+      if (event.target.files?.length) uploadFiles(event.target.files); event.target.value = "";
+    }} />
     <div className="flex shrink-0 flex-wrap items-center gap-2">
       <Monitor className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <select aria-label="Select remote desktop" value={deviceId || ""} disabled={loading || clients.length === 0}
@@ -115,6 +141,8 @@ export function WorkspaceDesktopsPanel({ active, agentClientId, agentActive, act
         disabled={!selected || Boolean(unavailable)} onClick={() => setPaused(value => !value)}>
         {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
       </Button>
+      <Button size="icon-sm" variant="ghost" className="size-9" aria-label="Upload files to remote desktop" title={transferReady ? "Save files to Desktop" : "File transfer requires an online device with Full access"}
+        disabled={!transferReady} onClick={() => fileInputRef.current?.click()}><Upload className="size-4" /></Button>
       <Button size="icon-sm" variant="ghost" className="size-9" aria-label="Refresh remote desktops" onClick={refresh}><RefreshCw className="size-4" /></Button>
       <Button size="icon-sm" variant="ghost" className="size-9" aria-label="Manage Remote Devices" onClick={onOpenDevices}><Settings2 className="size-4" /></Button>
     </div>
@@ -137,5 +165,5 @@ export function WorkspaceDesktopsPanel({ active, agentClientId, agentActive, act
       <span>{frame && !error && !paused ? "Live · " + new Date(frame.at).toLocaleTimeString() : selected?.hostname || "Remote Devices"}</span>
       <span>{agentActive && agentClientId === deviceId ? "Agent is using this desktop" : "View only · primary display"}</span>
     </div>
-  </div>;
+  </FileDropZone>;
 }
