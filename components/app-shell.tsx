@@ -25,10 +25,11 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   startTransition,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { startUpload, waitForUpload, cancelUpload } from "@/lib/background-uploads";
+import { startUpload, waitForUpload, cancelUpload, subscribeUploads, getUploadStatus } from "@/lib/background-uploads";
 import { UploadProgress, UploadTray } from "@/components/upload-progress";
 import { readTextFilePreview } from "@/lib/text-file-preview";
 import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
@@ -191,6 +192,7 @@ import {
   composerTranscriptInsert,
   composerUserEditMeta,
   decideComposerSend,
+  hasUnfinishedComposerUploads,
   isDuplicateComposerSend,
   mergeQueuedFollowUps,
   shouldAcceptRemoteComposerInput,
@@ -2014,6 +2016,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [paneKey, setPaneKey] = useState(0);
   const [pendingFiles, setVisiblePendingFiles] = useState<PendingFile[]>([]);
   const pendingByChatRef = useRef(new Map<string, PendingFile[]>());
+  // Boolean snapshot avoids rerendering the whole chat for every upload byte.
+  const attachmentSendBlocked = useSyncExternalStore(
+    subscribeUploads,
+    () => hasUnfinishedComposerUploads(pendingFiles, getUploadStatus),
+    () => false,
+  );
   const [restoredAttachments, setRestoredAttachments] = useState<MsgAttachment[]>([]);
   const [activeAttachment, setActiveAttachment] = useState<{
     attachment: MsgAttachment;
@@ -7002,6 +7010,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     e?.preventDefault();
     const isOverride = textOverride !== undefined;
+    // Read the live task map: Enter/form submission can beat the next React render.
+    if (hasUnfinishedComposerUploads(attachmentsOverride ?? pendingFilesRef.current, getUploadStatus)) return;
     let text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     let goalMessage: string | null = null;
     const slashCommand = !isOverride ? matchSlashCommand(text) : null;
@@ -7055,7 +7065,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       goalMessage = goal;
       text = goal;
     }
-    const filesToSend = attachmentsOverride ?? pendingFiles;
+    const filesToSend = attachmentsOverride ?? pendingFilesRef.current;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
     const hasComposerContent =
@@ -7170,7 +7180,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     sendQueuedNow = false,
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
-    const filesToSend = attachmentsOverride ?? pendingFiles;
+    const filesToSend = attachmentsOverride ?? pendingFilesRef.current;
     const uploadOriginKey = activeChatIdRef.current || "__draft__";
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
@@ -9295,8 +9305,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <Button
             type={voiceRecording || (busy && !canSend) || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "button" : "submit"}
             size="icon"
-            disabled={voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? true : !canSend && !busy && !voiceRecording}
-            aria-label={voiceRecording ? "Stop recording" : voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "Transcribing voice input" : busy && !canSend ? "Stop agent" : busy ? "Queue message" : "Send"}
+            disabled={voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? true : !voiceRecording && (attachmentSendBlocked || (!canSend && !busy))}
+            aria-label={voiceRecording ? "Stop recording" : attachmentSendBlocked ? "Waiting for attachments" : voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "Transcribing voice input" : busy && !canSend ? "Stop agent" : busy ? "Queue message" : "Send"}
+            title={attachmentSendBlocked ? "Finish uploading or remove the unfinished attachment before sending" : undefined}
             className="size-11 shrink-0 self-end rounded-full sm:size-9"
             onClick={
               voiceRecording

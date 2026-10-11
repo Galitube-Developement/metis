@@ -21,6 +21,8 @@ function publish() { snapshot = [...tasks.values()].filter((task) => !task.dismi
 export const subscribeUploads = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getUploadSnapshot = () => snapshot;
 export const getServerUploadSnapshot = () => empty;
+// Completed tasks remain usable after their tray row has been dismissed.
+export const getUploadStatus = (id: string) => tasks.get(id)?.state.status;
 async function json(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
   const body = await response.json();
