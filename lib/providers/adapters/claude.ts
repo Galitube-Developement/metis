@@ -16,8 +16,7 @@ import {
   runtimeModeForChat,
   shouldAutoApprove,
 } from "@/lib/runtime-mode";
-import { classifyToolKind } from "@/lib/tool-call-display";
-import type { ToolPart } from "@/lib/store";
+import { claudeMessageContent, createClaudeToolEvents } from "@/lib/providers/claude-tool-events";
 import {
   asRecord,
   asString,
@@ -68,29 +67,10 @@ function claudeModelUsageMetadata(value: unknown) {
 }
 
 function extractClaudeText(message: Record<string, unknown>) {
-  const content = message.message;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => {
-      const item = asRecord(part);
-      return item.type === "text" ? asString(item.text) : "";
-    })
-    .filter(Boolean)
+  return claudeMessageContent(message)
+    .filter((part) => part.type === "text")
+    .map((part) => asString(part.text))
     .join("");
-}
-
-function claudeTool(message: Record<string, unknown>): ToolPart | null {
-  const content = message.message;
-  if (!Array.isArray(content)) return null;
-  const tool = content.map(asRecord).find((item) => item.type === "tool_use");
-  if (!tool) return null;
-  return {
-    id: asString(tool.id) || crypto.randomUUID(),
-    name: asString(tool.name) || "Claude tool",
-    status: "completed",
-    kind: classifyToolKind(asString(tool.name) || "Claude tool"),
-    ...(tool.input ? { input: JSON.stringify(tool.input) } : {}),
-  };
 }
 
 function claudeMcpServers(servers: ReturnType<typeof getMcpServers>) {
@@ -331,6 +311,7 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
   };
   let sessionId: string | undefined;
   let receivedText = false;
+  const onClaudeToolMessage = createClaudeToolEvents(context.onTool);
   let usage: ProviderResult["usage"] | undefined;
   const conversation = query({
     prompt: previousId
@@ -341,6 +322,7 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
   try {
     for await (const message of conversation) {
       const record = asRecord(message);
+      onClaudeToolMessage(record);
       sessionId ||= asString(record.session_id);
       if (sessionId) updateProviderSessionBinding({ chatId: context.chat.id, ownerId: context.job.userId,
         execution: "claude-agent", connectionId: context.connection.id, contextOwner: "native",
@@ -372,8 +354,6 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
           const text = extractClaudeText(record);
           if (text) context.onText(text);
         }
-        const tool = claudeTool(record);
-        if (tool) context.onTool(tool);
       } else if (record.type === "result") {
         const result = asString(record.result);
         if (!receivedText && result) context.onText(result);
