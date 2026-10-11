@@ -139,6 +139,9 @@ import { UpdateStatusProbe } from "@/components/update-channel-nav";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
 import {
   INSTALLER_MAINTENANCE_EVENT,
+  pollInstallerJob,
+  reloadCompletedInstallerJob,
+  UPDATE_JOB_STORAGE_KEY,
   type InstallerMaintenanceDetail,
 } from "@/lib/update-job-client";
 import type { MemoryItem } from "@/components/memories-panel";
@@ -9777,7 +9780,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
        void fetch("/api/system/maintenance", { cache: "no-store" })
          .then(async (response) => {
            const body = (await response.json().catch(() => ({}))) as { active?: boolean; reason?: string; logs?: string[] };
-           if (active && response.ok) setMaintenanceState(body);
+           if (!active || !response.ok) return;
+           setMaintenanceState(body);
+           // Update controls are unmounted while maintenance is shown. Keep
+           // checking the saved job here so completion can reload the new UI.
+           if (body.active === false) {
+             const jobId = window.localStorage.getItem(UPDATE_JOB_STORAGE_KEY);
+             if (jobId) {
+               const job = await pollInstallerJob(jobId);
+               if (active) reloadCompletedInstallerJob(jobId, job);
+             }
+           }
          })
          .catch(() => undefined);
      };

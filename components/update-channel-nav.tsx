@@ -10,6 +10,8 @@ import {
   activateInstallerMaintenanceScreen,
   installerJobFinishedMessage,
   pollInstallerJob,
+  reloadCompletedInstallerJob,
+  UPDATE_JOB_STORAGE_KEY,
 } from "@/lib/update-job-client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -24,7 +26,6 @@ type UpdateState = {
 };
 
 const STORAGE_KEY = "metis-update-channel";
-const UPDATE_JOB_STORAGE_KEY = "metis-update-job";
 
 export function UpdateChannelNav({ isHostAdmin }: { isHostAdmin: boolean }) {
   const [channel, setChannel] = useState<UpdateChannel>("releases");
@@ -242,6 +243,7 @@ export function UpdateSettingsPanel({
           return;
         }
         if (job.status === "ready") {
+          if (reloadCompletedInstallerJob(jobId, job)) return;
           window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
           setPreparing(false);
           setJobId(null);

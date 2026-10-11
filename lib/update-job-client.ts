@@ -10,6 +10,8 @@ export type InstallerMaintenanceDetail = {
   logs: string[];
 };
 
+export const UPDATE_JOB_STORAGE_KEY = "metis-update-job";
+
 export const INSTALLER_MAINTENANCE_EVENT = "metis:installer-maintenance";
 
 export function activateInstallerMaintenanceScreen(reason: string) {
@@ -48,4 +50,14 @@ export async function pollInstallerJob(jobId: string): Promise<InstallerJobPoll>
   if (job.status === "ready") return { status: "ready", tag: job.result?.tag };
   if (job.status === "failed") return { status: "failed", error: job.error || "Update preparation failed without a server detail." };
   return { status: "preparing" };
+}
+
+// The maintenance screen and update controls can finish polling together.
+// Consume the pending job before navigating so only one of them reloads.
+export function reloadCompletedInstallerJob(jobId: string, job: InstallerJobPoll): boolean {
+  if (typeof window === "undefined" || job.status !== "ready") return false;
+  if (window.localStorage.getItem(UPDATE_JOB_STORAGE_KEY) !== jobId) return false;
+  window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
+  window.location.reload();
+  return true;
 }
