@@ -306,21 +306,24 @@ test("Claude root compatibility changes only Full access, without changing the c
 
 // Execute the adapter's actual options expression so this checks the SDK boundary,
 // including flag omission and callback behavior, without launching a paid model turn.
-function claudeAdapterOptions(mode: (typeof RUNTIME_MODES)[number], uid: number | undefined) {
+function claudeAdapterOptions(mode: (typeof RUNTIME_MODES)[number], uid: number | undefined, gatewayName = "gateway") {
   const file = ts.createSourceFile("claude.ts", readFileSync(new URL("../lib/providers/adapters/claude.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   let expression: ts.Expression | undefined;
   let policy: ts.VariableDeclaration | undefined;
+  let servers: ts.VariableDeclaration | undefined;
   function find(node: ts.Node) {
     if (ts.isVariableDeclaration(node)) {
       if (node.name.getText(file) === "options") expression = node.initializer;
       if (node.name.getText(file) === "claudePermissions") policy = node;
+      if (node.name.getText(file) === "mcpServers") servers = node;
     }
     ts.forEachChild(node, find);
   }
   find(file);
   assert.ok(expression);
   assert.ok(policy);
-  const js = ts.transpileModule(`const ${policy.getText(file)}; const options = ${expression.getText(file)}; options;`, {
+  assert.ok(servers);
+  const js = ts.transpileModule(`const ${policy.getText(file)}; const ${servers.getText(file)}; const options = ${expression.getText(file)}; options;`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
   let approvals = 0;
@@ -329,7 +332,7 @@ function claudeAdapterOptions(mode: (typeof RUNTIME_MODES)[number], uid: number 
     claudePermissionPolicy, runtimeMode: mode, process: { geteuid: () => uid, getuid: () => uid }, abortController: new AbortController(),
     context: { modelId: "test-model", job: { userId: "test-owner" }, chat: { approvedPatterns: [] }, connection: { secret: "" } },
     resolveClaudeAgentModelId: () => "test-model", inheritedEnv: () => ({}), claudeOAuthEnv: () => ({}),
-    claudeMcpServers: (servers: unknown) => servers, getMcpServers: () => ({ metis_ai: {} }),
+    claudeMcpServers: (servers: unknown) => servers, getMcpServers: () => ({ [gatewayName]: {} }),
     providerMcpContext: () => ({}), providerPrompt: () => "test-system-prompt",
     shouldAutoApprove, claudePermissionResult: (behavior: string) => ({ behavior }),
     waitForClaudeApproval: async () => { approvals++; return "deny"; },
@@ -340,7 +343,7 @@ function claudeAdapterOptions(mode: (typeof RUNTIME_MODES)[number], uid: number 
   return { options, approvals: () => approvals };
 }
 
-test("the root Claude adapter omits bypass flags and lets only Metis MCP skip SDK approval", async () => {
+test("the root Claude adapter omits bypass flags and preserves Full access without SDK approvals", async () => {
   const f = claudeAdapterOptions("full-access", 0);
   assert.equal(f.options.permissionMode, "default");
   assert.equal(Object.hasOwn(f.options, "allowDangerouslySkipPermissions"), false);
@@ -348,10 +351,11 @@ test("the root Claude adapter omits bypass flags and lets only Metis MCP skip SD
   assert.equal(f.options.strictMcpConfig, true);
   assert.ok(f.options.canUseTool);
   const permissionOptions = { signal: new AbortController().signal };
-  assert.equal((await f.options.canUseTool("mcp__metis_ai__execute_command", {}, permissionOptions)).behavior, "allow");
+  assert.equal((await f.options.canUseTool("mcp__gateway__list_mcp_servers", { include_disabled: true }, permissionOptions)).behavior, "allow");
+  assert.equal((await f.options.canUseTool("mcp__gateway__execute_command", {}, permissionOptions)).behavior, "allow");
   assert.equal(f.approvals(), 0, "The Metis gateway owns its own tool approvals");
-  assert.equal((await f.options.canUseTool("mcp__third_party__execute_command", {}, permissionOptions)).behavior, "deny");
-  assert.equal(f.approvals(), 1, "Other MCP servers still require SDK approval");
+  assert.equal((await f.options.canUseTool("mcp__third_party__execute_command", {}, permissionOptions)).behavior, "allow");
+  assert.equal(f.approvals(), 0, "Full access matches the existing SDK bypass behavior");
 });
 
 test("non-root and Windows Claude Full access keep the existing SDK bypass behavior", () => {
@@ -361,5 +365,26 @@ test("non-root and Windows Claude Full access keep the existing SDK bypass behav
     assert.equal(options.allowDangerouslySkipPermissions, true);
     assert.equal(options.canUseTool, undefined);
     assert.equal(options.tools.length, 0);
+  }
+});
+
+
+test("restricted Claude modes delegate configured Metis gateway names without approving unrelated MCPs", async () => {
+  for (const mode of ["approval-required", "auto-accept-edits", "auto"] as const) {
+    for (const uid of [0, 1000]) {
+      for (const gatewayName of ["gateway", "renamed_gateway"]) {
+        const f = claudeAdapterOptions(mode, uid, gatewayName);
+        assert.ok(f.options.canUseTool);
+        const permissionOptions = { signal: new AbortController().signal };
+        for (const tool of ["list_mcp_servers", "execute_command"]) {
+          assert.equal((await f.options.canUseTool(`mcp__${gatewayName}__${tool}`, {}, permissionOptions)).behavior, "allow");
+        }
+        assert.equal(f.approvals(), 0, "SDK approval must not duplicate the Metis gateway gate");
+        for (const name of ["mcp__third_party__execute_command", `mcp__${gatewayName}_spoof__execute_command`]) {
+          assert.equal((await f.options.canUseTool(name, {}, permissionOptions)).behavior, "deny");
+        }
+        assert.equal(f.approvals(), 2);
+      }
+    }
   }
 });
