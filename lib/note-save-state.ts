@@ -78,6 +78,32 @@ export function mergeTodoDraft(base: SharedNote, draft: NoteDraft, remote: Share
   return draft.todos === undefined ? draft : { ...draft, todos: mergeTodos(base.todos, draft.todos, remote.todos) };
 }
 
+/** Only replay actual local changes; stale no-op fields must not overwrite remote edits. */
+export function rebaseNoteDraft(base: SharedNote, draft: NoteDraft, remote: SharedNote): NoteDraft {
+  const next = { ...draft };
+  for (const field of NOTE_FIELDS) {
+    if (next[field] === undefined) continue;
+    const baseValue = field === "projectId" ? base[field] ?? null : base[field];
+    const localValue = field === "projectId" ? next[field] ?? null : next[field];
+    const remoteValue = field === "projectId" ? remote[field] ?? null : remote[field];
+    if (equalNoteValue(localValue, baseValue) || equalNoteValue(localValue, remoteValue)) delete next[field];
+  }
+  return mergeTodoDraft(base, next, remote);
+}
+
+export function flushScheduledNoteSaves(
+  timers: Map<string, number>,
+  cancel: (timer: number) => void,
+  save: (id: string) => void,
+): void {
+  const pending = [...timers];
+  timers.clear();
+  for (const [id, timer] of pending) {
+    cancel(timer);
+    save(id);
+  }
+}
+
 export function clearSavedNoteDraft(draft: NoteDraft, patch: NoteDraft): NoteDraft {
   const next = { ...draft };
   for (const field of Object.keys(patch) as Array<keyof NoteDraft>) {
@@ -131,8 +157,9 @@ export async function commitNoteDraft(
     if (response.status === 409 && response.note) {
       const conflicts = noteConflictFields(confirmed, patch, response.note);
       if (conflicts.length) return { note: response.note, originalPatch, conflicts };
-      patch = mergeTodoDraft(confirmed, patch, response.note);
+      patch = rebaseNoteDraft(confirmed, patch, response.note);
       confirmed = response.note;
+      if (!Object.keys(patch).length) return { note: confirmed, originalPatch, conflicts: [] };
       continue;
     }
     if (response.status < 200 || response.status >= 300 || !response.note) throw new Error(response.error || "Could not save note.");

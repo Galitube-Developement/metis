@@ -1,6 +1,10 @@
 "use client";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 
+import { useAccountNotifications } from "@/hooks/use-account-notifications";
+import { flushNoteEditors } from "@/lib/note-editor-lifecycle";
+import { composerMentionQuery, replaceComposerMention, composerReferenceKeyAction, composerIsComposing } from "@/lib/composer-references";
+import { workspaceFileHref, parseWorkspaceFileLink, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
 import { QuestionForm } from "@/components/question-form";
 import { normalizeStoredQuestions, initialQuestionAnswers, restoreQuestionDraft, type PendingChatQuestion as PendingQuestion, type QuestionAnswers } from "@/lib/question-contract";
 
@@ -137,6 +141,7 @@ import {
   type InstallerMaintenanceDetail,
 } from "@/lib/update-job-client";
 import type { MemoryItem } from "@/components/memories-panel";
+import { WorkspaceMemoryPanel } from "@/components/workspace-memory-panel";
 import type { ChatLogEntry, ChatLogCategory } from "@/lib/chat-logs";
 import { ApprovalPanel, type ApprovalDecisionValue, type PendingApprovalView } from "@/components/approval-panel";
 import { ProviderLogo } from "@/components/provider-logo";
@@ -183,7 +188,7 @@ import {
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
 import { removeQueuedFollowUp } from "@/lib/queue-client";
-import { hiddenTranscriptMessageCount, pinScrollTop, shouldPinOpenedChat, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
+import { hiddenTranscriptMessageCount, anchoredTranscriptScrollTop, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
 import {
@@ -687,7 +692,7 @@ type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team" | "memory";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
@@ -726,7 +731,8 @@ function normalizeWorkspaceTab(value: unknown): NonNullable<ChatSessionState["wo
     value === "files" ||
     value === "browser" ||
     value === "monitor" ||
-    value === "team"
+    value === "team" ||
+    value === "memory"
     ? value
     : value === "canvas"
       ? "canvas"
@@ -1707,6 +1713,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [messageOffset, setMessageOffset] = useState(0);
   const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
   const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
+  const [earlierMessagesError, setEarlierMessagesError] = useState(false);
+  const earlierMessagesRequestRef = useRef<AbortController | null>(null);
+  const earlierMessagesSentinelRef = useRef<HTMLDivElement>(null);
+  const earlierMessagesAnchorRef = useRef<{ node: HTMLElement; top: number; root: HTMLDivElement } | null>(null);
+
+  useEffect(() => {
+    earlierMessagesRequestRef.current?.abort();
+    earlierMessagesRequestRef.current = null;
+    setLoadingEarlierMessages(false);
+    setEarlierMessagesError(false);
+    earlierMessagesAnchorRef.current = null;
+    return () => { earlierMessagesRequestRef.current?.abort(); };
+  }, [activeChatId]);
   const [chatTitle, setChatTitle] = useState("New chat");
   const [greeting, setGreeting] = useState("Good afternoon");
 
@@ -1767,7 +1786,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceMounted, setWorkspaceMounted] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<"canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team">("canvas");
+  const [workspaceTab, setWorkspaceTab] = useState<NonNullable<ChatSessionState["workspaceTab"]>>("canvas");
   const [notesOpen, setNotesOpen] = useState(false);
   const suppressNotesRouteRef = useRef(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
@@ -1802,6 +1821,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const sidebarRevealPinnedRef = useRef(false);
   const [remoteTerminalCwd, setRemoteTerminalCwd] = useState(workspaceDefaultCwd);
   const [remoteFileCwd, setRemoteFileCwd] = useState(workspaceDefaultCwd);
+  const [workspaceFileRequest, setWorkspaceFileRequest] = useState<WorkspaceFileRequest | null>(null);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [activeTerminalTabId, setActiveTerminalTabId] = useState<string | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
@@ -1957,7 +1977,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const slashResults = slashQuery === null ? [] : BUILT_IN_SLASH_COMMANDS.filter((command) => command.id.startsWith(slashQuery));
-  const referenceAutocompleteDismissedRef = useRef(false);
+  const referenceAutocompleteDismissedRef = useRef<number | null>(null);
   const previousComposerInputRef = useRef("");
   const inputCommitTimerRef = useRef<number>(0);
   const [referenceText, setReferenceText] = useState("");
@@ -3457,32 +3477,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setRemoteTerminalCwd(nextTabs.find((tab) => tab.id === (nextActiveId || nextTabs[0].id))?.cwd || workspaceDefaultCwd);
   }
 
-  function notifyUser(
-    title: string,
-    body: string,
-    chatId = activeChatIdRef.current,
-  ) {
-    if (
-      !notificationsEnabled ||
-      typeof window === "undefined" ||
-      !("Notification" in window) ||
-      Notification.permission !== "granted"
-    ) {
-      return;
+  useAccountNotifications(Boolean(authed), (record, prefs) => {
+    const open = () => {
+      window.focus();
+      if (record.chatId) void loadChat(record.chatId);
+    };
+    if (prefs.toastEnabled) {
+      toast.info(record.title, { id: record.id, description: record.body, action: record.chatId ? { label: "Open chat", onClick: open } : undefined });
     }
-    try {
-      const notification = new Notification(title, {
-        body,
-        tag: `ai-chat-${chatId ?? "agent"}`,
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-    } catch {
-      // Browser notification construction can fail in restricted contexts.
+    if (prefs.browserEnabled && "Notification" in window && Notification.permission === "granted") {
+      try {
+        const notification = new Notification(record.title, { body: record.body, tag: record.id });
+        notification.onclick = () => { notification.close(); open(); };
+      } catch { /* Native alerts can be unavailable in embedded browsers. */ }
     }
-  }
+  }, prefs => { setNotificationsEnabled(prefs.browserEnabled); });
 
   function playFinishSound() {
     if (!soundCuesEnabled || typeof window === "undefined") return;
@@ -3500,18 +3509,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
     if (attentionNotifiedRef.current.has(notificationKey)) return;
     attentionNotifiedRef.current.add(notificationKey);
-    const isCurrentChat = activeChatIdRef.current === chatId;
-    toast.info("Attention required", {
-      description: body,
-      action: {
-        label: isCurrentChat ? "Scroll down" : "Open chat",
-        onClick: () => {
-          if (isCurrentChat) scrollMessagesToBottom();
-          else navigateChat(chatId);
-        },
-      },
-    });
-    notifyUser("Agent needs your input", body, chatId);
+
   }
   notifyAttentionRef.current = notifyAttention;
 
@@ -4111,6 +4109,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           snap.runStatus === "running" ||
           snap.runStatus === "waiting_for_user" ||
           snap.runStatus === "waiting_input" ||
+          (snap.runStatus === "paused" && Boolean(snap.queueMessage)) ||
           snap.pendingQuestion,
       ),
     );
@@ -4279,6 +4278,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   const loadChat = useCallback(
     async (id: string, opts?: { skipNav?: boolean; forceReload?: boolean }) => {
+      setActiveSubagent(null);
       if (!opts?.skipNav) setAccountView(null);
       if (window.matchMedia("(max-width: 767px), (pointer: coarse)").matches) {
         textareaRef.current?.blur();
@@ -4518,6 +4518,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             setBusySynced(
               next.runStatus === "running" ||
                 next.runStatus === "waiting_input" ||
+                (next.runStatus === "paused" && Boolean(next.queueMessage)) ||
                 next.runStatus === "waiting_for_user" ||
                 Boolean(next.pendingQuestion || next.pendingApproval),
             );
@@ -4595,32 +4596,74 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const loadEarlierMessages = useCallback(async () => {
     const id = activeChatIdRef.current;
     const el = messagesScrollRef.current;
-    if (!id || !el || !hasEarlierMessages || loadingEarlierMessages) return;
+    if (!id || !el || !hasEarlierMessages || earlierMessagesRequestRef.current) return;
     if (enteringChatRef.current) return;
-    const previousHeight = el.scrollHeight;
+    const controller = new AbortController();
+    earlierMessagesRequestRef.current = controller;
     setLoadingEarlierMessages(true);
+    setEarlierMessagesError(false);
     try {
       const nextOffset = messageOffset + CHAT_MESSAGE_LOAD_LIMIT;
       const res = await fetchReadWithRetry(
         `/api/chats/${id}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=${nextOffset}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
-      if (!res.ok) return;
+      if (!res.ok) throw new Error("Could not load older messages");
       const data = (await res.json()) as ChatPage;
+      if (controller.signal.aborted || activeChatIdRef.current !== id) return;
       const olderMessages = mapApiMessages(data.chat.messages);
-        setMessages((current) => prependMessages(current, olderMessages));
+      // Measure when the response arrives: the user may scroll while it loads.
+      const previousHeight = el.scrollHeight;
+      const previousTop = el.scrollTop;
+      const viewportTop = el.getBoundingClientRect().top;
+      const anchor = Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]"))
+        .find((node) => node.getBoundingClientRect().bottom > viewportTop);
+      const anchorTop = anchor?.getBoundingClientRect().top;
+      earlierMessagesAnchorRef.current = anchor && anchorTop !== undefined ? { node: anchor, top: anchorTop, root: el } : null;
+      setMessages((current) => prependMessages(current, olderMessages));
       setMessageOffset(data.messageOffset ?? nextOffset);
       setHasEarlierMessages(Boolean(data.hasEarlierMessages));
-      window.requestAnimationFrame(() => {
-        const currentEl = messagesScrollRef.current;
-        if (currentEl) currentEl.scrollTop += currentEl.scrollHeight - previousHeight;
-      });
+      const restoreReadingPosition = (remainingFrames: number) => {
+        if (controller.signal.aborted || activeChatIdRef.current !== id || messagesScrollRef.current !== el) return;
+        // Offscreen rows use content-visibility and estimated heights. Track a
+        // visible row across the prepend, then settle the next layout frames.
+        el.scrollTop = anchor?.isConnected && anchorTop !== undefined
+          ? anchoredTranscriptScrollTop(el.scrollTop, anchor.getBoundingClientRect().top, anchorTop)
+          : previousTop + el.scrollHeight - previousHeight;
+        lastMessageScrollTopRef.current = el.scrollTop;
+        if (remainingFrames > 0 && anchor?.isConnected) window.requestAnimationFrame(() => restoreReadingPosition(remainingFrames - 1));
+      };
+      window.requestAnimationFrame(() => restoreReadingPosition(2));
+    } catch {
+      if (!controller.signal.aborted && activeChatIdRef.current === id) setEarlierMessagesError(true);
     } finally {
-      setLoadingEarlierMessages(false);
+      if (earlierMessagesRequestRef.current === controller) {
+        earlierMessagesRequestRef.current = null;
+        setLoadingEarlierMessages(false);
+      }
     }
-  }, [hasEarlierMessages, loadingEarlierMessages, messageOffset]);
+  }, [hasEarlierMessages, messageOffset]);
   const loadEarlierMessagesRef = useRef(loadEarlierMessages);
   loadEarlierMessagesRef.current = loadEarlierMessages;
+
+  // Observe the actual top of the transcript, including scrolls whose pinning
+  // action is "ignore" and the first message render after an empty chat.
+  useEffect(() => {
+    const root = messagesScrollRef.current;
+    const sentinel = earlierMessagesSentinelRef.current;
+    if (!root || !sentinel || earlierMessagesError) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting && shouldLoadEarlierMessages({
+        scrollTop: root.scrollTop,
+        hasEarlierMessages,
+        loading: Boolean(earlierMessagesRequestRef.current),
+        enteringChat: enteringChatRef.current,
+        userDetached: userDetachedFromBottomRef.current,
+      })) void loadEarlierMessagesRef.current();
+    }, { root, threshold: 0 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [accountView, activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
 
   useEffect(() => {
     if (loadingChatId || !activeChatId || !hasEarlierMessages || messages.length >= CHAT_MESSAGE_PRELOAD_MAX) return;
@@ -5148,7 +5191,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         return;
       }
-      if (reference.kind === "memory") setSettingsOpen(true);
+      if (reference.kind === "memory") {
+        setWorkspaceTab("memory");
+        setWorkspaceOpen(true);
+      }
     };
     const openLinkedWorkspace = async (event: Event) => {
       const detail = (event as CustomEvent<{ type?: string; id?: string }>).detail;
@@ -5173,6 +5219,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (!workspace) return;
       setActiveWorkspaceId(workspace.id);
       setWorkspaceTab(detail.type);
+      setWorkspaceOpen(true);
+    };
+    const openLinkedFile = (event: Event) => {
+      const detail = (event as CustomEvent<WorkspaceFileRequest>).detail;
+      if (!detail || typeof detail.path !== "string") return;
+      const location = parseWorkspaceFileLink(workspaceFileHref(detail));
+      if (!location) return;
+      setWorkspaceFileRequest((previous) => ({ ...location, id: (previous?.id || 0) + 1 }));
+      setWorkspaceTab("files");
       setWorkspaceOpen(true);
     };
     const openLinkedNote = (event: Event) => {
@@ -5205,12 +5260,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     window.addEventListener("ai-chat:open-browser", openLinkedUrl);
     window.addEventListener("ai-chat:open-reference", openLinkedReference);
     window.addEventListener("ai-chat:open-workspace", openLinkedWorkspace);
+    window.addEventListener("ai-chat:open-file", openLinkedFile);
     window.addEventListener("ai-chat:open-note", openLinkedNote);
     window.addEventListener("ai-chat:open-automations", openLinkedAutomation);
     return () => {
       window.removeEventListener("ai-chat:open-browser", openLinkedUrl);
       window.removeEventListener("ai-chat:open-reference", openLinkedReference);
       window.removeEventListener("ai-chat:open-workspace", openLinkedWorkspace);
+      window.removeEventListener("ai-chat:open-file", openLinkedFile);
       window.removeEventListener("ai-chat:open-note", openLinkedNote);
       window.removeEventListener("ai-chat:open-automations", openLinkedAutomation);
     };
@@ -5536,6 +5593,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
     };
     const markUserScrollInput = () => {
+      earlierMessagesAnchorRef.current = null;
       userScrollInputRef.current = true;
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
       userScrollInputTimerRef.current = window.setTimeout(() => {
@@ -5543,6 +5601,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }, 180);
     };
     const pinIfStuckToBottom = () => {
+      const anchor = earlierMessagesAnchorRef.current;
+      if (anchor?.root === el && anchor.node.isConnected && userDetachedFromBottomRef.current) {
+        const nextTop = anchoredTranscriptScrollTop(el.scrollTop, anchor.node.getBoundingClientRect().top, anchor.top);
+        if (Math.abs(nextTop - el.scrollTop) > 0.5) el.scrollTop = nextTop;
+        lastMessageScrollTopRef.current = el.scrollTop;
+        return;
+      }
       if (!shouldPinOpenedChat({
         enteringChat: enteringChatRef.current,
         userDetached: userDetachedFromBottomRef.current,
@@ -5612,6 +5677,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (isProgrammaticScroll()) {
         return;
       }
+      if (el.scrollTop < 80 && userDetachedFromBottomRef.current) void loadEarlierMessagesRef.current();
       if (action === "attach") {
         attachToBottom();
       }
@@ -5620,6 +5686,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       markUserScrollInput();
       if (event.deltaY >= 0) return;
       detachFromBottom();
+      if (el.scrollTop < 80) void loadEarlierMessagesRef.current();
     };
     let lastTouchY: number | null = null;
     const markPointerAsUserScroll = () => {
@@ -5636,6 +5703,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (y > lastTouchY + 2) detachFromBottom();
       lastTouchY = y;
     };
+    const onScrollKey = (event: globalThis.KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markUserScrollInput();
+    };
+    el.addEventListener("keydown", onScrollKey);
     el.addEventListener("scroll", updateScrollState, { passive: true });
     el.addEventListener("wheel", suspendAutoScrollOnWheel, { passive: true });
     el.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -5647,6 +5718,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     observer.observe(el);
     const frame = window.requestAnimationFrame(pinIfStuckToBottom);
     return () => {
+      el.removeEventListener("keydown", onScrollKey);
       el.removeEventListener("scroll", updateScrollState);
       el.removeEventListener("wheel", suspendAutoScrollOnWheel);
       el.removeEventListener("touchstart", onTouchStart);
@@ -5657,7 +5729,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (pinFrame) window.cancelAnimationFrame(pinFrame);
       if (userScrollInputTimerRef.current) window.clearTimeout(userScrollInputTimerRef.current);
     };
-  }, [paneKey, loadingChatId]);
+  }, [accountView, activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId]);
 
   useLayoutEffect(() => {
     const el = messagesScrollRef.current;
@@ -5792,6 +5864,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function logout() {
+    if (!(await flushNoteEditors())) {
+      toast.error("Save or resolve your note drafts before signing out.");
+      return;
+    }
     await fetch("/api/auth", { method: "DELETE" });
     authedRef.current = false;
     setAuthed(false);
@@ -7698,7 +7774,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               toast.success("Plan ready", {
                 description: `${workspace.name}: ${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}`,
               });
-              notifyUser("Plan ready", `${workspace.name} is ready to review.`, chatId);
             }
           } else if (event === "canvas" && typeof payload.canvas === "string") {
             if (activeChatIdRef.current !== chatId) continue;
@@ -7752,9 +7827,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             if (activeChatIdRef.current === chatId) setAgentId(payload.agentId);
           } else if (event === "status") {
             const rawStatus = typeof payload.status === "string" ? payload.status : "";
-            const statusLabel = String(rawStatus ?? "").toLowerCase() === "running"
-              ? "Agent running"
-              : rawStatus;
+            const statusLabel = rawStatus === "waiting_provider_limit" ? "Waiting for provider reset"
+              : rawStatus.toLowerCase() === "running" ? "Agent running" : rawStatus;
             const label = [statusLabel, typeof payload.message === "string" ? payload.message : ""]
               .filter(Boolean)
               .join(" · ");
@@ -7767,7 +7841,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             const errMsg = payload.message;
             setAttentionChatIds((current) => current.includes(chatId) ? current : [...current, chatId]);
             setChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, badge: "red" } : chat));
-            notifyUser("Agent error", errMsg, chatId);
             setMessages((m) =>
               m.map((x) => {
                 if (x.id !== asstId) return x;
@@ -7796,7 +7869,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             } else if (activeChatIdRef.current === chatId) {
               clearUnread(chatId);
             }
-            notifyUser("Agent finished", "Your response is ready.");
             if (activeChatIdRef.current === chatId) {
               pendingQuestionIdRef.current = null;
               setPendingQuestion(null);
@@ -8180,6 +8252,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         commitComposerParentState(draftInputRef.current);
       }, COMPOSER_STATE_COMMIT_MS);
     }
+    updateComposerReferenceMenu(value, cursorPosition, cursorPosition);
+  }
+
+  function updateComposerReferenceMenu(value: string, cursorPosition: number, selectionEnd = cursorPosition) {
     const nextSlashQuery = slashCommandQuery(value, cursorPosition);
     if (nextSlashQuery !== slashQuery) {
       setSlashQuery(nextSlashQuery);
@@ -8189,28 +8265,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (referenceMenu) setReferenceMenu(null);
       return;
     }
-    if (referenceAutocompleteDismissedRef.current) {
-      const addedAtMention =
-        (value.match(/@/g) || []).length > (previousValue.match(/@/g) || []).length ||
-        (value.endsWith("@") && !previousValue.endsWith("@"));
-      if (!addedAtMention) {
-        if (referenceMenu) setReferenceMenu(null);
-        return;
-      }
-      referenceAutocompleteDismissedRef.current = false;
-    }
-    const beforeCursor = value.slice(0, cursorPosition);
-    const match = beforeCursor.match(/(?:^|\s)@([^\n]*)$/);
-    if (!match) {
+    const mention = composerMentionQuery(value, cursorPosition, selectionEnd, references.map(reference => reference.label));
+    if (!mention || referenceAutocompleteDismissedRef.current === mention.start) {
       if (referenceMenu) setReferenceMenu(null);
       return;
     }
-    const start = beforeCursor.length - match[0].length + (match[0].startsWith("@") ? 0 : 1);
+    referenceAutocompleteDismissedRef.current = null;
+    const sameToken = referenceMenu?.start === mention.start;
     const nextMenu = {
-      query: match[1],
-      kind: null as ReferenceKind | null,
-      start,
-      end: cursorPosition,
+      ...mention,
+      kind: sameToken ? referenceMenu.kind : null as ReferenceKind | null,
     };
     if (
       !referenceMenu
@@ -8242,53 +8306,36 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   async function selectReference(reference: ReferenceItem) {
     if (!referenceMenu) return;
-    let resolvedReference = reference;
-    if (reference.kind === "terminal" && reference.sessionId && !reference.content) {
-      try {
-        const response = await fetch(
-          `/api/remote?sessionId=${encodeURIComponent(reference.sessionId)}&cursor=0`,
-          { cache: "no-store" },
-        );
-        if (response.ok) {
-          const data = (await response.json()) as {
-            chunks?: Array<{ data?: string }>;
-          };
-          resolvedReference = {
-            ...reference,
-            content: (data.chunks || [])
-              .map((chunk) => chunk.data || "")
-              .join("")
-              .slice(-30_000),
-          };
-        }
-      } catch {
-        // Keep the terminal reference usable even if its live output is unavailable.
-      }
-    }
-    setReferences((current) => (
-      current.some((item) => item.kind === resolvedReference.kind && item.id === resolvedReference.id)
-        ? current
-        : [...current, resolvedReference]
-    ));
-    const start = referenceMenu.start;
-    const end = referenceMenu.end;
-    const completedTag = `@${resolvedReference.label}`;
-    let caretPosition = start + completedTag.length;
-    setInput((current) => {
-      const next = `${current.slice(0, start)}${completedTag}${current.slice(end)}`;
-      caretPosition = start + completedTag.length;
-      return next;
-    });
-    setComposerSyncNonce((current) => current + 1);
-    referenceAutocompleteDismissedRef.current = false;
+    const chatId = activeChatIdRef.current;
+    const live = textareaRef.current?.value ?? draftInputRef.current;
+    const replacement = replaceComposerMention(live, referenceMenu, reference.label);
+    if (!replacement) return;
+    // Select immediately; a slow terminal snapshot cannot overwrite new typing.
+    setReferences(current => current.some(item => item.kind === reference.kind && item.id === reference.id)
+      ? current : [...current, reference]);
+    draftInputRef.current = replacement.value;
+    stateRef.current.input = replacement.value;
+    setInput(replacement.value);
+    setComposerSyncNonce(current => current + 1);
+    referenceAutocompleteDismissedRef.current = null;
     setReferenceMenu(null);
     window.requestAnimationFrame(() => {
       const element = textareaRef.current;
-      if (!element) return;
+      if (!element || activeChatIdRef.current !== chatId) return;
       element.focus();
-      const cursor = Math.max(0, Math.min(caretPosition, element.value.length));
+      const cursor = Math.min(replacement.cursor, element.value.length);
       element.setSelectionRange(cursor, cursor);
     });
+    if (reference.kind === "terminal" && reference.sessionId && !reference.content) {
+      try {
+        const response = await fetch(`/api/remote?sessionId=${encodeURIComponent(reference.sessionId)}&cursor=0`, { cache: "no-store" });
+        if (!response.ok || activeChatIdRef.current !== chatId) return;
+        const data = await response.json() as { chunks?: Array<{ data?: string }> };
+        if (activeChatIdRef.current !== chatId) return;
+        const content = (data.chunks || []).map(chunk => chunk.data || "").join("").slice(-30_000);
+        setReferences(current => current.map(item => item.kind === reference.kind && item.id === reference.id ? { ...item, content } : item));
+      } catch { /* Keep the selected terminal usable without a live snapshot. */ }
+    }
   }
 
   function removeReference(reference: ReferenceItem) {
@@ -8824,18 +8871,22 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </div>
         ) : null}
         {referenceMenu ? (
-          <div className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
+          <div id="composer-reference-list" role="listbox" aria-label="Context references" className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
             {!referenceMenu.kind && !referenceMenu.query ? (
               <div className="flex flex-col gap-0.5">
-                {(["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as ReferenceKind[]).map((kind) => (
+                {(["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as ReferenceKind[]).map((kind, index) => (
                   <button
                     key={kind}
+                    id={`composer-reference-option-${index}`}
+                    role="option"
+                    aria-selected={referenceIndex === index}
+                    onMouseEnter={() => setReferenceIndex(index)}
                     type="button"
                     aria-label={referenceLabel(kind)}
                     title={referenceLabel(kind)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground", referenceIndex === index && "bg-muted text-foreground")}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setReferenceMenu((current) => current ? { ...current, kind } : current)}
+                    onClick={() => { setReferenceIndex(0); setReferenceMenu((current) => current ? { ...current, kind } : current); }}
                   >
                     {(() => {
                       const Icon = referenceIcon(kind);
@@ -8871,6 +8922,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         index === referenceIndex ? "bg-muted" : "hover:bg-muted/60",
                       )}
                       onMouseDown={(event) => event.preventDefault()}
+                      id={`composer-reference-option-${index}`}
+                      role="option"
+                      aria-selected={referenceIndex === index}
                       onMouseEnter={() => setReferenceIndex(index)}
                       onClick={() => selectReference(reference)}
                     >
@@ -8991,7 +9045,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   setInput(next);
                   setComposerSyncNonce((value) => value + 1);
                   setReferenceMenu({ query: "", kind: null, start: prefix.length, end: next.length });
-                  referenceAutocompleteDismissedRef.current = false;
+                  referenceAutocompleteDismissedRef.current = null;
                   window.requestAnimationFrame(() => textareaRef.current?.focus());
                 }}>
                   <AtSign className="size-4" />
@@ -9007,6 +9061,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             syncNonce={composerSyncNonce}
             mentionLabels={references.map((reference) => reference.label)}
             onChange={handleComposerInputChange}
+            onSelectionChange={(value, start, end) => updateComposerReferenceMenu(value, start, end)}
+            aria-controls="composer-reference-list"
+            aria-expanded={Boolean(referenceMenu)}
+            aria-activedescendant={referenceMenu ? `composer-reference-option-${referenceIndex}` : undefined}
             onPaste={onComposerPaste}
             onFocus={() => {
               const viewport = window.visualViewport;
@@ -9050,28 +9108,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               setSlashQuery(null);
               return;
             }
-            if (referenceMenu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-              e.preventDefault();
-              const count = referenceResults.length;
-              if (count > 0) {
-                setReferenceIndex((current) => (
-                  e.key === "ArrowDown"
-                    ? (current + 1) % count
-                    : (current - 1 + count) % count
-                ));
+            if (composerIsComposing(e.nativeEvent)) return;
+            if (referenceMenu) {
+              const categories = !referenceMenu.kind && !referenceMenu.query;
+              const kinds: ReferenceKind[] = ["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"];
+              const action = composerReferenceKeyAction({ key: e.key, shiftKey: e.shiftKey, repeat: e.repeat,
+                count: categories ? kinds.length : referenceResults.length, index: referenceIndex });
+              if (action) {
+                e.preventDefault();
+                if (action.type === "move") setReferenceIndex(action.index);
+                else if (action.type === "select") {
+                  if (categories) { setReferenceMenu({ ...referenceMenu, kind: kinds[action.index] }); setReferenceIndex(0); }
+                  else void selectReference(referenceResults[action.index]);
+                } else { setReferenceMenu(null); referenceAutocompleteDismissedRef.current = referenceMenu.start; }
+                return;
               }
-              return;
-            }
-            if (referenceMenu && e.key === "Enter" && referenceResults[referenceIndex]) {
-              e.preventDefault();
-              selectReference(referenceResults[referenceIndex]);
-              return;
-            }
-            if (referenceMenu && e.key === "Escape") {
-              e.preventDefault();
-              setReferenceMenu(null);
-              referenceAutocompleteDismissedRef.current = true;
-              return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
               if (
@@ -10229,9 +10280,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     </div>
                   </div>
                 ) : null}
+                <div ref={earlierMessagesSentinelRef} className="h-px" aria-hidden="true" />
                 {hasEarlierMessages || loadingEarlierMessages || hiddenTranscriptCount > 0 ? (
-                  <div className="text-center text-xs text-muted-foreground">
-                    {loadingEarlierMessages ? "Loading more messages…" : "Scroll up for older messages"}
+                  <div className="flex min-h-8 items-center justify-center gap-2 text-xs text-muted-foreground" role="status" aria-live="polite">
+                    {loadingEarlierMessages ? (
+                      <><LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span>Loading older messages…</span></>
+                    ) : hasEarlierMessages ? (
+                      <button type="button" className="min-h-8 px-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => {
+                        userDetachedFromBottomRef.current = true;
+                        stickToBottomRef.current = false;
+                        expandFromBottomRef.current = messagesScrollRef.current ? messagesScrollRef.current.scrollHeight - messagesScrollRef.current.scrollTop - messagesScrollRef.current.clientHeight : 0;
+                        setShowScrollDown(true);
+                        void loadEarlierMessagesRef.current();
+                      }}>{earlierMessagesError ? "Could not load older messages · Retry" : "Scroll up or load older messages"}</button>
+                    ) : <span>Scroll up for older messages</span>}
                   </div>
                 ) : null}
                 {transcriptMessages.map((item) => {
@@ -10899,7 +10961,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
-            (workspaceTab === "browser" || workspaceTab === "team") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
+            (workspaceTab === "browser" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
             workspaceFullscreen && "fixed inset-[1%] z-50 !w-auto rounded-lg border border-border/70 shadow-xl",
             workspaceOpen ? "workspace-panel-enter" : "workspace-panel-exit",
           )}
@@ -10922,7 +10984,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           )}
           <div className="flex shrink-0 items-center gap-1 border-b border-border/30 px-2 py-1.5">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {(["team", "canvas", "plan", "files", "terminal", "browser", "monitor"] as const)
+              {(["team", "canvas", "plan", "memory", "files", "terminal", "browser", "monitor"] as const)
                 .filter((tab) => (tab !== "browser" || browserEnabled) && (tab !== "team" || isAgentChat))
                 .map((tab) => (
                 <Button
@@ -10946,9 +11008,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     "h-8 min-w-8 shrink-0 rounded-md transition-[max-width,background-color,padding] duration-200 ease-out",
                     workspaceTab === tab ? "max-w-40 gap-1.5 px-2" : "w-8 max-w-8 gap-0 overflow-visible px-0",
                   )}
-                  aria-label={tab === "team" ? "Agent overview" : tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab[0].toUpperCase() + tab.slice(1)}
+                  aria-label={tab === "team" ? "Agent overview" : tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab === "memory" ? "Memory" : tab[0].toUpperCase() + tab.slice(1)}
                 >
-                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
+                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "memory" ? <Brain className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
                   <span className={cn(
                     "overflow-hidden whitespace-nowrap text-xs transition-[max-width,opacity,transform] duration-300",
                     workspaceTab === tab
@@ -10989,6 +11051,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", workspaceTab === "browser" && "max-sm:p-1.5")}>
             {loadingChatId !== null && loadingChatId === activeChatId ? (
               <WorkspaceLoadingSkeleton />
+            ) : workspaceTab === "memory" ? (
+              activeChatId ? <WorkspaceMemoryPanel key={activeChatId} chatId={activeChatId} label={isAgentChat ? "Agent Memory" : "Chat Memory"}/> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open a chat to view its memories.</div>
             ) : workspaceTab === "team" ? (
               isAgentChat && activeProjectId && activeChatId ? <ProjectTeamWorkspace key={activeProjectId} projectId={activeProjectId} chatId={activeChatId} onOpenChat={(chatId) => { void loadChat(chatId).then(() => { if (activeChatIdRef.current === chatId) { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); } }); }} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open an agent chat to view its team.</div>
             ) : workspaceTab === "browser" ? (
@@ -11338,7 +11402,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 })()}
               </>
             ) : workspaceTab === "files" ? (
-              <RemoteFileEditor cwd={remoteFileCwd} onCwdChange={setRemoteFileCwd} />
+              <RemoteFileEditor cwd={remoteFileCwd} onCwdChange={setRemoteFileCwd} fileRequest={workspaceFileRequest} />
             ) : !activeWorkspace ? (
               <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
                 <div className="max-w-64 space-y-1.5">

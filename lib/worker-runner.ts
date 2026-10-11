@@ -1,3 +1,5 @@
+import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
+import { deferProviderLimitedJob } from "@/lib/db-jobs";
 import { readFileSync } from "node:fs";
 import { Agent } from "@cursor/sdk";
 import {
@@ -894,6 +896,7 @@ export async function runQueuedJob(job: AgentJob) {
         }), AGENT_INIT_TIMEOUT_MS, "The agent session could not be resumed within 90 seconds.");
         nativeResumed = true;
       } catch (resumeError) {
+        if (isProviderUsageLimit(resumeError)) throw resumeError;
         const sessionFailure = cursorSessionFailureKind(resumeError);
         if (sessionFailure === "missing") {
           // Stale agent id (server restart, expired session): fall back to a
@@ -932,6 +935,7 @@ export async function runQueuedJob(job: AgentJob) {
             }), AGENT_INIT_TIMEOUT_MS, "The agent session could not be resumed within 90 seconds.");
             nativeResumed = true;
           } catch (retryError) {
+            if (isProviderUsageLimit(retryError)) throw retryError;
             appendRunEvent(job.id, job.chatId, job.userId, "info", {
               message: "Active run did not clear; starting a new agent session.",
             });
@@ -1415,6 +1419,7 @@ export async function runQueuedJob(job: AgentJob) {
       try {
         run = await startAgentRun();
       } catch (sendError) {
+        if (isProviderUsageLimit(sendError)) throw sendError;
         if (!canRecoverCursorSend({
           error: sendError,
           receivedTextDelta,
@@ -1641,6 +1646,7 @@ export async function runQueuedJob(job: AgentJob) {
       });
     }
     checkpoint(true);
+    if (result.status === "error" && deferProviderLimitedJob(job.id, result.error)) return;
     let resultError = result.status === "error"
       ? result.error?.message || "Agent run failed."
       : undefined;
@@ -1833,6 +1839,8 @@ export async function runQueuedJob(job: AgentJob) {
       availability: "available",
   });
   } catch (error) {
+    checkpoint(true);
+    if (deferProviderLimitedJob(job.id, error)) return;
     const message = error instanceof Error ? error.message : "Agent run failed.";
     recordSignal({
       modelId: job.modelId || chat.modelId || "unknown",

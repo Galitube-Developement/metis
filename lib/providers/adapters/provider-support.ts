@@ -1,3 +1,4 @@
+import { providerErrorWithCause } from "@/lib/provider-rate-limit";
 import {
   jsonSchema,
   streamText,
@@ -1031,6 +1032,7 @@ export async function consumeAiStream(
 
   const consumeRound = async (streamResult: ReturnType<typeof streamText>) => {
     let providerError = "";
+    let providerErrorCause: unknown;
     let rawText = "";
     let pendingText = "";
     let visibleText = "";
@@ -1138,6 +1140,7 @@ export async function consumeAiStream(
           drainText(false);
         } else if (part.type === "error") {
           providerError = streamErrorText(part.error);
+          providerErrorCause = part.error;
         } else if (part.type === "finish") {
           finishReason = part.finishReason;
         } else if (
@@ -1222,7 +1225,7 @@ export async function consumeAiStream(
     } catch (error) {
       const message = streamErrorText(error);
       context.onStream({ type: "error", error: message });
-      throw new Error(message);
+      throw providerErrorWithCause(message, error);
     }
 
     let executions: EmbeddedToolExecution[] = [];
@@ -1307,9 +1310,9 @@ export async function consumeAiStream(
     } catch (error) {
       const message = streamErrorText(error);
       context.onStream({ type: "error", error: message });
-      throw new Error(providerError || message);
+      throw providerErrorWithCause(providerError || message, providerErrorCause ?? error);
     }
-    if (providerError) throw new Error(providerError);
+    if (providerError) throw providerErrorWithCause(providerError, providerErrorCause);
     addUsage(roundUsage);
     void rawText;
     const steps = await Promise.resolve(streamResult.steps)

@@ -11,6 +11,7 @@ process.env.CHAT_DATA_DIR = dir;
 process.env.CHAT_DB_PATH = path.join(dir, "chat.sqlite");
 process.env.AI_CHAT_MCP_STATE_DIR = dir;
 process.env.MCP_BEARER_TOKEN = "memory-policy-test";
+process.env.AI_CHAT_INTERNAL_ORIGIN = "http://memory-policy.invalid";
 const modules = Promise.all([
  import("../lib/db-store"), import("../lib/projects"),
  import("../app/api/internal/mcp-memory/route"), import("../lib/context-scope"),
@@ -50,7 +51,7 @@ test("project chats default to project memory and can explicitly choose global",
  assert.equal(global.status,200); assert.equal(global.body.scope,"global");
  const list = await call(chat.id,{action:"list"});
  assert.deepEqual(list.body.memories.map((x:{id:string})=>x.id),[local.body.memory.id]);
- assert.deepEqual(list.body.availableScopes,["project","global"]);
+ assert.deepEqual(list.body.availableScopes,["chat","project","global"]);
  assert((await call(chat.id,{action:"list",scope:"global"})).body.memories.some((x:{id:string})=>x.id===global.body.memory.id));
  assert.equal((await call(chat.id,{action:"edit",scope:"global",id:global.body.memory.id,content:"Updated preference"})).status,200);
  assert.equal((await call(chat.id,{action:"delete",scope:"global",id:global.body.memory.id})).status,200);
@@ -107,7 +108,7 @@ test("personal context tools check the project policy before contacting the glob
   const definition = gateway.tools.find((item: {name:string}) => item.name===name);
   assert.ok(definition);
   const properties = definition.inputSchema.properties as {scope:{enum:string[]}};
-  assert.deepEqual(properties.scope.enum,["project","global"]);
+  assert.deepEqual(properties.scope.enum,["chat","project","global"]);
  }
  const calls: string[] = [];
  t.mock.method(globalThis,"fetch",async (url: unknown) => {
@@ -155,4 +156,61 @@ test("gateway memory writes preserve the chosen scope through transport", async 
  });
  assert.notEqual((result as {isError?:boolean}).isError,true);
  assert.deepEqual(payload,{scope:"global",content:"Account fact",action:"add"});
+});
+
+
+test("one save tool routes all three scopes and returns the same available choices for every action", async (t) => {
+ const {chat} = fixture();
+ for (const scope of ["chat", "project", "global"] as const) {
+  const expected = ["chat", "project", "global"];
+  const saved = await call(chat.id, {action:"add", scope, content:`Scoped ${scope} fact`});
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.scope, scope);
+  assert.deepEqual(saved.body.availableScopes, expected);
+  const id = saved.body.memory.id;
+  for (const action of ["access", "list", "edit", "delete"]) {
+   const result = await call(chat.id, {action, scope, id, content:`Updated ${scope} fact`});
+   assert.equal(result.status, 200, `${scope}/${action}`);
+   assert.equal(result.body.scope, scope);
+   assert.deepEqual(result.body.availableScopes, expected, `${scope}/${action}`);
+  }
+ }
+ const gateway = await import("../lib/mcp-core/gateway-core.mjs");
+ const saves = gateway.tools.filter((tool: {name:string}) => /^(add|save|create)_(?:(chat|project|global)_)?memory$/.test(tool.name));
+ assert.deepEqual(saves.map((tool: {name:string}) => tool.name), ["add_memory"]);
+ const calls: Record<string, unknown>[] = [];
+ t.mock.method(globalThis, "fetch", async (_url: unknown, init:RequestInit) => {
+  const payload = JSON.parse(String(init.body)); calls.push(payload);
+  return Response.json({scope:payload.scope, memory:{id:"saved"}});
+ });
+ for (const scope of ["chat", "project", "global"]) {
+  const result = await gateway.dispatchGatewayTool("add_memory", {scope,content:"Scoped transport"}, {
+   auditCall:false, context:{chatId:chat.id,jobId:"leased-job",userId:owner,runtimeMode:"full-access"},
+  });
+  assert.notEqual((result as {isError?:boolean}).isError, true);
+  assert.deepEqual(calls.at(-1), {scope, content:"Scoped transport", action:"add"});
+ }
+});
+
+test("scope choices respect ordinary chats, project policy and Incognito consistently", async () => {
+ const contract = await import("../lib/memory-scopes.mjs");
+ assert.deepEqual(contract.MEMORY_SCOPES, ["chat", "project", "global"]);
+ assert.deepEqual(contract.availableMemoryScopes(), ["chat", "global"]);
+ assert.deepEqual(contract.availableMemoryScopes({hasProject:true}), ["chat", "project", "global"]);
+ assert.deepEqual(contract.availableMemoryScopes({hasProject:true,includeGlobal:false}), ["chat", "project"]);
+ assert.deepEqual(contract.availableMemoryScopes({hasProject:true,incognito:true}), []);
+ for (const invalid of ["agent", "workspace", "all", null, {}, 1]) assert.equal(contract.isMemoryScope(invalid), false);
+ const ordinary = m[0].createChat("Ordinary scope choices", undefined, owner);
+ for (const scope of ["chat", "global"]) {
+  const result = await call(ordinary.id, {action:"access",scope});
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.availableScopes, ["chat", "global"]);
+ }
+ const {chat} = fixture("project_only");
+ for (const scope of ["chat", "project"]) {
+  const result = await call(chat.id, {action:"access",scope});
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.availableScopes, ["chat", "project"]);
+ }
+ assert.equal((await call(chat.id, {action:"add",scope:"global",content:"Blocked"})).status,403);
 });

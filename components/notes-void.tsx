@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, ExternalLink, LayoutGrid, Maximize2, Palette, Pin, PinOff, Plus, RefreshCw, Search, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { SharedNote, NoteTodo } from "@/lib/store";
-import { clearSavedNoteDraft, commitNoteDraft, enqueueNoteSave, mergeNoteDraft, mergeTodoDraft, noteConflictFields, type NoteDraft, type NoteConflict } from "@/lib/note-save-state";
+import { clearSavedNoteDraft, commitNoteDraft, enqueueNoteSave, flushScheduledNoteSaves, mergeNoteDraft, mergeTodoDraft, noteConflictFields, type NoteDraft, type NoteConflict } from "@/lib/note-save-state";
+import { registerNoteEditorFlush } from "@/lib/note-editor-lifecycle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableMarkdown } from "@/components/editable-markdown";
@@ -94,8 +95,8 @@ export function NotesVoid({
  notesRef.current = notes;
   viewRef.current = view;
 
- const mergeLoadedNotes = useCallback((serverNotes: SharedNote[]) => {
- const ownerId = serverNotes.find((note) => note.ownerId)?.ownerId;
+ const mergeLoadedNotes = useCallback((serverNotes: SharedNote[], responseOwnerId?: string) => {
+ const ownerId = responseOwnerId || serverNotes.find((note) => note.ownerId)?.ownerId;
  if (ownerId && draftOwnerRef.current !== ownerId) {
    // Owner-scoped drafts must never carry across an account change.
    for (const timer of saveTimers.current.values()) window.clearTimeout(timer);
@@ -155,7 +156,7 @@ export function NotesVoid({
         setGlobalPinnedIds(pinBody.globalNoteIds || []);
         setConfiguredPinnedIds(pinBody.pinnedNoteIds || []);
       }
-      mergeLoadedNotes(next);
+      mergeLoadedNotes(next, body.ownerId);
       if (!chatId) {
         const pinResponse = await fetch("/api/context/pins", { cache: "no-store", signal: controller.signal });
         const pinBody = await pinResponse.json().catch(() => ({})) as { globalNoteIds?: string[]; configuredNoteIds?: string[] };
@@ -388,6 +389,42 @@ export function NotesVoid({
  }, 500);
  saveTimers.current.set(note.id, timer);
  }, [update]);
+
+ useEffect(() => registerNoteEditorFlush(async () => {
+   persistDrafts();
+   for (const timer of saveTimers.current.values()) window.clearTimeout(timer);
+   saveTimers.current.clear();
+   const dirty = [...localDraftsRef.current.keys()];
+   await Promise.all(dirty.map(id => {
+     const note = notesRef.current.find(item => item.id === id);
+     return note ? update(note) : Promise.resolve();
+   }));
+   await Promise.allSettled([...saveQueuesRef.current.values()]);
+   return localDraftsRef.current.size === 0 && blockedNoteIdsRef.current.size === 0;
+ }), [persistDrafts, update]);
+
+ // Flush the debounce when leaving the view or hiding the page. Drafts are
+ // already persisted synchronously on every edit, including failed requests.
+ useEffect(() => {
+   const flush = () => {
+     persistDrafts();
+     flushScheduledNoteSaves(saveTimers.current, window.clearTimeout, (id) => {
+       const note = notesRef.current.find(item => item.id === id);
+       if (note) void update(note);
+     });
+   };
+   const onVisibilityChange = () => { if (document.hidden) flush(); };
+   const onOnline = () => retryDraftsRef.current();
+   document.addEventListener("visibilitychange", onVisibilityChange);
+   window.addEventListener("pagehide", flush);
+   window.addEventListener("online", onOnline);
+   return () => {
+     document.removeEventListener("visibilitychange", onVisibilityChange);
+     window.removeEventListener("pagehide", flush);
+     window.removeEventListener("online", onOnline);
+     flush();
+   };
+ }, [persistDrafts, update]);
 
  const commitTodos = useCallback((note: SharedNote, todos: NoteTodo[]) => {
    scheduleUpdate(note, { todos });

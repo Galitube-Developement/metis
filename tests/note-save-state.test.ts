@@ -3,6 +3,8 @@ import test from "node:test";
 import type { SharedNote } from "../lib/store.ts";
 import {
   commitNoteDraft,
+  flushScheduledNoteSaves,
+  rebaseNoteDraft,
   clearSavedNoteDraft,
   enqueueNoteSave,
   mergeNoteDraft,
@@ -153,4 +155,42 @@ test("offline failure does not mutate the draft and repeated CAS rebases stop", 
 
 test("concurrent project removal uses the same empty value on client and server", () => {
   assert.deepEqual(noteConflictFields(note({ projectId: "p1" }), { projectId: null }, note({ projectId: undefined, version: 2 })), []);
+});
+
+test("CAS rebases discard reverted fields while retaining local edits", async () => {
+  const base = note();
+  const remote = note({ title: "remote title", version: 2 });
+  assert.deepEqual(rebaseNoteDraft(base, { title: base.title, content: "mine" }, remote), { content: "mine" });
+  const calls: unknown[] = [];
+  const result = await commitNoteDraft(base, { title: base.title, content: "mine" }, async (patch, version) => {
+    calls.push({ ...patch });
+    if (version === 1) return { status: 409, note: remote };
+    return { status: 200, note: note({ ...remote, ...patch, version: 3 }) };
+  });
+  assert.deepEqual(calls, [{ title: "base", content: "mine" }, { content: "mine" }]);
+  assert.equal(result.note.title, "remote title");
+});
+
+test("already acknowledged drafts do not issue redundant CAS writes", async () => {
+  let requests = 0;
+  const result = await commitNoteDraft(note(), { content: "mine" }, async () => {
+    requests++;
+    return { status: 409, note: note({ content: "mine", version: 2 }) };
+  });
+  assert.equal(requests, 1);
+  assert.equal(result.note.version, 2);
+});
+
+test("flushing debounce cancels timers before queuing each note exactly once", () => {
+  const timers = new Map([["a", 1], ["b", 2]]);
+  const cancelled: number[] = [];
+  const saved: string[] = [];
+  const flush = () => flushScheduledNoteSaves(timers, timer => cancelled.push(timer), id => {
+    assert.equal(timers.size, 0);
+    saved.push(id);
+  });
+  flush();
+  flush();
+  assert.deepEqual(cancelled, [1, 2]);
+  assert.deepEqual(saved, ["a", "b"]);
 });

@@ -23,7 +23,10 @@ export function getPinnedNoteIds(ownerId: string | undefined, chatId: string) {
 }
 
 export function getPinnedNotes(ownerId: string | undefined, chatId: string) {
-  const allowed = new Map(listNotes({ ownerId, chatId }).map((note) => [note.id, note]));
+  const chat = getChat(chatId, ownerId);
+  if (!chat || chat.incognito) return [];
+  ownerId ??= chat.ownerId;
+  const allowed = new Map(listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId).map((note) => [note.id, note]));
   return getPinnedNoteIds(ownerId, chatId)
     .map((id) => allowed.get(id))
     .filter((note): note is NonNullable<typeof note> => Boolean(note))
@@ -43,13 +46,16 @@ export function resolveReferences(
   chatId: string,
   references: ContextReference[],
 ) {
-  const accessibleNotes = new Map(listNotes({ ownerId, chatId }).map((note) => [note.id, note]));
+  const chat = getChat(chatId, ownerId);
+  if (!chat) return [];
+  const resolvedOwnerId = ownerId ?? chat.ownerId;
+  const accessibleNotes = new Map(listNotes({ ownerId: resolvedOwnerId, chatId }).filter((note) => note.ownerId === resolvedOwnerId).map((note) => [note.id, note]));
   return references
     .slice(0, 20)
     .map((reference): ContextReference | null => {
       if (reference.kind !== "note") return { ...reference, source: reference.source || "explicit" };
-      const note = accessibleNotes.get(reference.id) || getNote(reference.id, ownerId);
-      if (!note) return null;
+      const note = accessibleNotes.get(reference.id) || getNote(reference.id, resolvedOwnerId, { chatId });
+      if (!note || note.ownerId !== resolvedOwnerId) return null;
       return {
         kind: "note",
         id: note.id,

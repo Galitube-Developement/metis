@@ -980,7 +980,7 @@
   --automation-queued: #d4a24a;
   --automation-brand: #d5a184;
   display: grid;
-  grid-template-columns: minmax(220px, 38%) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--automation-detail-width, 480px);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -1993,4 +1993,63 @@
 @keyframes run-status-attention { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
 @media (prefers-reduced-motion: reduce) {
   .run-status[data-run-status] > .run-status-icon { animation: none; transform: none; opacity: 1; }
+}
+
+/* The detail/editor sidebar stays attached to the right edge. */
+.automations-split-view { position: relative; }
+.automation-sidebar-resize-handle {
+  position: absolute; inset-block: 0; right: calc(var(--automation-detail-width, 480px) - 6px);
+  z-index: 10; display: flex; width: 12px; align-items: center; justify-content: center;
+  cursor: col-resize; touch-action: none; user-select: none;
+}
+.automation-sidebar-resize-handle > span { width: 2px; height: 40px; border-radius: 1px; background: var(--automation-border-raised); }
+.automation-sidebar-resize-handle:hover > span,
+.automation-sidebar-resize-handle[data-resizing] > span,
+.automation-sidebar-resize-handle:focus-visible > span { background: var(--automation-brand); }
+.automation-sidebar-resize-handle:focus-visible { outline: 2px solid var(--automation-brand); outline-offset: -2px; }
+.automation-editor-creating { animation: none; }
+.automation-editor-hint svg, .automation-editor-actions svg { width: 14px; height: 14px; flex: none; }
+.automation-editor-steps button:focus-visible { outline: 2px solid var(--automation-brand); outline-offset: 2px; }
+.automation-editor-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.automation-editor-steps button { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 2px solid var(--automation-border-raised); font-size: 11px; color: var(--automation-copy); }
+.automation-editor-steps button[aria-current="step"] { color: var(--automation-text); border-color: var(--automation-brand); }
+.automation-editor-steps button:disabled { color: var(--automation-muted); cursor: default; }
+.automation-editor-steps button span { font-variant-numeric: tabular-nums; }
+.automation-edit-form fieldset { display: flex; min-width: 0; flex-direction: column; gap: 14px; margin: 0; padding: 0; border: 0; }
+.automation-edit-form fieldset[hidden] { display: none; }
+.automation-edit-form legend { color: var(--automation-text); font-size: 14px; font-weight: 600; margin-bottom: 14px; padding: 0; }
+.automation-edit-form legend:focus { outline: none; }
+.automation-editor-creating .automation-edit-form label { color: var(--automation-copy); font-size: 10px; letter-spacing: .02em; }
+.automation-editor-creating .automation-edit-form input, .automation-editor-creating .automation-edit-form select { min-height: 38px; }
+.automation-editor-creating .automation-edit-form textarea { min-height: 160px; }
+.automation-editor-hint { display: flex; align-items: flex-start; gap: 6px; color: var(--automation-copy); font-size: 12px; line-height: 1.6; }
+.automation-editor-error { color: var(--automation-error); font-size: 12px; line-height: 1.5; }
+.automation-editor-error button { margin-left: 10px; text-decoration: underline; }
+.automation-editor-actions { margin-top: 10px; padding-top: 14px; border-top: 1px solid var(--automation-border-soft); display: flex; flex-wrap: wrap; gap: 8px; }
+.automation-editor-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; }
+.automation-editor-actions button[type="submit"] { margin-left: auto; background: var(--automation-text); color: var(--automation-bg); }
+.automation-editor-review dl { display: grid; gap: 14px; }
+.automation-editor-review dl > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; font-size: 12px; }
+.automation-editor-review dt { color: var(--automation-copy); }
+.automation-editor-review dd { color: var(--automation-text); overflow-wrap: anywhere; }
+.automation-editor-review-prompt { padding-top: 14px; border-top: 1px solid var(--automation-border-soft); color: var(--automation-copy); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+@media (max-width: 900px) {
+  .automations-split-view[data-creating="true"] { display: block; overflow: auto; }
+  .automations-split-view[data-creating="true"] .automation-list-pane { display: none; }
+  .automation-editor-creating { padding: 18px 16px 24px; }
+  .automation-sidebar-resize-handle { display: none; }
+  .automation-editor-actions button { min-height: 44px; }
+  .automation-editor-steps { gap: 6px; }
+  .automation-editor-steps button { min-height: 44px; font-size: 11px; }
+  .automation-editor-creating .automation-edit-form input, .automation-editor-creating .automation-edit-form textarea, .automation-editor-creating .automation-edit-form select { font-size: 16px; min-height: 44px; }
+}
+.automation-subagent-model > summary { cursor: pointer; color: var(--automation-text); font-size: 12px; font-weight: 500; }
+.automation-subagent-model > summary span { margin-left: 8px; color: var(--automation-copy); font-weight: 400; font-size: 11px; }
+.automation-subagent-model[open] > summary { margin-bottom: 12px; }
+/* Keep the primary action distinct when shared action hover styles apply. */
+.automation-editor-actions button[type="submit"]:hover:not(:disabled),
+.automation-editor-actions button[type="submit"]:active:not(:disabled) {
+  background: var(--automation-text);
+  color: var(--automation-bg);
+  border-color: var(--automation-text);
 }
