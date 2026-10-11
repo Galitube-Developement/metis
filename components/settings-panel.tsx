@@ -17,7 +17,6 @@ import {
   KeyRound,
   Link2,
   Lock,
-  MessagesSquare,
   Mic,
   Monitor,
   MoreHorizontal,
@@ -71,12 +70,8 @@ import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings"
 import { ProviderLimitSettings } from "@/components/provider-limit-settings";
 import { NotificationDeliverySettings } from "@/components/notification-delivery-settings";
 import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
-import { AgentRulesSettings } from "@/components/agent-rules-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { SkillsSettings } from "@/components/skills-settings";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
-import type { AgentMode, ToolPermissionCategory } from "@/lib/store";
-import { TOOL_PERMISSION_CATEGORIES } from "@/lib/modes";
 import { PlanUsagePanel } from "@/components/quota-gauges";
 import { UpdateSettingsPanel, UpdateStatusProbe } from "@/components/update-channel-nav";
 import { CliVersionsPanel } from "@/components/cli-versions-panel";
@@ -187,18 +182,6 @@ function CustomSelect({
   );
 }
 
-type McpServer = {
-  id: string;
-  name: string;
-  kind: "remote" | "stdio";
-  url?: string;
-  command?: string;
-  args?: string[];
-  enabled?: boolean;
-  configured_env_keys?: string[];
-  configured_header_keys?: string[];
-};
-
 type RemoteClient = {
   id: string;
   name: string;
@@ -233,28 +216,6 @@ type ArchivedChat = {
     active: boolean;
     passwordProtected: boolean;
   };
-};
-
-type McpDraft = {
-  id: string;
-  name: string;
-  kind: "remote" | "stdio";
-  url: string;
-  command: string;
-  args: string;
-  env: string;
-  headers: string;
-};
-
-const emptyMcpDraft: McpDraft = {
-  id: "",
-  name: "",
-  kind: "remote",
-  url: "",
-  command: "",
-  args: "",
-  env: "",
-  headers: "",
 };
 
 const API_KEY_URLS: Record<string, string> = {
@@ -389,11 +350,7 @@ type SettingsPaneId =
   | "browser-storage"
   | "providers"
   | "versions"
-  | "skills"
-  | "modes"
-  | "mcp"
   | "memories"
-  | "agent-rules"
   | "agent-settings"
   | "dictionary";
 
@@ -401,11 +358,7 @@ const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "
   "settings-browser-storage": "browser-storage",
   "settings-providers": "providers",
   "settings-versions": "versions",
-  "settings-skills": "skills",
-  "settings-modes": "modes",
-  "settings-mcp": "mcp",
   "settings-memories": "memories",
-  "settings-agent-rules": "agent-rules",
   "settings-agent-runtime": "agent-settings",
   "settings-dictionary": "dictionary",
 };
@@ -682,7 +635,6 @@ export function SettingsPanel({
   usageSnapshot,
   onRefreshUsage,
   onModelsChanged,
-  onModesChanged,
   onLogout,
   onResetMetis,
   onUpdateMetis,
@@ -732,25 +684,6 @@ export function SettingsPanel({
     return () => window.cancelAnimationFrame(frame);
   }, [open, settingsTab, settingsPane, settingsSearchTarget]);
 
-  const [agentRuleCount, setAgentRuleCount] = useState<number | null>(null);
-  const [agentRuleCountError, setAgentRuleCountError] = useState(false);
-
-  useEffect(() => {
-    if (!open || settingsTab !== "agent" || settingsPane !== "tab") return;
-    const controller = new AbortController();
-    setAgentRuleCount(null);
-    setAgentRuleCountError(false);
-    void fetch("/api/agent-rules", { signal: controller.signal })
-      .then(async response => {
-        if (!response.ok) throw new Error("Could not load rules.");
-        const data = await response.json() as { rules: unknown[] };
-        if (!controller.signal.aborted) setAgentRuleCount(data.rules.length);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setAgentRuleCountError(true);
-      });
-    return () => controller.abort();
-  }, [open, settingsTab, settingsPane]);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [browserStorageQuery, setBrowserStorageQuery] = useState("");
   const [compressionPreview, setCompressionPreview] = useState("");
@@ -761,10 +694,6 @@ export function SettingsPanel({
     savingsPercent: number;
   } | null>(null);
   const [compressionPreviewBusy, setCompressionPreviewBusy] = useState(false);
-  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
-  const [mcpLoaded, setMcpLoaded] = useState(false);
-  const [mcpDraft, setMcpDraft] = useState<McpDraft>(emptyMcpDraft);
-  const [mcpBusy, setMcpBusy] = useState(false);
   const [remoteClients, setRemoteClients] = useState<RemoteClient[]>([]);
   const [desktopStatusById, setDesktopStatusById] = useState<Record<string, DesktopPermissionStatus>>({});
   const [desktopStatusBusyId, setDesktopStatusBusyId] = useState("");
@@ -787,7 +716,7 @@ export function SettingsPanel({
   const [voiceApiKey, setVoiceApiKey] = useState("");
   const [voiceKeyBusy, setVoiceKeyBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
-    { type: "mcp"; item: McpServer } | { type: "provider"; item: ProviderConnection } | null
+    { type: "provider"; item: ProviderConnection } | null
   >(null);
   const [providerDefinitions, setProviderDefinitions] = useState<ProviderDefinition[]>([]);
   const [providerConnections, setProviderConnections] = useState<ProviderConnection[]>([]);
@@ -805,16 +734,6 @@ export function SettingsPanel({
     location: "",
   });
   const [providerBusy, setProviderBusy] = useState(false);
-  const [customModes, setCustomModes] = useState<AgentMode[]>([]);
-  const [modeDraft, setModeDraft] = useState<AgentMode>({
-    id: "",
-    name: "",
-    description: "",
-    icon: "sliders-horizontal",
-    instructions: "",
-    allowedCategories: ["read"],
-  });
-  const [modeOverridesDraft, setModeOverridesDraft] = useState("{}");
   const [oauthFlow, setOauthFlow] = useState<OAuthFlow | null>(null);
   const [oauthCode, setOauthCode] = useState("");
   const [archivedChats, setArchivedChats] = useState<ArchivedChat[]>([]);
@@ -1082,19 +1001,6 @@ export function SettingsPanel({
     };
   }, [remotePairExistingIds, remotePairStep]);
 
-  const loadMcpServers = useCallback(async () => {
-    try {
-      const res = await fetch("/api/mcp-servers", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load MCP servers");
-      const data = (await res.json()) as { servers?: McpServer[] };
-      setMcpServers(data.servers || []);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load MCP servers");
-    } finally {
-      setMcpLoaded(true);
-    }
-  }, []);
-
   const loadArchivedChats = useCallback(async () => {
     setArchivedChatsLoaded(false);
     try {
@@ -1147,21 +1053,12 @@ export function SettingsPanel({
     }
   }, []);
 
-  const loadCustomModes = useCallback(async () => {
-    const response = await fetch("/api/modes", { cache: "no-store" });
-    if (!response.ok) return;
-    const data = (await response.json()) as { modes?: AgentMode[] };
-    setCustomModes((data.modes || []).filter((mode) => !mode.builtIn));
-  }, []);
-
   useEffect(() => {
     if (open) {
-      void loadMcpServers();
       void loadArchivedChats();
       void loadProviders();
-      void loadCustomModes();
     }
-  }, [loadArchivedChats, loadCustomModes, loadMcpServers, loadProviders, open]);
+  }, [loadArchivedChats, loadProviders, open]);
 
   async function updateArchivedChat(id: string, archived: boolean) {
     const res = await fetch(`/api/chats/${id}`, {
@@ -1176,42 +1073,6 @@ export function SettingsPanel({
     await loadArchivedChats();
     onChatsChanged();
     toast.success(archived ? "Chat archived" : "Chat restored");
-  }
-
-  async function saveCustomMode() {
-    const payload = {
-      ...modeDraft,
-      id: modeDraft.id || undefined,
-      allowedCategories: modeDraft.allowedCategories,
-      toolOverrides: (() => {
-        try {
-          const parsed = JSON.parse(modeOverridesDraft);
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-        } catch {
-          return {};
-        }
-      })(),
-    };
-    const response = await fetch("/api/modes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      toast.error("Could not save mode");
-      return;
-    }
-    setModeDraft({ id: "", name: "", description: "", icon: "sliders-horizontal", instructions: "", allowedCategories: ["read"] });
-    setModeOverridesDraft("{}");
-    await loadCustomModes();
-    onModesChanged?.();
-    toast.success("Mode saved");
-  }
-
-  async function deleteCustomMode(mode: AgentMode) {
-    await fetch(`/api/modes?id=${encodeURIComponent(mode.id)}`, { method: "DELETE" });
-    await loadCustomModes();
-    onModesChanged?.();
   }
 
   async function deleteArchivedChat(id: string) {
@@ -1279,95 +1140,6 @@ export function SettingsPanel({
         return next;
       });
     }
-  }
-
-  function parseLines(value: string) {
-    const entries: Record<string, string> = {};
-    for (const line of value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-      const separator = line.indexOf("=");
-      if (separator <= 0) throw new Error("Environment and header lines must use NAME=value");
-      const key = line.slice(0, separator).trim();
-      const item = line.slice(separator + 1);
-      if (!/^[A-Za-z_][A-Za-z0-9-]*$/.test(key)) throw new Error(`Invalid key: ${key}`);
-      entries[key] = item;
-    }
-    return entries;
-  }
-
-  async function saveMcpServer() {
-    if (mcpBusy) return;
-    setMcpBusy(true);
-    try {
-      if (!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(mcpDraft.id)) {
-        throw new Error("ID must use 2-64 lowercase characters, numbers, dots, underscores, or hyphens");
-      }
-      if (!mcpDraft.name.trim()) throw new Error("Name is required");
-      if (mcpDraft.kind === "remote" && !mcpDraft.url.trim()) throw new Error("URL is required");
-      if (mcpDraft.kind === "stdio" && !mcpDraft.command.trim()) throw new Error("Command is required");
-      const env = parseLines(mcpDraft.env);
-      const headers = parseLines(mcpDraft.headers);
-      const body = {
-        id: mcpDraft.id.trim(),
-        name: mcpDraft.name.trim(),
-        kind: mcpDraft.kind,
-        ...(mcpDraft.url.trim() ? { url: mcpDraft.url.trim() } : {}),
-        ...(mcpDraft.command.trim() ? { command: mcpDraft.command.trim() } : {}),
-        ...(mcpDraft.args.trim() ? { args: mcpDraft.args.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) } : {}),
-        ...(Object.keys(env).length ? { env } : {}),
-        ...(Object.keys(headers).length ? { headers } : {}),
-      };
-      const res = await fetch("/api/mcp-servers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Failed to save MCP server");
-      setMcpDraft(emptyMcpDraft);
-      await loadMcpServers();
-      toast.success("MCP server saved");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save MCP server");
-    } finally {
-      setMcpBusy(false);
-    }
-  }
-
-  function editMcpServer(server: McpServer) {
-    setMcpDraft({
-      id: server.id,
-      name: server.name,
-      kind: server.kind,
-      url: server.url || "",
-      command: server.command || "",
-      args: server.args?.join("\n") || "",
-      env: "",
-      headers: "",
-    });
-  }
-
-  async function toggleMcpServer(server: McpServer) {
-    const res = await fetch(`/api/mcp-servers/${encodeURIComponent(server.id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !server.enabled }),
-    });
-    if (!res.ok) {
-      toast.error("Failed to update MCP server");
-      return;
-    }
-    await loadMcpServers();
-  }
-
-  async function deleteMcpServer(server: McpServer) {
-    const res = await fetch(`/api/mcp-servers/${encodeURIComponent(server.id)}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast.error("Failed to delete MCP server");
-      return;
-    }
-    await loadMcpServers();
-    if (mcpDraft.id === server.id) setMcpDraft(emptyMcpDraft);
-    toast.success("MCP server deleted");
   }
 
   function selectProvider(providerKey: string) {
@@ -1671,22 +1443,19 @@ export function SettingsPanel({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(58rem,calc(100dvh-1rem))] min-w-[min(42rem,calc(100vw-1rem))] w-[calc(100%-1rem)] max-w-6xl flex-col gap-0 overflow-hidden rounded-2xl p-0">
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14 sm:px-8">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Settings2 className="size-4 text-primary" />
+      <section aria-labelledby="settings-page-title" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="shrink-0 border-b border-border px-5 py-6 sm:px-8">
+          <h1 id="settings-page-title" className="flex items-center gap-2 text-2xl font-semibold">
+            <Settings2 className="size-5" />
             Settings
-          </DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm">
-            Manage your workspace in one place.
-          </DialogDescription>
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">Manage your workspace in one place.</p>
           <SettingsSearch key={String(open)} isHostAdmin={isHostAdmin} onSelect={openSettingsSearchResult} />
-        </DialogHeader>
+        </header>
 
-        <Tabs value={settingsTab} onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }} className="min-h-0 flex-1 gap-0 md:grid md:items-stretch md:grid-cols-[13rem_minmax(0,1fr)]">
+        <Tabs value={settingsTab} onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }} className="min-h-0 flex-1 gap-0 lg:grid lg:items-stretch lg:grid-cols-[13rem_minmax(0,1fr)]">
           <UpdateStatusProbe isHostAdmin={Boolean(isHostAdmin)} onUpdateAvailableChange={setUpdateAvailable} />
-          <div className="border-b border-border bg-muted/20 p-3 md:hidden">
+          <div className="border-b border-border bg-muted/20 p-3 lg:hidden">
             <CustomSelect
               value={settingsTab}
               onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }}
@@ -1702,7 +1471,7 @@ export function SettingsPanel({
               ]}
             />
           </div>
-          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 md:flex md:h-full md:min-h-0 md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:overflow-y-auto md:border-b-0 md:border-r md:px-3 md:py-4">
+          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 lg:flex lg:h-full lg:min-h-0 lg:flex-nowrap lg:flex-col lg:items-stretch lg:justify-start lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
            {SETTINGS_TABS.map((tab) => {
            const Icon =
            tab.value === "general" ? Settings2
@@ -1720,7 +1489,7 @@ export function SettingsPanel({
            <TabsTrigger
              value={tab.value}
              className={cn(
-               "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 md:h-auto md:flex-none",
+               "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 lg:h-auto lg:flex-none",
                tab.value === "updates" && updateAvailable && "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
              )}
            >
@@ -1733,7 +1502,7 @@ export function SettingsPanel({
             key={item.id}
             type="button"
             className={cn(
-            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground md:block",
+            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground lg:block",
             SETTINGS_SECTION_TO_PANE[item.id] === settingsPane && "bg-muted/60 text-foreground",
             )}
             onClick={() => {
@@ -2146,187 +1915,6 @@ export function SettingsPanel({
  >
  <CliVersionsPanel isHostAdmin={Boolean(isHostAdmin)} />
  </SettingsFeaturePane>
- ) : settingsPane === "skills" ? (
- <SettingsFeaturePane
- backLabel="Agent"
- title="Skills"
- description="Installed skills from skills-lock.json, plus skills you add for this account. Open a skill to change Always on. Enabled skills stay available; Always on injects the skill into every chat."
- slot="skills-manager"
- onBack={() => setSettingsPane("tab")}
- >
- <SkillsSettings hideHeading />
- </SettingsFeaturePane>
- ) : settingsPane === "modes" ? (
- <SettingsFeaturePane
- backLabel="Agent"
- slot="modes-manager"
- onBack={() => setSettingsPane("tab")}
- >
-<section className="flex flex-col gap-4">
-                <div>
-                  <h3 id="settings-modes" className="text-sm font-medium">Agent modes</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">Create reusable modes with custom instructions and server-enforced tool permissions.</p>
-                </div>
-                <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input value={modeDraft.name} onChange={(event) => setModeDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Mode name" aria-label="Mode name" />
-                    <Input value={modeDraft.icon} onChange={(event) => setModeDraft((current) => ({ ...current, icon: event.target.value }))} placeholder="Icon name" aria-label="Mode icon" />
-                  </div>
-                  <Input value={modeDraft.description} onChange={(event) => setModeDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Short description" aria-label="Mode description" />
-                  <Textarea value={modeDraft.instructions} onChange={(event) => setModeDraft((current) => ({ ...current, instructions: event.target.value }))} placeholder="Custom instructions for this mode" aria-label="Mode instructions" />
-                  <div className="flex flex-wrap gap-1.5">
-                    {TOOL_PERMISSION_CATEGORIES.map((category) => {
-                      const active = modeDraft.allowedCategories.includes(category);
-                      return <Button key={category} type="button" size="xs" variant={active ? "default" : "outline"} onClick={() => setModeDraft((current) => ({ ...current, allowedCategories: active ? current.allowedCategories.filter((item) => item !== category) : [...current.allowedCategories, category as ToolPermissionCategory] }))}>{category}</Button>;
-                    })}
-                  </div>
-                  <Textarea value={modeOverridesDraft} onChange={(event) => setModeOverridesDraft(event.target.value)} placeholder='{"write_file": false}' aria-label="Individual tool overrides" className="min-h-16 font-mono text-xs" />
-                  <p className="text-[11px] text-muted-foreground">Optional individual overrides as JSON, for example {"{"}"write_file": false{"}"}</p>
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={() => void saveCustomMode()} disabled={!modeDraft.name.trim()}>Save mode</Button>
-                  </div>
-                </div>
-                {customModes.length ? (
-                  <div className="divide-y rounded-xl border">
-                    {customModes.map((mode) => (
-                      <div key={mode.id} className="flex items-center gap-3 px-3 py-2.5">
-                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{mode.name}</p><p className="truncate text-xs text-muted-foreground">{mode.description || "Custom mode"}</p></div>
-                        <Button type="button" size="xs" variant="ghost" onClick={() => { setModeDraft(mode); setModeOverridesDraft(JSON.stringify(mode.toolOverrides || {}, null, 2)); }}>Edit</Button>
-                        <Button type="button" size="xs" variant="ghost" className="text-destructive" onClick={() => void deleteCustomMode(mode)}>Delete</Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-
-               </SettingsFeaturePane>
- ) : settingsPane === "mcp" ? (
- <SettingsFeaturePane
- backLabel="Agent"
- slot="mcp-manager"
- onBack={() => setSettingsPane("tab")}
- >
-<section className="flex flex-col gap-4">
-                <div>
-                  <h3 id="settings-mcp" className="text-sm font-medium">Custom MCP servers</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Each account can add its own remote HTTP or local stdio MCP servers. They are not shared with other users. Secret values are write-only.
-                  </p>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input
-                    value={mcpDraft.id}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, id: e.target.value }))}
-                    placeholder="server-id"
-                    aria-label="MCP server ID"
-                  />
-                  <Input
-                    value={mcpDraft.name}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, name: e.target.value }))}
-                    placeholder="Display name"
-                    aria-label="MCP server name"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={mcpDraft.kind === "remote" ? "default" : "outline"}
-                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "remote" }))}
-                  >
-                    Remote HTTP
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={mcpDraft.kind === "stdio" ? "default" : "outline"}
-                    onClick={() => setMcpDraft((current) => ({ ...current, kind: "stdio" }))}
-                  >
-                    Local stdio
-                  </Button>
-                </div>
-                {mcpDraft.kind === "remote" ? (
-                  <Input
-                    value={mcpDraft.url}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, url: e.target.value }))}
-                    placeholder="https://example.com/mcp"
-                    aria-label="MCP server URL"
-                  />
-                ) : (
-                  <>
-                    <Input
-                      value={mcpDraft.command}
-                      onChange={(e) => setMcpDraft((current) => ({ ...current, command: e.target.value }))}
-                      placeholder="npx"
-                      aria-label="MCP command"
-                    />
-                    <Textarea
-                      value={mcpDraft.args}
-                      onChange={(e) => setMcpDraft((current) => ({ ...current, args: e.target.value }))}
-                      placeholder={"One argument per line\n-y\n@modelcontextprotocol/server-filesystem\n/path/to/allowed-directory"}
-                      aria-label="MCP arguments"
-                      rows={4}
-                    />
-                  </>
-                )}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Textarea
-                    value={mcpDraft.env}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, env: e.target.value }))}
-                    placeholder={"Environment (NAME=value)\nAPI_KEY=..."}
-                    aria-label="MCP environment"
-                    rows={4}
-                  />
-                  <Textarea
-                    value={mcpDraft.headers}
-                    onChange={(e) => setMcpDraft((current) => ({ ...current, headers: e.target.value }))}
-                    placeholder={"Headers (NAME=value)\nAuthorization=Bearer ..."}
-                    aria-label="MCP headers"
-                    rows={4}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button type="button" onClick={() => void saveMcpServer()} disabled={mcpBusy}>
-                    {mcpBusy ? "Saving…" : "Save server"}
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => setMcpDraft(emptyMcpDraft)}>
-                    Clear
-                  </Button>
-                </div>
-                <ul className="flex flex-col gap-2">
-                  {!mcpLoaded ? (
-                    [0, 1, 2].map((item) => (
-                      <li key={item} className="space-y-2 rounded-lg border border-border/60 bg-card/40 p-3" aria-label="Loading MCP servers" role="status">
-                        <Skeleton className="h-4 w-2/5" />
-                        <Skeleton className="h-3 w-3/5" />
-                      </li>
-                    ))
-                  ) : mcpServers.map((server) => (
-                    <li key={server.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/40 p-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{server.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {server.id} · {server.kind} · {server.enabled ? "enabled" : "disabled"}
-                        </p>
-                        {(server.configured_env_keys?.length || server.configured_header_keys?.length) ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Secrets configured: {[...(server.configured_env_keys || []), ...(server.configured_header_keys || [])].join(", ")}
-                          </p>
-                        ) : null}
-                      </div>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void toggleMcpServer(server)}>
-                        {server.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => editMcpServer(server)}>
-                        Edit
-                      </Button>
-                      <Button type="button" size="icon-sm" variant="ghost" onClick={() => setDeleteTarget({ type: "mcp", item: server })} aria-label={`Delete ${server.name}`}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-               </SettingsFeaturePane>
  ) : settingsPane === "memories" ? (
  <SettingsFeaturePane
  backLabel="Agent"
@@ -2406,16 +1994,6 @@ export function SettingsPanel({
    <SettingsFeaturePane backLabel="Agent" title="Settings" description="Choose runtime limits and how agents recover from provider limits." slot="agent-settings" onBack={() => setSettingsPane("tab")}>
      <AgentRuntimeSettings />
      <ProviderLimitSettings />
-   </SettingsFeaturePane>
- ) : settingsPane === "agent-rules" ? (
-   <SettingsFeaturePane
-     backLabel="Agent"
-     title="Agent Rules"
-     description="Manage individual instructions for how the agent responds across your chats."
-     slot="agent-rules"
-     onBack={() => setSettingsPane("tab")}
-   >
-     <AgentRulesSettings onRuleCountChange={setAgentRuleCount} />
    </SettingsFeaturePane>
  ) : (
  <>
@@ -2839,39 +2417,11 @@ export function SettingsPanel({
               <div className="grid gap-3 sm:grid-cols-2">
                 <SettingsTile id="settings-agent-runtime" title="Settings" meta="Runtime limits for subagents and project agents" icon={Settings2} onOpen={() => setSettingsPane("agent-settings")} />
                 <SettingsTile
-                  id="settings-skills"
-                  title="Skills"
-                  meta="Enable, pin, and add skills"
-                  icon={Puzzle}
-                  onOpen={() => setSettingsPane("skills")}
-                />
-                <SettingsTile
-                  id="settings-modes"
-                  title="Agent modes"
-                  meta={customModes.length ? `${customModes.length} custom mode${customModes.length === 1 ? "" : "s"}` : "Built-in plus custom modes"}
-                  icon={Settings2}
-                  onOpen={() => setSettingsPane("modes")}
-                />
-                <SettingsTile
-                  id="settings-mcp"
-                  title="Custom MCP servers"
-                  meta={mcpLoaded ? `${mcpServers.length} server${mcpServers.length === 1 ? "" : "s"}` : "Loading…"}
-                  icon={Server}
-                  onOpen={() => setSettingsPane("mcp")}
-                />
-                <SettingsTile
                   id="settings-memories"
                   title="Memories"
                   meta={memories.length ? `${memories.length} ${memories.length === 1 ? "memory" : "memories"}` : "No memories yet"}
                   icon={Brain}
                   onOpen={() => setSettingsPane("memories")}
-                />
-                <SettingsTile
-                  id="settings-agent-rules"
-                  title="Agent Rules"
-                  meta={agentRuleCountError ? "Could not load rules" : agentRuleCount === null ? "Loading…" : `${agentRuleCount} ${agentRuleCount === 1 ? "rule" : "rules"} set`}
-                  icon={MessagesSquare}
-                  onOpen={() => setSettingsPane("agent-rules")}
                 />
               </div>
  </TabsContent>
@@ -3094,8 +2644,7 @@ export function SettingsPanel({
  )}
           </div>
         </Tabs>
-      </DialogContent>
-      </Dialog>
+      </section>
       <Dialog open={remotePairStep !== "idle"} onOpenChange={(value) => !value && setRemotePairStep("idle")}>
         <DialogContent className="box-border w-[calc(100vw_-_2rem)] max-w-[calc(100vw_-_2rem)] gap-0 overflow-x-hidden overflow-y-auto rounded-2xl p-0 sm:w-[min(56rem,calc(100vw_-_2rem))] sm:max-w-[min(56rem,calc(100vw_-_2rem))]">
           <div className="min-w-0 w-full max-w-full space-y-5 p-6">
@@ -3220,18 +2769,12 @@ export function SettingsPanel({
       <ConfirmDialog
       open={Boolean(deleteTarget)}
       onOpenChange={(open) => !open && setDeleteTarget(null)}
-      title={deleteTarget?.type === "mcp" ? "Delete MCP server?" : "Delete provider connection?"}
-      description={
-        deleteTarget?.type === "mcp"
-          ? `Are you sure you want to delete “${deleteTarget.item.name}”? This action cannot be undone.`
-          : `Are you sure you want to delete “${deleteTarget?.item.label || "this connection"}”? This action cannot be undone.`
-      }
+      title="Delete provider connection?"
+      description={`Delete “${deleteTarget?.item.label || "this connection"}”? This action cannot be undone.`}
       confirmLabel="Delete"
       onConfirm={() => {
         if (!deleteTarget) return;
-        return deleteTarget.type === "mcp"
-          ? deleteMcpServer(deleteTarget.item)
-          : deleteProviderConnection(deleteTarget.item);
+        return deleteProviderConnection(deleteTarget.item);
       }}
       />
       <ConfirmDialog

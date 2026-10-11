@@ -72,6 +72,12 @@
       "sourceType": "local",
       "skillPath": "skills/manual/computer-use/SKILL.md",
       "computedHash": "5252ecc1583083378d101630e9428cccf4b0cf8263a0540c61a1f27c2b07884e"
+    },
+    "skill-creator": {
+      "source": "openai/skills (Metis adaptation)",
+      "sourceType": "bundled",
+      "skillPath": "skills/bundled/skill-creator/SKILL.md",
+      "computedHash": "4ee426f1c45139912942835882d8cc212cc873a6cfaeaf71da335abc8f3af3a9"
     }
   }
 }

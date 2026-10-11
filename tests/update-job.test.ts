@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { installerJobFinishedMessage, pollInstallerJob } from "../lib/update-job-client";
+import { installerJobFinishedMessage, pollInstallerJob, reloadCompletedInstallerJob, UPDATE_JOB_STORAGE_KEY } from "../lib/update-job-client";
 import { installerUpdateJobMarker } from "../lib/installer-update";
 import { settleUpdateJobFromInstaller } from "../lib/update-job";
 
@@ -79,4 +79,42 @@ test("a missing job never reports a successful update", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("successful update reloads once and consumes the job before navigation", () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map([[UPDATE_JOB_STORAGE_KEY, "completed-job"]]);
+  let reloads = 0;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => values.delete(key),
+    },
+    location: { reload: () => {
+      assert.equal(values.has(UPDATE_JOB_STORAGE_KEY), false);
+      reloads++;
+    } },
+  } });
+  try {
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "preparing" }), false);
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "restarting" }), false);
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "failed" }), false);
+    assert.equal(values.get(UPDATE_JOB_STORAGE_KEY), "completed-job");
+    assert.equal(reloads, 0);
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "ready" }), true);
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "ready" }), false);
+    assert.equal(reloads, 1);
+    // A late result from an old job must not consume a newer pending update.
+    values.set(UPDATE_JOB_STORAGE_KEY, "new-job");
+    assert.equal(reloadCompletedInstallerJob("completed-job", { status: "ready" }), false);
+    assert.equal(values.get(UPDATE_JOB_STORAGE_KEY), "new-job");
+    assert.equal(reloads, 1);
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("update completion is safe outside the browser", () => {
+  assert.equal(reloadCompletedInstallerJob("job", { status: "ready" }), false);
 });

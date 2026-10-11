@@ -7,6 +7,8 @@ import {
  activateInstallerMaintenanceScreen,
  installerJobFinishedMessage,
  pollInstallerJob,
+ reloadCompletedInstallerJob,
+ UPDATE_JOB_STORAGE_KEY,
 } from "@/lib/update-job-client";
 
 type UpdateData = {
@@ -17,7 +19,6 @@ type UpdateData = {
  release?: { name?: string; body?: string; html_url?: string };
 };
 
-const UPDATE_JOB_STORAGE_KEY = "metis-update-job";
 
 export function UpdateBanner() {
  const [data, setData] = useState<UpdateData | null>(null);
@@ -58,6 +59,7 @@ export function UpdateBanner() {
          return;
        }
        if (job.status === "ready") {
+         if (reloadCompletedInstallerJob(jobId, job)) return;
          window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
          setPreparing(false);
          setJobId(null);

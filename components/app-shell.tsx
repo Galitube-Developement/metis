@@ -1,5 +1,8 @@
 "use client";
+import { createClientId } from "@/lib/client-id";
+import { notifyClientError } from "@/lib/client-error-notifications";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
+import type { AccountView } from "@/components/account/account-panel";
 
 import { useAccountNotifications } from "@/hooks/use-account-notifications";
 import { flushNoteEditors } from "@/lib/note-editor-lifecycle";
@@ -138,6 +141,9 @@ import { UpdateStatusProbe } from "@/components/update-channel-nav";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
 import {
   INSTALLER_MAINTENANCE_EVENT,
+  pollInstallerJob,
+  reloadCompletedInstallerJob,
+  UPDATE_JOB_STORAGE_KEY,
   type InstallerMaintenanceDetail,
 } from "@/lib/update-job-client";
 import type { MemoryItem } from "@/components/memories-panel";
@@ -276,6 +282,7 @@ const RemoteTerminal = dynamic(
 );
 const AccountPanel = dynamic(() => import("@/components/account/account-panel").then(mod => mod.AccountPanel));
 const SettingsPanel = dynamic(() => import("@/components/settings-panel").then((mod) => mod.SettingsPanel));
+const AgentHub = dynamic(() => import("@/components/agent-hub").then((mod) => mod.AgentHub));
 const SetupWizard = dynamic(() => import("@/components/setup-wizard").then((mod) => mod.SetupWizard));
 const SubagentChatView = dynamic(() => import("@/components/subagent-chat-view").then((mod) => mod.SubagentChatView));
 
@@ -2032,10 +2039,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [workspaceOpen]);
 
   const [memories, setMemories] = useState<MemoryItem[]>([]);
-  const [accountView, setAccountView] = useState<"profile" | "usage" | null>(null);
+  const [accountView, setAccountView] = useState<AccountView | null>(null);
   useEffect(() => setAccountView(null), [routeChatId, routeView]);
   const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = accountView === "settings";
+  const setSettingsOpen = useCallback((open: boolean) => {
+    setAccountView(current => open ? "settings" : current === "settings" ? null : current);
+  }, []);
+  function openAccountPage(view: AccountView) {
+    setAccountView(view);
+    setMobileNavOpen(false);
+    setWorkspaceOpen(false);
+    if (view === "settings") { void loadMemories(); void refreshStatus(); }
+  }
   const [settingsTab, setSettingsTab] = useState("general");
   const [settingsUpdateAvailable, setSettingsUpdateAvailable] = useState(false);
   const [chatLogsOpen, setChatLogsOpen] = useState(false);
@@ -3455,7 +3471,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function openTerminalTab() {
-    const id = `terminal-${crypto.randomUUID()}`;
+    const id = `terminal-${createClientId()}`;
     const tab: TerminalTab = {
       id,
       title: `Terminal ${terminalTabs.length + 1}`,
@@ -3483,7 +3499,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (record.chatId) void loadChat(record.chatId);
     };
     if (prefs.toastEnabled) {
-      toast.info(record.title, { id: record.id, description: record.body, action: record.chatId ? { label: "Open chat", onClick: open } : undefined });
+      const action = record.chatId ? { label: "Open chat", onClick: open } : undefined;
+      if (record.title === "Run failed") {
+        notifyClientError(record.body, { title: record.title, key: record.chatId ? `run-error:${record.chatId}` : record.id, occurredAt: Date.parse(record.createdAt), action });
+      } else {
+        toast.info(record.title, { id: record.id, description: record.body, action });
+      }
     }
     if (prefs.browserEnabled && "Notification" in window && Notification.permission === "granted") {
       try {
@@ -7038,8 +7059,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         sendQueuedNow,
       );
       sendSucceeded = true;
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        notifyClientError(error, { title: "Message could not be sent" });
+        reportClientError(error instanceof Error ? error.message : "Message could not be sent", {
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
     } finally {
       releaseSubmitLock();
+      if (!sendSucceeded && !runtimeRef.current.has(activeChatIdRef.current || "")) setBusySynced(false);
       reportUxEvent("send_stream_completed", {
         durationMs: Date.now() - sendStartedAt,
         ok: sendSucceeded,
@@ -7190,7 +7219,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
 
     const ac = new AbortController();
-    const generation = crypto.randomUUID();
+    const generation = createClientId();
     markChatRunning(chatId, {
       abortController: ac,
       assistantMessageId: asstId,
@@ -7237,8 +7266,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
         const msg =
           (err as { error?: string }).error || `HTTP ${res.status}`;
+        notifyClientError(msg, { title: "Message could not be sent", key: `send-error:${userMsg.id}` });
         if (sendQueuedNow) {
-          toast.error(msg);
           if (activeChatIdRef.current === chatId) {
             setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
             setBusySynced(false);
@@ -7405,6 +7434,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           // The server remains the source of truth for background chats, but
           // their stream must never mutate the message list currently shown.
           // Questions still pass through so the user gets an attention badge.
+          if (event === "error" && typeof payload.message === "string") {
+            notifyClientError(payload.message, {
+              title: "Run failed",
+              key: `run-error:${chatId}`,
+              action: { label: "Open chat", onClick: () => { void loadChat(chatId); } },
+            });
+          }
           if (!isActiveChat && event !== "question") continue;
 
           if (event === "assistantId" && typeof payload.messageId === "string") {
@@ -7912,8 +7948,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
       }
       if ((err as Error).name !== "AbortError") {
-        if (sendQueuedNow && !submissionAccepted) toast.error(err instanceof Error ? err.message : "Could not send queued message");
         const msg = err instanceof Error ? err.message : "Request failed";
+        notifyClientError(msg, {
+          title: submissionAccepted ? "Agent connection lost" : "Message could not be sent",
+          key: `send-error:${userMsg.id}`,
+        });
         reportClientError(`send stream failed: ${msg}`, {
           stack: err instanceof Error ? err.stack : undefined,
         });
@@ -8466,7 +8505,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     let copyName = `${baseName} copy`;
     let suffix = 2;
     while (names.has(copyName.toLocaleLowerCase())) copyName = `${baseName} copy ${suffix++}`;
-    const copy = { ...workspace, id: crypto.randomUUID(), name: copyName, createdAt: timestamp, updatedAt: timestamp, version: 1 };
+    const copy = { ...workspace, id: createClientId(), name: copyName, createdAt: timestamp, updatedAt: timestamp, version: 1 };
     updateWorkspaceList([...workspaces, copy].slice(-20));
     setActiveWorkspaceId(copy.id);
     setWorkspaceTab(copy.type);
@@ -9752,9 +9791,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
       <div className="shrink-0 p-2">
         <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable}
-          onSettings={() => { setMobileNavOpen(false); void loadMemories(); void refreshStatus(); setSettingsOpen(true); }}
-          onProfile={() => { setAccountView("profile"); setMobileNavOpen(false); setWorkspaceOpen(false); }}
-          onUsage={() => { setAccountView("usage"); setMobileNavOpen(false); setWorkspaceOpen(false); }} />
+          onSettings={() => openAccountPage("settings")}
+          onAgentHub={() => openAccountPage("agent-hub")}
+          onProfile={() => openAccountPage("profile")}
+          onUsage={() => openAccountPage("usage")} />
       </div>
     </div>
   );
@@ -9765,7 +9805,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
        void fetch("/api/system/maintenance", { cache: "no-store" })
          .then(async (response) => {
            const body = (await response.json().catch(() => ({}))) as { active?: boolean; reason?: string; logs?: string[] };
-           if (active && response.ok) setMaintenanceState(body);
+           if (!active || !response.ok) return;
+           setMaintenanceState(body);
+           // Update controls are unmounted while maintenance is shown. Keep
+           // checking the saved job here so completion can reload the new UI.
+           if (body.active === false) {
+             const jobId = window.localStorage.getItem(UPDATE_JOB_STORAGE_KEY);
+             if (jobId) {
+               const job = await pollInstallerJob(jobId);
+               if (active) reloadCompletedInstallerJob(jobId, job);
+             }
+           }
          })
          .catch(() => undefined);
      };
@@ -10043,7 +10093,68 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {accountView ? <AccountPanel view={accountView} onView={setAccountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} /> : <>
+        {accountView ? <AccountPanel view={accountView} onView={openAccountPage} onOpenManagementPage={openAccountPage} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
+          {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
+        setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
+        setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
+        setComposerSyncNonce(current => current + 1);
+      }} /> : accountView === "settings" ? <SettingsPanel
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settingsTab={settingsTab}
+        onSettingsTabChange={setSettingsTab}
+        memories={memories}
+        notificationsEnabled={notificationsEnabled}
+        onNotificationsEnabledChange={setNotificationsEnabled}
+        soundCuesEnabled={soundCuesEnabled}
+        onSoundCuesEnabledChange={setSoundCuesEnabled}
+        voiceInputEnabled={voiceInputEnabled}
+        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
+        voiceProvider={voiceProvider}
+        voiceModelId={voiceModelId}
+        voiceRealtime={voiceRealtime}
+        voiceEndpoint={voiceEndpoint}
+        onVoiceApiKeySave={saveVoiceApiKey}
+        onVoiceInputSettingsChange={updateVoiceInputSettings}
+        browserEnabled={browserEnabled}
+        browserRealtime={browserRealtime}
+        browserFps={browserFps}
+        browserViewportWidth={browserDefaultViewport.width}
+        browserViewportHeight={browserDefaultViewport.height}
+        onBrowserSettingsChange={updateBrowserSettings}
+        compressionEnabled={compressionEnabled}
+        compressionMode={compressionMode}
+        compressionToolResults={compressionToolResults}
+        compressionChatHistory={compressionChatHistory}
+        onCompressionSettingsChange={updateCompressionSettings}
+        models={models}
+        favoriteModelKeys={favoriteModelKeys}
+        onToggleFavoriteModel={toggleFavoriteModel}
+        subagentModelEnabled={subagentModelEnabled}
+        onSubagentModelEnabledChange={updateSubagentModelEnabled}
+        subagentModelId={subagentModelId}
+        onSubagentModelIdChange={updateSubagentModelId}
+        subagentModelParams={subagentModelParams}
+        onSubagentModelParamsChange={updateSubagentModelParams}
+        finishSound={finishSound}
+        onFinishSoundChange={(sound) => {
+          setFinishSound(sound);
+          saveFinishSound(sound);
+        }}
+        onTestFinishSound={playFinishSound}
+        onMemoriesChanged={() => void loadMemories()}
+        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
+        onChatsChanged={() => void loadChats()}
+        usageSnapshot={planUsageSnapshot}
+        onRefreshUsage={() => refreshPlanUsage(true)}
+        onModelsChanged={() => void loadModels()}
+        onModesChanged={() => void loadModes()}
+        onLogout={() => void logout()}
+        onResetMetis={resetMetis}
+        onUpdateMetis={updateMetis}
+        isHostAdmin={Boolean(status?.isHostAdmin)}
+      /> : null}
+        </AccountPanel> : <>
         {/* Thin top bar */}
         <header className="relative z-20 flex h-14 shrink-0 items-center gap-2.5 border-b border-border/55 bg-background px-3.5 md:h-12 md:gap-2 md:px-4">
           <Button
@@ -11912,63 +12023,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ) : null}
         </DialogContent>
       </Dialog>
-
-      <SettingsPanel
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        settingsTab={settingsTab}
-        onSettingsTabChange={setSettingsTab}
-        memories={memories}
-        notificationsEnabled={notificationsEnabled}
-        onNotificationsEnabledChange={setNotificationsEnabled}
-        soundCuesEnabled={soundCuesEnabled}
-        onSoundCuesEnabledChange={setSoundCuesEnabled}
-        voiceInputEnabled={voiceInputEnabled}
-        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
-        voiceProvider={voiceProvider}
-        voiceModelId={voiceModelId}
-        voiceRealtime={voiceRealtime}
-        voiceEndpoint={voiceEndpoint}
-        onVoiceApiKeySave={saveVoiceApiKey}
-        onVoiceInputSettingsChange={updateVoiceInputSettings}
-        browserEnabled={browserEnabled}
-        browserRealtime={browserRealtime}
-        browserFps={browserFps}
-        browserViewportWidth={browserDefaultViewport.width}
-        browserViewportHeight={browserDefaultViewport.height}
-        onBrowserSettingsChange={updateBrowserSettings}
-        compressionEnabled={compressionEnabled}
-        compressionMode={compressionMode}
-        compressionToolResults={compressionToolResults}
-        compressionChatHistory={compressionChatHistory}
-        onCompressionSettingsChange={updateCompressionSettings}
-        models={models}
-        favoriteModelKeys={favoriteModelKeys}
-        onToggleFavoriteModel={toggleFavoriteModel}
-        subagentModelEnabled={subagentModelEnabled}
-        onSubagentModelEnabledChange={updateSubagentModelEnabled}
-        subagentModelId={subagentModelId}
-        onSubagentModelIdChange={updateSubagentModelId}
-        subagentModelParams={subagentModelParams}
-        onSubagentModelParamsChange={updateSubagentModelParams}
-        finishSound={finishSound}
-        onFinishSoundChange={(sound) => {
-          setFinishSound(sound);
-          saveFinishSound(sound);
-        }}
-        onTestFinishSound={playFinishSound}
-        onMemoriesChanged={() => void loadMemories()}
-        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
-        onChatsChanged={() => void loadChats()}
-        usageSnapshot={planUsageSnapshot}
-        onRefreshUsage={() => refreshPlanUsage(true)}
-        onModelsChanged={() => void loadModels()}
-        onModesChanged={() => void loadModes()}
-        onLogout={() => void logout()}
-        onResetMetis={resetMetis}
-        onUpdateMetis={updateMetis}
-        isHostAdmin={Boolean(status?.isHostAdmin)}
-      />
 
       <Dialog open={Boolean(activeDiff)} onOpenChange={(open) => !open && setActiveDiff(null)}>
         <DialogContent className="h-[100dvh] max-h-none w-screen min-w-0 max-w-none overflow-x-hidden rounded-none p-4 sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-xl sm:p-6">

@@ -22,7 +22,7 @@ type SkillItem = {
   alwaysOn: boolean;
 };
 
-export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean } = {}) {
+export function SkillsSettings({ hideHeading = false, importOnly = false, onAdded }: { hideHeading?: boolean; importOnly?: boolean; onAdded?: () => void } = {}) {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -94,6 +94,7 @@ export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean 
       setManualId("");
       setManualContent("");
       setManualFile(null);
+      onAdded?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not add skill.");
     } finally {
@@ -112,19 +113,20 @@ export function SkillsSettings({ hideHeading = false }: { hideHeading?: boolean 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="grid gap-2 rounded-xl border border-border/60 p-3">
         <p className="text-sm font-medium">Add manual skill</p>
-        <input className="h-8 rounded-md border bg-background px-2 text-sm" placeholder="Skill id (for example, my-skill)" value={manualId} onChange={(event) => setManualId(event.target.value)} />
-        <input type="file" accept=".md,text/markdown" className="text-xs" onChange={(event) => {
+        <p className="text-xs text-muted-foreground">Saved to your account. Open the skill to create a share link.</p>
+        <input className="h-8 rounded-md border bg-background px-2 text-sm" aria-label="Manual skill id" placeholder="Skill id (for example, my-skill)" value={manualId} onChange={(event) => setManualId(event.target.value)} />
+        <input aria-label="Upload SKILL.md" type="file" accept=".md,text/markdown" className="text-xs" onChange={(event) => {
           const file = event.target.files?.[0] || null;
           setManualFile(file);
           if (file && !manualId) setManualId(file.name.replace(/\.md$/i, ""));
         }} />
-        <textarea className="min-h-28 rounded-md border bg-background p-2 font-mono text-xs" placeholder="Paste SKILL.md content" value={manualContent} onChange={(event) => {
+        <textarea className="min-h-28 rounded-md border bg-background p-2 font-mono text-xs" aria-label="Manual skill content" placeholder="Paste SKILL.md content" value={manualContent} onChange={(event) => {
           setManualContent(event.target.value);
           setManualFile(null);
         }} />
         <Button type="button" size="sm" className="w-fit" disabled={adding || !manualId.trim() || (!manualFile && !manualContent.trim())} onClick={() => void addSkill()}>{adding ? "Adding…" : "Add skill"}</Button>
       </div>
-      {skills.length === 0 ? (
+      {importOnly ? null : skills.length === 0 ? (
         <p className="text-sm text-muted-foreground">No skills installed.</p>
       ) : (
         <ul className="divide-y rounded-xl border border-border/60">

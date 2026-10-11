@@ -18,11 +18,7 @@ export const SETTINGS_SECTIONS: Record<string, SettingsSection[]> = {
   ],
   agent: [
     { id: "settings-agent-runtime", label: "Settings", keywords: "runtime unlimited minutes subagents project agents provider limits reset recovery laufzeit zeitlimit warten" },
-    { id: "settings-skills", label: "Skills", keywords: "instructions packages installed fähigkeiten anweisungen" },
-    { id: "settings-modes", label: "Agent modes", keywords: "permissions tool categories modes modi berechtigungen" },
-    { id: "settings-mcp", label: "MCP servers", keywords: "tools integrations registry endpoints server werkzeuge integrationen" },
     { id: "settings-memories", label: "Memories", keywords: "global memory facts preferences erinnerungen gedächtnis" },
-    { id: "settings-agent-rules", label: "Agent Rules", keywords: "instructions behavior response rules regeln anweisungen" },
   ],
   devices: [
     { id: "settings-remote-clients", label: "Remote clients", keywords: "devices pairing desktop pc windows linux macos permissions geräte verbinden" },

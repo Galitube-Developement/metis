@@ -4,6 +4,14 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.13 — 2026-10-11
+
+- Add Agent Hub for managing skills, connections, modes and rules, including a bundled Skill Creator, skills.sh discovery and share links for importing personal skill packages.
+- Open Settings and Agent Hub as account pages, add settings search, and introduce profiles with custom handles and animated avatars plus private usage dashboards and configurable API-value estimates.
+- Unify scoped memories across tools and workspaces, support typed interactive forms, and keep agents paused until a requested answer is submitted.
+- Improve automation creation, note editing, file references, notifications, chat continuity and loading older messages without losing the reading position.
+- Add per-user agent runtime limits and scoped stop controls, improve execution isolation and streaming, and reload the interface once after a verified successful installer update.
+
 ## v1.0.12 — 2026-10-08
 
 - Restore the rotating disclosure arrow on grouped activity summaries such as commands, files and edits so their expand/collapse action stays visible.

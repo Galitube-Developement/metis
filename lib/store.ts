@@ -575,6 +575,8 @@ export type GlobalModelSettings = {
     browser?: boolean;
   };
   customModes?: AgentMode[];
+  /** Populated by the server from the authenticated account, never trusted from a payload. */
+  skillOwnerId?: string;
   enabledSkills?: Record<string, boolean>;
   alwaysOnSkills?: Record<string, boolean>;
 };
