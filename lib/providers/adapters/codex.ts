@@ -7,6 +7,7 @@ import type { CodexOptions } from "@openai/codex-sdk";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
 import { readCodexThreadContext } from "@/lib/providers/codex-context";
+import { codexUsageTotals, codexTurnUsage, readCodexThreadUsage } from "@/lib/providers/codex-usage";
 import { codexCliExecutable } from "@/lib/providers/codex-cli";
 import { getMcpServers } from "@/lib/mcp";
 import { updateProviderConnection } from "@/lib/provider-connections";
@@ -287,6 +288,11 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
   const thread = previousId
     ? codex.resumeThread(previousId, threadOptions)
     : codex.startThread(threadOptions);
+  // Resumed SDK turns report lifetime counters. Capture the baseline before
+  // any new call, including consumption from a previously interrupted turn.
+  const usageBaseline = previousId
+    ? (codexHome ? readCodexThreadUsage(codexHome.home, previousId) : undefined) || sessionBinding?.lastUsageTotals
+    : undefined;
   const turnStartedAt = Date.now();
   try {
     const prompt = [
@@ -323,18 +329,23 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
         ...("error" in event ? { error: event.error } : {}),
       });
       if (event.type === "turn.completed") {
+        const reported = codexUsageTotals(event.usage);
+        const resumed = Boolean(previousId && thread.id === previousId);
+        const currentTotals = codexHome && thread.id
+          ? readCodexThreadUsage(codexHome.home, thread.id)
+          : undefined;
+        const consumed = reported && codexTurnUsage(reported, usageBaseline, currentTotals, resumed);
         usage = {
-          inputTokens: event.usage.input_tokens,
-          outputTokens: event.usage.output_tokens,
-          cachedInputTokens: event.usage.cached_input_tokens,
-          cacheWriteInputTokens: event.usage.cache_write_input_tokens,
-          // SDK usage accumulates across model calls. Native last-token usage
-          // supplies the current context and its actual runtime budget instead.
-          ...(codexHome && thread.id
-            ? readCodexThreadContext(codexHome.home, thread.id)
-            : {}),
-          totalTokens: event.usage.input_tokens + event.usage.output_tokens,
+          ...(consumed ? { ...consumed, totalTokens: consumed.inputTokens + consumed.outputTokens, tokenUsageScope: "turn" as const } : {}),
+          // Consumption across calls and current context size are separate.
+          ...(codexHome && thread.id ? readCodexThreadContext(codexHome.home, thread.id) : {}),
         };
+        if (thread.id && (currentTotals || reported)) {
+          updateProviderSessionBinding({ chatId: context.chat.id, ownerId: context.job.userId,
+            execution: "codex-sdk", connectionId: context.connection.id, contextOwner: "native",
+            candidateCursor: thread.id, promoteCursor: true,
+            lastUsageTotals: currentTotals || reported });
+        }
       } else if (event.type === "turn.failed") {
         throw codexHome && thread.id
           ? codexLimitErrorFromRollout(event.error, codexHome.home, thread.id, turnStartedAt)

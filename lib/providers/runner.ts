@@ -519,6 +519,7 @@ export async function runAlternativeProviderJob(
         ...(result.usage?.outputTokens !== undefined ? { outputTokens: result.usage.outputTokens } : {}),
         ...(result.usage?.cachedInputTokens !== undefined ? { cachedInputTokens: result.usage.cachedInputTokens } : {}),
         ...(result.usage?.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: result.usage.cacheWriteInputTokens } : {}),
+        ...(result.usage?.tokenUsageScope ? { tokenUsageScope: result.usage.tokenUsageScope } : {}),
         ...(result.usage?.totalTokens !== undefined ? { totalTokens: result.usage.totalTokens } : {}),
         ...(result.usage?.totalProcessedTokens !== undefined ? { totalProcessedTokens: result.usage.totalProcessedTokens } : {}),
         ...(contextUsedTokens !== undefined ? { contextUsedTokens } : {}),

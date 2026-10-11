@@ -44,6 +44,7 @@ export function updateProviderSessionBinding(input: {
   candidateCursor?: string | null;
   promoteCursor?: boolean;
   modelId?: string;
+  lastUsageTotals?: ProviderSessionBinding["lastUsageTotals"];
   lastContextTokens?: number;
   lastContextWindow?: number;
   lastCompactionAt?: string;
@@ -67,6 +68,11 @@ export function updateProviderSessionBinding(input: {
         : {}),
     ...(!input.promoteCursor && candidateCursor ? { candidateCursor } : {}),
     ...(input.modelId ? { modelId: input.modelId } : previous?.modelId ? { modelId: previous.modelId } : {}),
+    ...(input.lastUsageTotals
+      ? { lastUsageTotals: input.lastUsageTotals }
+      : previous?.lastUsageTotals && candidateCursor === previous.lastKnownGoodCursor
+        ? { lastUsageTotals: previous.lastUsageTotals }
+        : {}),
     ...(input.lastContextTokens !== undefined
       ? { lastContextTokens: input.lastContextTokens }
       : previous?.lastContextTokens !== undefined
