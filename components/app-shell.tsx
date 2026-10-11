@@ -1,5 +1,6 @@
 "use client";
 import { createClientId } from "@/lib/client-id";
+import { notifyClientError } from "@/lib/client-error-notifications";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 import type { AccountView } from "@/components/account/account-panel";
 
@@ -3498,7 +3499,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (record.chatId) void loadChat(record.chatId);
     };
     if (prefs.toastEnabled) {
-      toast.info(record.title, { id: record.id, description: record.body, action: record.chatId ? { label: "Open chat", onClick: open } : undefined });
+      const action = record.chatId ? { label: "Open chat", onClick: open } : undefined;
+      if (record.title === "Run failed") {
+        notifyClientError(record.body, { title: record.title, key: record.chatId ? `run-error:${record.chatId}` : record.id, occurredAt: Date.parse(record.createdAt), action });
+      } else {
+        toast.info(record.title, { id: record.id, description: record.body, action });
+      }
     }
     if (prefs.browserEnabled && "Notification" in window && Notification.permission === "granted") {
       try {
@@ -7053,8 +7059,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         sendQueuedNow,
       );
       sendSucceeded = true;
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        notifyClientError(error, { title: "Message could not be sent" });
+        reportClientError(error instanceof Error ? error.message : "Message could not be sent", {
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
     } finally {
       releaseSubmitLock();
+      if (!sendSucceeded && !runtimeRef.current.has(activeChatIdRef.current || "")) setBusySynced(false);
       reportUxEvent("send_stream_completed", {
         durationMs: Date.now() - sendStartedAt,
         ok: sendSucceeded,
@@ -7252,8 +7266,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
         const msg =
           (err as { error?: string }).error || `HTTP ${res.status}`;
+        notifyClientError(msg, { title: "Message could not be sent", key: `send-error:${userMsg.id}` });
         if (sendQueuedNow) {
-          toast.error(msg);
           if (activeChatIdRef.current === chatId) {
             setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
             setBusySynced(false);
@@ -7420,6 +7434,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           // The server remains the source of truth for background chats, but
           // their stream must never mutate the message list currently shown.
           // Questions still pass through so the user gets an attention badge.
+          if (event === "error" && typeof payload.message === "string") {
+            notifyClientError(payload.message, {
+              title: "Run failed",
+              key: `run-error:${chatId}`,
+              action: { label: "Open chat", onClick: () => { void loadChat(chatId); } },
+            });
+          }
           if (!isActiveChat && event !== "question") continue;
 
           if (event === "assistantId" && typeof payload.messageId === "string") {
@@ -7927,8 +7948,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== asstId));
       }
       if ((err as Error).name !== "AbortError") {
-        if (sendQueuedNow && !submissionAccepted) toast.error(err instanceof Error ? err.message : "Could not send queued message");
         const msg = err instanceof Error ? err.message : "Request failed";
+        notifyClientError(msg, {
+          title: submissionAccepted ? "Agent connection lost" : "Message could not be sent",
+          key: `send-error:${userMsg.id}`,
+        });
         reportClientError(`send stream failed: ${msg}`, {
           stack: err instanceof Error ? err.stack : undefined,
         });
