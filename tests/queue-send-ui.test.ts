@@ -4,6 +4,7 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import { mergeQueuedFollowUps, shouldStartQueuedFollowUp } from "../lib/composer-send";
+import { updateChatQueue, type ChatQueueState, type ChatQueueUpdate } from "../lib/queue-client";
 
 const file = ts.createSourceFile("app-shell.tsx", readFileSync("components/app-shell.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const handlers: Record<string, string> = {};
@@ -18,35 +19,53 @@ const js = ts.transpileModule(Object.values(handlers).join("\n"), { compilerOpti
 function fixture() {
   const first = { id: "first", text: "first queued", files: [] };
   const second = { id: "second", text: "second queued", files: [] };
-  let queue = [first, second];
+  let queueState: ChatQueueState<typeof first> = { chatId: "chat", messages: [first, second] };
+  let queue = queueState.messages;
   let aborts = 0;
   const calls: Array<{ args: unknown[]; finish: () => void }> = [];
   const queueDrainRef = { current: false };
   const queueDrainBlockedRef = { current: false };
   const queuedSendRef = { current: new Set<string>() };
   const saved: Array<{ queuedMessages: typeof queue }> = [];
+  const urls: string[] = [];
   const context = {
+    activeChatId: "chat", loadingChatId: null, queuedState: queueState, queuedMessages: queue,
     activeChatIdRef: { current: "chat" },
     runtimeRef: { current: new Map([["chat", { abortController: { abort: () => { aborts++; } } }]]) },
     busy: true, busyRef: { current: true },
     modelId: "unit-test-selection",
     pendingQuestion: null as { questionId: string } | null, pendingQuestionIdRef: { current: null as string | null }, answeringQuestion: false,
     sendInFlightKeysRef: { current: new Set<string>() }, queueDrainRef, queueDrainBlockedRef, queuedSendRef,
-    shouldStartQueuedFollowUp, mergeQueuedFollowUps,
-    stateRef: { current: { messages: [] as Array<{ id: string; role: string }> } },
+    shouldStartQueuedFollowUp, mergeQueuedFollowUps, updateChatQueue,
+    stateRef: { current: { chatId: "chat", queueChatId: "chat", loadingChatId: null as string | null, messages: [] as Array<{ id: string; role: string }> } },
     removedIdsFor: () => new Set<string>(),
-    fetch: async (_url: string, request: { body: string }) => { saved.push(JSON.parse(request.body)); return Response.json({}); },
-    setQueuedMessages: (update: (current: typeof queue) => typeof queue) => { queue = update(queue); },
+    fetch: async (url: string, request: { body: string }) => { urls.push(url); saved.push(JSON.parse(request.body)); return Response.json({}); },
+    setQueuedState: (update: (current: typeof queueState) => typeof queueState) => {
+      queueState = update(queueState); queue = queueState.messages;
+      context.queuedState = queueState; context.queuedMessages = queue;
+    },
+    setQueuedMessages: (update: ChatQueueUpdate<typeof first>) => {
+      queueState = updateChatQueue(queueState, "chat", update); queue = queueState.messages;
+      context.queuedState = queueState; context.queuedMessages = queue;
+    },
     setSendLockTick: () => {}, setPendingQuestion: () => {}, setPendingApproval: () => {},
     toast: { info: () => {}, error: () => {} },
     send: (...args: unknown[]) => new Promise<void>((resolve) => { calls.push({ args, finish: resolve }); }),
   };
   const methods = vm.runInNewContext(js + "; ({ sendQueuedMessage, applyServerQueuedMessages, persistQueuedFollowUps })", context) as {
     sendQueuedMessage: (message: typeof first) => Promise<void>;
-    applyServerQueuedMessages: (messages: typeof queue) => void;
-    persistQueuedFollowUps: (messages: typeof queue) => void;
+    applyServerQueuedMessages: (chatId: string, messages: typeof queue) => void;
+    persistQueuedFollowUps: (chatId: string, messages: typeof queue) => void;
   };
-  return { first, second, context, calls, saved, queueDrainRef, queuedSendRef, ...methods,
+  return { first, second, context, calls, saved, urls, queueDrainRef, queuedSendRef, ...methods,
+    applyServerQueuedMessages: (items: typeof queue, chatId = "chat") => methods.applyServerQueuedMessages(chatId, items),
+    persistQueuedFollowUps: (items: typeof queue, chatId = "chat") => methods.persistQueuedFollowUps(chatId, items),
+    switchChat: (id: string, items: typeof queue) => {
+      context.activeChatIdRef.current = id;
+      context.stateRef.current.chatId = id; context.stateRef.current.queueChatId = id;
+      queueState = { chatId: id, messages: items }; queue = items;
+      context.queuedState = queueState; context.queuedMessages = queue;
+    },
     queue: () => queue, aborts: () => aborts };
 }
 
@@ -130,3 +149,55 @@ for (const waitingState of ["question", "sync-ref", "answer-submit"] as const) {
     await resumed;
   });
 }
+
+
+test("an outgoing chat's delayed autosave cannot PATCH the newly active chat", () => {
+  const f = fixture();
+  const outgoing = f.queue();
+  f.context.activeChatIdRef.current = "other-chat";
+  // Navigation changes the ref before React replaces the outgoing state.
+  f.persistQueuedFollowUps(outgoing);
+  assert.deepEqual(f.urls, []);
+  f.switchChat("other-chat", [{ id: "other", text: "other chat queue", files: [] }]);
+  f.persistQueuedFollowUps(outgoing);
+  assert.deepEqual(f.urls, []);
+  assert.equal(f.queue()[0].id, "other");
+});
+
+test("hydrating a destination chat must precede persisting its queue", () => {
+  const f = fixture();
+  f.context.stateRef.current.queueChatId = "outgoing-chat";
+  f.persistQueuedFollowUps(f.queue());
+  assert.deepEqual(f.urls, []);
+  f.context.stateRef.current.queueChatId = "chat";
+  f.persistQueuedFollowUps(f.queue());
+  assert.deepEqual(f.urls, ["/api/chats/chat"]);
+});
+
+test("a late live-sync response from another chat cannot merge queues", () => {
+  const f = fixture();
+  f.switchChat("other-chat", [{ id: "other", text: "stay here", files: [] }]);
+  f.applyServerQueuedMessages([f.first, f.second]);
+  assert.equal(f.queue().length, 1);
+  assert.equal(f.queue()[0].id, "other");
+});
+
+test("an old Send now acknowledgement cannot remove items from the newly active queue", async () => {
+  const f = fixture();
+  const sending = f.sendQueuedMessage(f.first);
+  const destination = [{ ...f.first, text: "different chat owns this item" }];
+  f.switchChat("other-chat", destination);
+  (f.calls[0].args[7] as () => void)();
+  assert.deepEqual(f.queue(), destination);
+  f.calls[0].finish();
+  await sending;
+});
+
+test("a stale queue click during navigation cannot send to or interrupt the destination", async () => {
+  const f = fixture();
+  f.context.activeChatIdRef.current = "other-chat";
+  await f.sendQueuedMessage(f.first);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.aborts(), 0);
+  assert.deepEqual(f.queue(), [f.first, f.second]);
+});

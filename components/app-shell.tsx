@@ -196,7 +196,7 @@ import {
   shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
-import { removeQueuedFollowUp } from "@/lib/queue-client";
+import { removeQueuedFollowUp, updateChatQueue, type ChatQueueState, type ChatQueueUpdate } from "@/lib/queue-client";
 import { hiddenTranscriptMessageCount, anchoredTranscriptScrollTop, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
@@ -2005,7 +2005,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setBusy(value);
   }, []);
   const [runningChatIds, setRunningChatIds] = useState<string[]>([]);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [queuedState, setQueuedState] = useState<ChatQueueState<QueuedMessage>>({ chatId: null, messages: [] });
+  const queuedMessages = queuedState.chatId === activeChatId ? queuedState.messages : [];
+  const setQueuedMessages = useCallback((update: ChatQueueUpdate<QueuedMessage>) => {
+    setQueuedState((current) => updateChatQueue(current, activeChatId, update));
+  }, [activeChatId]);
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const queueDrainBlockedRef = useRef(false);
@@ -2211,7 +2215,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const navigateBrowserRef = useRef<(url: string) => void>(() => {});
   const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
   const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
-  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
+  const applyServerQueuedMessagesRef = useRef<(chatId: string, messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -2243,6 +2247,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const workspaceDraftChangesRef = useRef<Map<string, WorkspaceDraftPatch>>(new Map());
   const workspaceListSaveTimerRef = useRef<number | null>(null);
   const stateRef = useRef({
+    chatId: activeChatId,
+    queueChatId: queuedState.chatId,
+    loadingChatId,
     messages,
     chatTitle,
     agentId,
@@ -2423,7 +2430,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, []);
 
   useEffect(() => {
-    activeChatIdRef.current = activeChatId;
     activeBrowserTabIdRef.current = activeBrowserTabId;
     browserUrlRef.current = browserUrl;
     browserLoadingRef.current = browserLoading;
@@ -2464,6 +2470,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     stateRef.current = {
+      chatId: activeChatId,
+      queueChatId: queuedState.chatId,
+      loadingChatId,
       messages,
       chatTitle,
       agentId,
@@ -2489,6 +2498,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       input,
     };
   }, [
+    activeChatId,
+    queuedState.chatId,
+    loadingChatId,
     messages,
     chatTitle,
     agentId,
@@ -2726,6 +2738,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const id = activeChatIdRef.current;
     if (!id || activeChatIncognito) return;
     const s = stateRef.current;
+    if (s.chatId !== id || s.queueChatId !== id || s.loadingChatId) return;
     const cachedMessages = s.messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
       ...m,
       streaming: false,
@@ -4169,7 +4182,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setMessageOffset(snap.messageOffset);
     setHasEarlierMessages(snap.hasEarlierMessages);
     for (const messageId of snap.removedQueuedMessageIds ?? []) removedIdsFor(id).add(messageId);
-    setQueuedMessages(
+    setQueuedState({ chatId: id, messages:
       mergeQueuedFollowUps(
         [],
         (snap.queuedMessages ?? []).map((message) => ({
@@ -4178,7 +4191,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         })),
         { removedIds: removedQueueIdsRef.current.get(id) },
       ),
-    );
+    });
     setBrowserTabs(browser.tabs);
     setActiveBrowserTabId(browser.activeTabId);
     const activeTab = browser.tabs.find((tab) => tab.id === browser.activeTabId);
@@ -4305,7 +4318,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setReferences([]);
       setMessageOffset(0);
       setHasEarlierMessages(false);
-      setQueuedMessages([]);
+      setQueuedState({ chatId: null, messages: [] });
       setWorkspaces([]);
       setActiveWorkspaceId(null);
       setWorkspaceOpen(false);
@@ -4419,6 +4432,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           chatCacheRef.current.set(id, diskCached);
         }
       }
+      if (activeChatIdRef.current !== id || chatLoadRequestRef.current !== requestId) return false;
       const hasUsableCachedMessages = Boolean(cached?.messages.length);
       if (
         alreadyActive &&
@@ -4480,6 +4494,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               chatLoadRequestRef.current !== requestId
             ) return;
             const data = (await res.json()) as ChatPage;
+            if (activeChatIdRef.current !== id || chatLoadRequestRef.current !== requestId) return;
             if (!acceptServerSnapshot(id, data.chat.updatedAt)) return;
             const mid =
               data.chat.modelId ||
@@ -4538,7 +4553,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             // is still applying deltas. Keep that live state instead of
             // replacing it with the older durable snapshot.
             setMessages(() => messages);
-            applyServerQueuedMessagesRef.current(next.queuedMessages, next.removedQueuedMessageIds);
+            applyServerQueuedMessagesRef.current(id, next.queuedMessages, next.removedQueuedMessageIds);
             setWorkspaces(next.workspaces);
             setBrowserTabs(next.browserContext.tabs);
             setActiveBrowserTabId(next.browserContext.activeTabId);
@@ -5026,6 +5041,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         if (!res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
+        if (activeChatIdRef.current !== chatId) return;
         const activityChanged = chatProgramEventsChanged(stateRef.current.messages, data.chat.messages);
         if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)) return;
         const liveRun = runtimeRef.current.has(chatId);
@@ -5039,7 +5055,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         setChatTitle(data.chat.title);
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
+        applyServerQueuedMessagesRef.current(chatId, Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setChatGoal(data.chat.sessionState?.goal || "");
         setChatGoalReferences(data.chat.sessionState?.goalReferences || []);
@@ -5499,7 +5515,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   // Keep in-memory chat cache warm so switches stay instant
   useEffect(() => {
-    if (!activeChatId || activeChatIncognito) return;
+    if (!activeChatId || activeChatIncognito || loadingChatId || queuedState.chatId !== activeChatId) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
     return scheduleUiBackgroundTask(() => {
     const cachedMessages = messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
@@ -5562,6 +5578,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [
     activeChatId,
     activeChatIncognito,
+    loadingChatId,
+    queuedState.chatId,
     messages,
     chatTitle,
     agentId,
@@ -5593,7 +5611,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // a chat instant even after a page reload while the server snapshot is
   // revalidated in the background. Never persist incognito chats.
   useEffect(() => {
-    if (!activeChatId || activeChatIncognito) return;
+    if (!activeChatId || activeChatIncognito || loadingChatId || queuedState.chatId !== activeChatId) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
     return scheduleUiBackgroundTask(() => {
       const snapshot = chatCacheRef.current.get(activeChatId);
@@ -5602,6 +5620,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [
     activeChatId,
     activeChatIncognito,
+    loadingChatId,
+    queuedState.chatId,
     messages,
     chatTitle,
     modelId,
@@ -5618,7 +5638,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!activeChatId || isDraft || loadingChatId) return;
-    const timer = window.setTimeout(() => persistQueuedFollowUps(queuedMessages), 400);
+    const timer = window.setTimeout(() => persistQueuedFollowUps(activeChatId, queuedMessages), 400);
     return () => window.clearTimeout(timer);
   }, [activeChatId, isDraft, loadingChatId, queuedMessages]);
 
@@ -6033,6 +6053,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       if (!res.ok) return null;
       const data = (await res.json()) as { chat: Chat };
+      const draftQueuedMessages = stateRef.current.chatId === null ? stateRef.current.queuedMessages : [];
       chatCacheRef.current.set(data.chat.id, {
         messages: stateRef.current.messages,
         chatTitle: data.chat.title,
@@ -6041,7 +6062,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         modelId: stateRef.current.modelId,
         modelParams: stateRef.current.modelParams,
         runtimeMode: normalizeRuntimeMode(data.chat.runtimeMode),
-        queuedMessages: stateRef.current.queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
+        queuedMessages: draftQueuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
           id,
           text,
           ...(referenceText ? { referenceText } : {}),
@@ -6065,6 +6086,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       const stillOnDraft = !activeChatIdRef.current;
       if (stillOnDraft) {
+        setQueuedState({ chatId: data.chat.id, messages: draftQueuedMessages });
         const files = pendingByChatRef.current.get("__draft__");
         if (files) { pendingByChatRef.current.set(data.chat.id, files); pendingByChatRef.current.delete("__draft__"); }
         setActiveChatId(data.chat.id);
@@ -6263,6 +6285,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         return false;
       }
+      if (activeChatIdRef.current !== chatId) return false;
       const nextMessages = mapApiMessages(data.chat.messages, data.chat.runStatus);
       const nextWorkspaces = workspacesFromChat(data.chat);
       const nextModelId = data.chat.modelId || modelId;
@@ -6271,12 +6294,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setActiveWorkspaceId(nextWorkspaces[0]?.id ?? null);
       setAgentId(data.chat.agentId);
       setChatTitle(data.chat.title);
-      setQueuedMessages(
-        (data.chat.queuedMessages ?? []).map((message) => ({
-          ...message,
-          files: [],
-        })),
-      );
+      setQueuedState({ chatId, messages: (data.chat.queuedMessages ?? []).map((message) => ({
+        ...message, files: [],
+      })) });
       setLiveStatus("");
       setBusySynced(false);
       sendInFlightKeysRef.current.delete(chatId);
@@ -6667,23 +6687,23 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function applyServerQueuedMessages(server: PersistedQueuedMessage[], removedIds?: string[]) {
-    const chatId = activeChatIdRef.current || "";
+  function applyServerQueuedMessages(chatId: string, server: PersistedQueuedMessage[], removedIds?: string[]) {
+    if (activeChatIdRef.current !== chatId) return;
     for (const id of removedIds ?? []) removedIdsFor(chatId).add(id);
     const consumed = new Set<string>(stateRef.current.messages
       .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
       .map((message) => message.id));
-    setQueuedMessages((current) => mergeQueuedFollowUps(
-      current,
+    setQueuedState((current) => updateChatQueue(current, chatId, (items) => mergeQueuedFollowUps(
+      items,
       server.map((message) => ({ ...message, files: [] as PendingFile[] })),
       { consumedIds: consumed, removedIds: removedIdsFor(chatId) },
-    ));
+    )));
   }
   applyServerQueuedMessagesRef.current = applyServerQueuedMessages;
 
-  function persistQueuedFollowUps(items: QueuedMessage[]) {
-    const chatId = activeChatIdRef.current;
-    if (!chatId) return;
+  function persistQueuedFollowUps(chatId: string | null, items: QueuedMessage[]) {
+    if (!chatId || activeChatIdRef.current !== chatId ||
+      stateRef.current.chatId !== chatId || stateRef.current.queueChatId !== chatId || stateRef.current.loadingChatId) return;
     const consumed = new Set<string>(stateRef.current.messages
       .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
       .map((message) => message.id));
@@ -6706,6 +6726,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function queueCurrentMessage(text: string, files: PendingFile[]) {
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId) return;
     setQueuedMessages((current) => {
       if (text && current.some((item) => item.text === text)) return current;
       const next = [
@@ -6719,7 +6740,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ...(restoredAttachments.length ? { storedAttachments: [...restoredAttachments] } : {}),
       },
     ];
-      persistQueuedFollowUps(next);
+      persistQueuedFollowUps(activeChatId, next);
       return next;
     });
     setInputGuarded("", "queued");
@@ -6732,6 +6753,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function sendQueuedMessage(message: QueuedMessage) {
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId ||
+      !queuedMessages.some((item) => item.id === message.id)) return;
     if (pendingQuestion || pendingQuestionIdRef.current || answeringQuestion) {
       toast.info("Answer the agent's question before sending queued messages.");
       return;
@@ -6791,7 +6814,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function removeMessageFromQueue(message: QueuedMessage) {
-    const chatId = activeChatIdRef.current;
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId) return false;
+    const chatId = activeChatId;
     const index = queuedMessages.findIndex((item) => item.id === message.id);
     try {
       return await removeQueuedFollowUp({
@@ -6980,7 +7004,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     storedAttachmentsOverride?: MsgAttachment[],
     sendQueuedNow = false,
   ) {
-    if (reverting) return;
+    if (reverting || loadingChatId || activeChatIdRef.current !== activeChatId) return;
     if (
       e &&
       "key" in e &&
@@ -8052,8 +8076,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!activeChatIdRef.current || !queuedMessages.length) return;
-    persistQueuedFollowUps(queuedMessages);
-  }, [queuedMessages, busy, pendingQuestion]);
+    persistQueuedFollowUps(activeChatId, queuedMessages);
+  }, [activeChatId, queuedMessages, busy, pendingQuestion]);
 
   useEffect(() => {
     const flush = () => {
@@ -8065,7 +8089,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           body: JSON.stringify({ draftInput: stateRef.current.input }),
         });
       }
-      persistQueuedFollowUps(queuedMessages);
+      persistQueuedFollowUps(activeChatId, queuedMessages);
     };
     const onHide = () => {
       if (document.visibilityState === "hidden") flush();
@@ -8076,7 +8100,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHide);
     };
-  }, [queuedMessages, persistActiveSnapshot]);
+  }, [activeChatId, queuedMessages, persistActiveSnapshot]);
 
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const availableProviderIds = new Set([
