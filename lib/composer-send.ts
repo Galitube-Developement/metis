@@ -125,6 +125,7 @@ export function shouldStartQueuedFollowUp(options: {
   interruptActiveRun?: boolean;
 }) {
   return (
+    !options.waitingForQuestion &&
     !options.drainInFlight &&
     !options.sendInFlight &&
     Boolean(options.interruptActiveRun || (

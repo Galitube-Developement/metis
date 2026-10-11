@@ -47,9 +47,10 @@ function fixture(active = true) {
 }
 
 test("Send now bypasses a running/paused runtime but retains submission locks", () => {
-  const state = { busy: true, waitingForQuestion: true, hasActiveRuntime: true,
+  const state = { busy: true, waitingForQuestion: false, hasActiveRuntime: true,
     drainInFlight: false, sendInFlight: false, interruptActiveRun: true };
   assert.equal(shouldStartQueuedFollowUp(state), true);
+  assert.equal(shouldStartQueuedFollowUp({ ...state, waitingForQuestion: true }), false);
   assert.equal(shouldStartQueuedFollowUp({ ...state, drainInFlight: true }), false);
   assert.equal(shouldStartQueuedFollowUp({ ...state, sendInFlight: true }), false);
   assert.equal(shouldStartQueuedFollowUp({ ...state, interruptActiveRun: false }), false);
@@ -133,7 +134,7 @@ test("a queued stored attachment with no text can be sent", async () => {
   assert.deepEqual(modules[0].getChat(f.chat.id)?.messages.at(-1)?.attachments, stored);
 });
 
-test("Send now cancels a pending question before accepting the follow-up", async (t) => {
+test("Send now preserves a pending question and all queued messages", async (t) => {
   const f = fixture();
   const questions = await import("../lib/db-questions");
   const pending = questions.createPendingQuestion([{ question: "Old question" }], f.chat.id, f.ownerId, {
@@ -142,7 +143,26 @@ test("Send now cancels a pending question before accepting the follow-up", async
   t.after(async () => { pending.stop(); await pending.promise; });
   modules[1].updateJob(f.old!.id, { status: "waiting_input" });
   modules[0].updateChat(f.chat.id, { pendingQuestion: pending, runStatus: "waiting_input" }, f.ownerId);
+  assert.equal((await f.submit()).status, 409);
+  assert.equal(modules[1].getJob(f.old!.id)?.status, "waiting_input");
+  assert.equal(modules[0].getChat(f.chat.id)?.pendingQuestion?.questionId, pending.questionId);
+  assert.deepEqual(modules[0].getChat(f.chat.id)?.queuedMessages, [f.first, f.selected]);
+  assert.equal(modules[0].getChat(f.chat.id)?.messages.length, 0);
+  assert.throws(() => modules[1].enqueueJob({ chatId: f.chat.id, userId: f.ownerId,
+    message: f.selected.text, messageId: f.selected.id }, { interruptActiveRun: true }),
+    (error: unknown) => error instanceof Error && error.name === "WaitingForUser");
+  assert.equal(modules[1].getJob(f.old!.id)?.status, "waiting_input");
+  modules[0].updateChat(f.chat.id, { pendingQuestion: null, runStatus: "running" }, f.ownerId);
+  modules[1].updateJob(f.old!.id, { status: "running" });
   assert.equal((await f.submit()).status, 202);
-  assert.equal(modules[1].getJob(f.old!.id)?.status, "cancelled");
-  assert.equal(modules[0].getChat(f.chat.id)?.pendingQuestion, undefined);
 });
+
+for (const runStatus of ["waiting_input", "waiting_for_user"] as const) {
+  test(`Send now retains an idle queue while chat is ${runStatus}`, async () => {
+    const f = fixture(false);
+    modules[0].updateChat(f.chat.id, { runStatus }, f.ownerId);
+    assert.equal((await f.submit()).status, 409);
+    assert.deepEqual(modules[0].getChat(f.chat.id)?.queuedMessages, [f.first, f.selected]);
+    assert.equal(modules[0].getChat(f.chat.id)?.messages.length, 0);
+  });
+}

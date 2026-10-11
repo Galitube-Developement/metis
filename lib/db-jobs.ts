@@ -11,12 +11,12 @@ import {
   withSqliteRetry,
 } from "@/lib/sqlite";
 import type { AgentJob, JobStatus } from "@/lib/jobs";
-import { claimQueuedMessageInTransaction, getGlobalModelSettings, updateChat } from "@/lib/db-store";
+import { claimQueuedMessageInTransaction, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import {
   describeQueueWait,
   parseWorkerConcurrency,
 } from "@/lib/worker-scheduler";
-import { shouldQueueUserInputResume } from "@/lib/user-input-resume";
+import { isChatWaitingForUser, isJobWaitingForUser, shouldQueueUserInputResume } from "@/lib/user-input-resume";
 
 const iso = () => new Date().toISOString();
 const RUN_EVENT_RETENTION = 10_000;
@@ -264,7 +264,17 @@ export function enqueueJob(
     // Replace and submit in one write transaction: the FIFO worker must not
     // claim a different follow-up between cancellation and this submission.
     const existing = input.messageId ? getJobForMessageId(input.chatId, input.messageId) : null;
-    if (options?.interruptActiveRun && !existing) requestJobCancel(input.chatId, input.userId);
+    if (options?.interruptActiveRun && !existing) {
+      // Recheck inside the write transaction before cancellation can clear a
+      // question that arrived after the HTTP route read its chat snapshot.
+      if (isChatWaitingForUser(getChat(input.chatId, input.userId)) ||
+          isJobWaitingForUser(getActiveParentJob(input.chatId)?.status)) {
+        const error = new Error("Please answer the agent's question before sending a queued message.");
+        error.name = "WaitingForUser";
+        throw error;
+      }
+      requestJobCancel(input.chatId, input.userId);
+    }
     return enqueueJobInTransaction(input, options);
   });
 }

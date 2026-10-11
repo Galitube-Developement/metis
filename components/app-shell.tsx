@@ -6700,6 +6700,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function sendQueuedMessage(message: QueuedMessage) {
+    if (pendingQuestion || pendingQuestionIdRef.current || answeringQuestion) {
+      toast.info("Answer the agent's question before sending queued messages.");
+      return;
+    }
     if (queuedSendRef.current.has(message.id)) return;
     const activeId = activeChatIdRef.current;
     const activeRuntime = activeId ? runtimeRef.current.get(activeId) : undefined;
@@ -6708,7 +6712,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       drainInFlight: queueDrainRef.current || queuedSendRef.current.size > 0,
       sendInFlight: sendInFlightKeysRef.current.has(sendLockKey),
       busy: busy || busyRef.current,
-      waitingForQuestion: Boolean(pendingQuestion),
+      waitingForQuestion: Boolean(pendingQuestion || pendingQuestionIdRef.current),
       hasActiveRuntime: Boolean(activeRuntime),
       interruptActiveRun: true,
     });
@@ -6745,11 +6749,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         () => {
           releaseQueueSubmission();
           setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
-          if (activeChatIdRef.current === activeId) {
-            pendingQuestionIdRef.current = null;
-            setPendingQuestion(null);
-            setPendingApproval(null);
-          }
         },
         message.storedAttachments,
         true,
@@ -7027,9 +7026,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       storedAttachmentsToSend.length > 0 ||
       referencesToSend.length > 0 ||
       !incognito && Boolean((referenceTextOverride ?? referenceText).trim());
-    if (pendingQuestionIdRef.current && !pendingQuestion) {
-      pendingQuestionIdRef.current = null;
-    }
     const duplicate = isDuplicateComposerSend(text, lastSendFingerprintRef.current);
     const sendLockKey = activeChatIdRef.current || "__draft__";
     const sendInFlightForChat = sendInFlightKeysRef.current.has(sendLockKey);
@@ -7042,7 +7038,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       hasContent: hasComposerContent,
       sendInFlight: sendInFlightForChat,
       busy: busy || busyRef.current,
-      waitingForQuestion: Boolean(pendingQuestion),
+      waitingForQuestion: Boolean(pendingQuestion || pendingQuestionIdRef.current),
       duplicate,
       hasActiveRuntime: Boolean(activeRuntime),
     });
@@ -7147,9 +7143,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       storedAttachmentsToSend.length > 0 ||
       referencesToSend.length > 0 ||
       !incognito && Boolean((referenceTextOverride ?? referenceText).trim());
-    if (pendingQuestionIdRef.current && !pendingQuestion) {
-      pendingQuestionIdRef.current = null;
-    }
     if (
       (pendingQuestion && !isOverride) ||
       (!hasComposerContent)
@@ -8668,7 +8661,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </div>
             ) : null}
           </div>
-          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => sendQueuedMessage(message)}>
+          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-xs" disabled={Boolean(pendingQuestion) || answeringQuestion} title={pendingQuestion ? "Answer the agent's question first" : undefined} onClick={() => sendQueuedMessage(message)}>
             Send now
           </Button>
           <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Edit queued message" title="Edit queued message" onClick={() => editQueuedMessage(message)}>
