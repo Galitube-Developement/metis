@@ -12,7 +12,7 @@ import { getProviderSessionBinding, updateProviderSessionBinding } from "@/lib/p
 import { resolveClaudeAgentModelId } from "@/lib/providers/claude-context";
 import {
   approvalPatternFor,
-  RUNTIME_MODE_TO_CLAUDE_PERMISSION,
+  claudePermissionPolicy,
   runtimeModeForChat,
   shouldAutoApprove,
 } from "@/lib/runtime-mode";
@@ -235,7 +235,10 @@ async function runClaude(context: ProviderContext): Promise<ProviderResult> {
   const previousId = sessionBinding?.lastKnownGoodCursor || legacyPreviousId;
   const agentCwd = getUserAgentCwd(context.job.userId);
   const runtimeMode = runtimeModeForChat(context.chat);
-  const claudePermissions = RUNTIME_MODE_TO_CLAUDE_PERMISSION[runtimeMode];
+  const claudePermissions = claudePermissionPolicy(
+    runtimeMode,
+    process.geteuid?.() ?? process.getuid?.(),
+  );
   const modelParams = effectiveModelParams(context.chat, context.job);
   const options = {
     cwd: agentCwd,
