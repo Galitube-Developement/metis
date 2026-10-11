@@ -1443,22 +1443,19 @@ export function SettingsPanel({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(58rem,calc(100dvh-1rem))] min-w-[min(42rem,calc(100vw-1rem))] w-[calc(100%-1rem)] max-w-6xl flex-col gap-0 overflow-hidden rounded-2xl p-0">
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14 sm:px-8">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Settings2 className="size-4 text-primary" />
+      <section aria-labelledby="settings-page-title" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="shrink-0 border-b border-border px-5 py-6 sm:px-8">
+          <h1 id="settings-page-title" className="flex items-center gap-2 text-2xl font-semibold">
+            <Settings2 className="size-5" />
             Settings
-          </DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm">
-            Manage your workspace in one place.
-          </DialogDescription>
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">Manage your workspace in one place.</p>
           <SettingsSearch key={String(open)} isHostAdmin={isHostAdmin} onSelect={openSettingsSearchResult} />
-        </DialogHeader>
+        </header>
 
-        <Tabs value={settingsTab} onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }} className="min-h-0 flex-1 gap-0 md:grid md:items-stretch md:grid-cols-[13rem_minmax(0,1fr)]">
+        <Tabs value={settingsTab} onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }} className="min-h-0 flex-1 gap-0 lg:grid lg:items-stretch lg:grid-cols-[13rem_minmax(0,1fr)]">
           <UpdateStatusProbe isHostAdmin={Boolean(isHostAdmin)} onUpdateAvailableChange={setUpdateAvailable} />
-          <div className="border-b border-border bg-muted/20 p-3 md:hidden">
+          <div className="border-b border-border bg-muted/20 p-3 lg:hidden">
             <CustomSelect
               value={settingsTab}
               onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }}
@@ -1474,7 +1471,7 @@ export function SettingsPanel({
               ]}
             />
           </div>
-          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 md:flex md:h-full md:min-h-0 md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:overflow-y-auto md:border-b-0 md:border-r md:px-3 md:py-4">
+          <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 lg:flex lg:h-full lg:min-h-0 lg:flex-nowrap lg:flex-col lg:items-stretch lg:justify-start lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
            {SETTINGS_TABS.map((tab) => {
            const Icon =
            tab.value === "general" ? Settings2
@@ -1492,7 +1489,7 @@ export function SettingsPanel({
            <TabsTrigger
              value={tab.value}
              className={cn(
-               "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 md:h-auto md:flex-none",
+               "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 lg:h-auto lg:flex-none",
                tab.value === "updates" && updateAvailable && "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
              )}
            >
@@ -1505,7 +1502,7 @@ export function SettingsPanel({
             key={item.id}
             type="button"
             className={cn(
-            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground md:block",
+            "ml-2 hidden w-[calc(100%-0.5rem)] truncate rounded-md border-l border-border/40 py-1 pl-4 pr-2.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground lg:block",
             SETTINGS_SECTION_TO_PANE[item.id] === settingsPane && "bg-muted/60 text-foreground",
             )}
             onClick={() => {
@@ -2647,8 +2644,7 @@ export function SettingsPanel({
  )}
           </div>
         </Tabs>
-      </DialogContent>
-      </Dialog>
+      </section>
       <Dialog open={remotePairStep !== "idle"} onOpenChange={(value) => !value && setRemotePairStep("idle")}>
         <DialogContent className="box-border w-[calc(100vw_-_2rem)] max-w-[calc(100vw_-_2rem)] gap-0 overflow-x-hidden overflow-y-auto rounded-2xl p-0 sm:w-[min(56rem,calc(100vw_-_2rem))] sm:max-w-[min(56rem,calc(100vw_-_2rem))]">
           <div className="min-w-0 w-full max-w-full space-y-5 p-6">
