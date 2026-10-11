@@ -9290,7 +9290,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     variant="ghost"
                     size="sm"
                     aria-label={`Agent mode: ${selectedMode.name}`}
-                    className="hidden h-11 min-w-0 max-w-[11rem] shrink-0 items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-muted-foreground/75 hover:bg-muted/35 hover:text-foreground md:flex"
+                    className="hidden h-7 min-w-0 max-w-[11rem] shrink-0 items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-muted-foreground/75 hover:bg-muted/35 hover:text-foreground md:flex"
                     title={`${selectedMode.name} — ${selectedMode.description}`}
                   >
                     <ModeIcon mode={selectedMode} className="size-3.5 shrink-0" />
