@@ -8,6 +8,7 @@ import {
   type ToolPart,
 } from "@/lib/db-store";
 import type { MessagePart } from "@/lib/store";
+import { canonicalizeToolPart } from "@/lib/providers/tool-events";
 import {
   appendTextMessagePart,
   reconcileMessageParts,
@@ -268,8 +269,23 @@ export async function runAlternativeProviderJob(
     // write_todos is a state surface, not an append-only tool history. Give it
     // one stable id per run so every update replaces the same Tasks card in
     // persistence and in the live SSE UI instead of creating ghost checklists.
+    const canonical = canonicalizeToolPart(tool);
     let normalizedTool =
-      tool.kind === "todo" ? { ...tool, id: `todo-${job.id}` } : tool;
+      canonical.kind === "todo" ? { ...canonical, id: `todo-${job.id}` } : canonical;
+    // A gateway's inner todo identity may only become known after its arguments finish.
+    if (canonical.kind === "todo" && canonical.id !== normalizedTool.id) {
+      const provisional = tools.findIndex(item => item.id === canonical.id);
+      if (provisional >= 0) {
+        const alreadyPresent = tools.some(item => item.id === normalizedTool.id);
+        if (alreadyPresent) tools.splice(provisional, 1);
+        else tools[provisional] = { ...tools[provisional], id: normalizedTool.id };
+        const partIndex = parts.findIndex(item => item.type === "tool" && item.id === canonical.id);
+        if (partIndex >= 0) {
+          if (alreadyPresent) parts.splice(partIndex, 1);
+          else parts[partIndex] = { ...parts[partIndex], id: normalizedTool.id } as MessagePart;
+        }
+      }
+    }
     let existingIndex = tools.findIndex(
       (item) => item.id === normalizedTool.id,
     );
@@ -293,12 +309,14 @@ export async function runAlternativeProviderJob(
       tools.push(normalizedTool);
     }
     upsertToolMessagePart(parts, normalizedTool);
-    checkpoint(true);
+    checkpoint(normalizedTool.phase !== "preparing" || existingIndex < 0);
     emit("tool", {
       callId: normalizedTool.id,
       name: normalizedTool.name,
       status: normalizedTool.status,
       kind: normalizedTool.kind,
+      ...(normalizedTool.phase ? { phase: normalizedTool.phase } : {}),
+      ...(normalizedTool.inputChars !== undefined ? { inputChars: normalizedTool.inputChars } : {}),
       ...(normalizedTool.input ? { input: normalizedTool.input } : {}),
       ...(normalizedTool.result ? { result: normalizedTool.result } : {}),
       ...(normalizedTool.todos?.length ? { todos: normalizedTool.todos } : {}),

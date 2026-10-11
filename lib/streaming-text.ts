@@ -1,4 +1,4 @@
-export const STREAM_FADE_MS = 220;
+export const STREAM_FADE_MS = 480;
 type Segment = { id: number; text: string; born: number };
 export type StreamingTextState = { text: string; prefix: string; segments: Segment[]; nextId: number };
 const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });

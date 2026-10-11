@@ -75,6 +75,8 @@ export function runtimeEventFromRunEvent(row: DurableRunEvent): MetisRuntimeEven
         itemId: callId,
         payload: {
           name,
+          ...(data.phase === "preparing" || data.phase === "executing" ? { phase: data.phase } : {}),
+          ...(typeof data.inputChars === "number" && Number.isFinite(data.inputChars) && data.inputChars >= 0 ? { inputChars: data.inputChars } : {}),
           ...(text(data.kind) ? { kind: text(data.kind) } : {}),
           ...(data.input !== undefined ? { input: data.input } : {}),
           ...(text(data.detail) ? { summary: text(data.detail) } : {}),

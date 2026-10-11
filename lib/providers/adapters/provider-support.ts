@@ -1,3 +1,4 @@
+import { createToolInputProgress } from "@/lib/tool-input-progress";
 import { providerErrorWithCause } from "@/lib/provider-rate-limit";
 import {
   jsonSchema,
@@ -1016,6 +1017,9 @@ export async function consumeAiStream(
     1,
     Math.min(DEFAULT_PROVIDER_STEPS * 2, Math.floor(initialSteps)),
   );
+  const inputProgress = createToolInputProgress(tool => context.onTool({
+    ...tool, kind: tool.kind || classifyToolKind(tool.name, tool.input, tool.result),
+  }));
   const loopGuard = new LoopGuard();
   let fallbackIndex = 0;
   const usage: Usage = {};
@@ -1116,7 +1120,7 @@ export async function consumeAiStream(
 
     try {
       for await (const part of iterateUntilAborted(
-        streamResult.stream,
+        streamResult.fullStream,
         context.signal,
       )) {
         context.onStream({
@@ -1143,10 +1147,15 @@ export async function consumeAiStream(
           providerErrorCause = part.error;
         } else if (part.type === "finish") {
           finishReason = part.finishReason;
-        } else if (
-          part.type === "tool-call" ||
-          part.type === "tool-input-start"
-        ) {
+        } else if (part.type === "tool-input-start") {
+          nativeTools = true;
+          toolsProduced = true;
+          inputProgress.start(part.id, part.toolName);
+        } else if (part.type === "tool-input-delta") {
+          inputProgress.delta(part.id, part.delta);
+        } else if (part.type === "tool-input-end") {
+          inputProgress.end(part.id);
+        } else if (part.type === "tool-call") {
           nativeTools = true;
           toolsProduced = true;
           const name =
@@ -1166,11 +1175,8 @@ export async function consumeAiStream(
             undefined,
             kind,
           );
-          context.onTool({
-            id:
-              "toolCallId" in part
-                ? String(part.toolCallId)
-                : crypto.randomUUID(),
+          inputProgress.executing({
+            id: part.toolCallId,
             name: displayName || name,
             status: "running",
             kind,
@@ -1180,6 +1186,11 @@ export async function consumeAiStream(
             ...(input ? { input } : {}),
             ...(todos?.length ? { todos } : {}),
             ...(subagent ? { subagent } : {}),
+          });
+        } else if (part.type === "tool-error" || part.type === "tool-output-denied") {
+          inputProgress.publish({
+            id: part.toolCallId, name: part.toolName, status: "error",
+            result: part.type === "tool-error" ? streamErrorText(part.error) : "Tool execution denied.",
           });
         } else if (part.type === "tool-result") {
           nativeTools = true;
@@ -1210,7 +1221,7 @@ export async function consumeAiStream(
             resultText,
             kind,
           );
-          context.onTool({
+          inputProgress.publish({
             id: part.toolCallId,
             name: displayName || part.toolName,
             status: "completed",
@@ -1222,7 +1233,9 @@ export async function consumeAiStream(
         }
       }
       drainText(true);
+      inputProgress.flush();
     } catch (error) {
+      inputProgress.flush();
       const message = streamErrorText(error);
       context.onStream({ type: "error", error: message });
       throw providerErrorWithCause(message, error);
