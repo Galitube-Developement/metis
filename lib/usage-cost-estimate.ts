@@ -37,7 +37,8 @@ export function estimateApiValue(
   price: ApiRates | null, inputIncludesCache = true,
 ): number | null {
   if(!price || !measured(usage.input) || !measured(usage.output)) return null;
-  const cached = usage.cached ?? 0, writes = usage.cacheWrite ?? 0;
+  if (!measured(usage.cached) || !measured(usage.cacheWrite)) return null;
+  const cached = usage.cached, writes = usage.cacheWrite;
   if(!measured(cached) || !measured(writes) || (cached>0 && price.cacheRead===undefined) || (writes>0 && price.cacheWrite===undefined)) return null;
   const uncached = usage.input - (inputIncludesCache ? cached+writes : 0);
   if(uncached < 0) return null;

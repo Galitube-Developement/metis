@@ -3,6 +3,7 @@ import type { UsageDay, UsageModel } from "@/lib/account-types";
 import { ProviderLogo } from "@/components/provider-logo";
 import { usageModelContributions, type UsageMetric } from "@/lib/usage-model-contributions";
 import { usageCostLabel, type UsageCostMode } from "@/lib/usage-cost-view";
+import { usageTokenLabel } from "@/lib/usage-token-split";
 const number=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:1});
 const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
 const percent=new Intl.NumberFormat("en",{maximumFractionDigits:1});
@@ -12,7 +13,7 @@ export function UsageModelTooltip({active,day,models,metric,costMode}:{
 }) {
   if(!active || !day)return null;
   const {total,partial,rows}=usageModelContributions(day,models,metric,costMode);
-  const label=metric==="costUsd" ? usageCostLabel(costMode) : metric==="tokens" ? "Tokens" : "Requests";
+  const label=metric==="costUsd" ? usageCostLabel(costMode) : metric==="requests" ? "Requests" : usageTokenLabel(metric);
   const format=(value:number|null)=>value===null ? "—" : metric==="costUsd" ? money.format(value) : number.format(value);
   return <div role="tooltip" aria-label="Daily model contributions" className="w-80 max-w-[calc(100vw-7rem)] rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-md">
     <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">{day.date} · UTC</span><span className="font-medium tabular-nums">{format(total)}</span></div>

@@ -4,6 +4,7 @@ import type { AccountUsage, UsageTotals, UsageDay, UsageModel, UsageModelDetails
 import { usageConfiguration } from "@/lib/usage-configuration";
 import { apiPriceIndex, resolveApiPrice, estimateApiValue, API_PRICE_SOURCE, type PricingSnapshot } from "@/lib/usage-cost-estimate";
 import { getProviderDefinition } from "@/lib/providers/registry";
+import { splitUsageInput, usageConsumptionTokens } from "@/lib/usage-token-split";
 const DAY = 86_400_000;
 const measured = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -12,17 +13,18 @@ export function recordAccountUsage(ownerId: string | undefined, message: Pick<Ch
   if (!ownerId || message.role !== "assistant" || !meta || !Number.isFinite(Date.parse(meta.completedAt))) return;
   const input = meta.inputTokensEstimated ? null : measured(meta.inputTokens);
   const output = measured(meta.outputTokens);
-  // Context size is never consumption. Cached tokens are already part of provider input totals.
-  const tokens = measured(meta.totalProcessedTokens) ?? measured(meta.totalTokens) ??
-    (input !== null || output !== null ? (input ?? 0) + (output ?? 0) : null);
+  // Provider input can include cache (Codex/AI SDK) or exclude it (Claude Code).
+  const tokens = usageConsumptionTokens({ input, output, cached: measured(meta.cachedInputTokens),
+    cacheWrite: measured(meta.cacheWriteInputTokens), total: measured(meta.totalTokens), processed: measured(meta.totalProcessedTokens) },
+    getProviderDefinition(meta.providerId || "")?.apiPricing?.inputIncludesCache);
   getDatabase().prepare(`INSERT INTO account_usage
     (owner_id,message_id,model_id,provider_id,completed_at,input_tokens,output_tokens,total_tokens,cost_usd,context_window,reasoning_effort,speed_mode,cached_input_tokens,cache_write_input_tokens)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id,message_id) DO UPDATE SET
     model_id=excluded.model_id,provider_id=excluded.provider_id,completed_at=excluded.completed_at,
     input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,
     total_tokens=excluded.total_tokens,cost_usd=excluded.cost_usd,
-    cached_input_tokens=COALESCE(excluded.cached_input_tokens,account_usage.cached_input_tokens),
-    cache_write_input_tokens=COALESCE(excluded.cache_write_input_tokens,account_usage.cache_write_input_tokens),
+    cached_input_tokens=CASE WHEN excluded.input_tokens IS account_usage.input_tokens AND excluded.provider_id=account_usage.provider_id AND excluded.model_id=account_usage.model_id THEN COALESCE(excluded.cached_input_tokens,account_usage.cached_input_tokens) ELSE excluded.cached_input_tokens END,
+    cache_write_input_tokens=CASE WHEN excluded.input_tokens IS account_usage.input_tokens AND excluded.provider_id=account_usage.provider_id AND excluded.model_id=account_usage.model_id THEN COALESCE(excluded.cache_write_input_tokens,account_usage.cache_write_input_tokens) ELSE excluded.cache_write_input_tokens END,
     context_window=COALESCE(excluded.context_window,account_usage.context_window),
     reasoning_effort=COALESCE(excluded.reasoning_effort,account_usage.reasoning_effort),
     speed_mode=COALESCE(excluded.speed_mode,account_usage.speed_mode)`)
@@ -40,7 +42,7 @@ export function syncAccountUsage(ownerId: string) {
     const db = getDatabase();
     const rows = db.prepare(`SELECT c.id,c.created_at,c.updated_at FROM chats c
       LEFT JOIN account_usage_sync s ON s.owner_id=c.owner_id AND s.chat_id=c.id
-      WHERE c.owner_id=? AND (s.revision IS NULL OR s.revision<>('api-value-v2:'||c.updated_at))`).all(ownerId) as Array<{id:string;created_at:string;updated_at:string}>;
+      WHERE c.owner_id=? AND (s.revision IS NULL OR s.revision<>('cache-split-v3:'||c.updated_at))`).all(ownerId) as Array<{id:string;created_at:string;updated_at:string}>;
     for (const row of rows) {
       const messages = db.prepare(`SELECT json_extract(m.value,'$.id') AS id,
         json_extract(m.value,'$.runMetadata') AS metadata,
@@ -59,7 +61,7 @@ export function syncAccountUsage(ownerId: string) {
           ...metadata,
         } });
       }
-      db.prepare("INSERT INTO account_usage_sync(owner_id,chat_id,revision) VALUES(?,?,?) ON CONFLICT(owner_id,chat_id) DO UPDATE SET revision=excluded.revision").run(ownerId,row.id,"api-value-v2:"+row.updated_at);
+      db.prepare("INSERT INTO account_usage_sync(owner_id,chat_id,revision) VALUES(?,?,?) ON CONFLICT(owner_id,chat_id) DO UPDATE SET revision=excluded.revision").run(ownerId,row.id,"cache-split-v3:"+row.updated_at);
     }
   });
 }
@@ -72,17 +74,27 @@ export function usageRange(from: string | null, to: string | null, now = new Dat
     throw new Error("Choose a valid date range of up to one year.");
   return { from:start, to:end };
 }
-const empty = (): UsageTotals => ({ requests:0,inputTokens:0,outputTokens:0,tokens:0,costUsd:null,estimatedCostUsd:null,estimatedCostReports:0,tokenReports:0,costReports:0,inputReports:0,outputReports:0 });
+const empty = (): UsageTotals => ({ requests:0,inputTokens:0,outputTokens:0,tokens:0,costUsd:null,estimatedCostUsd:null,estimatedCostReports:0,tokenReports:0,costReports:0,inputReports:0,outputReports:0,uncachedInputTokens:0,uncachedInputReports:0,cachedInputTokens:0,cachedInputReports:0,cacheWriteInputTokens:0,cacheWriteInputReports:0,unclassifiedInputTokens:0,unclassifiedInputReports:0 });
 type Row = { model_id:string;provider_id:string;completed_at:string;input_tokens:number|null;output_tokens:number|null;total_tokens:number|null;cost_usd:number|null;cached_input_tokens:number|null;cache_write_input_tokens:number|null;context_window:number|null;reasoning_effort:string|null;speed_mode:string|null };
 function add(target: UsageTotals, row: Row, estimate: number|null = null) {
   if(estimate!==null) {target.estimatedCostUsd=(target.estimatedCostUsd??0)+estimate;target.estimatedCostReports=(target.estimatedCostReports??0)+1;}
   target.requests++;
   if (row.input_tokens !== null) target.inputReports++;
   if (row.output_tokens !== null) target.outputReports++;
+  const split = splitUsageInput({input:row.input_tokens,cached:row.cached_input_tokens,cacheWrite:row.cache_write_input_tokens},
+    getProviderDefinition(row.provider_id)?.apiPricing?.inputIncludesCache);
+  for (const [key,reports,value] of [
+    ["uncachedInputTokens","uncachedInputReports",split.uncached],
+    ["cachedInputTokens","cachedInputReports",split.cached],
+    ["cacheWriteInputTokens","cacheWriteInputReports",split.writes],
+    ["unclassifiedInputTokens","unclassifiedInputReports",split.unclassified],
+  ] as const) if(value !== null) { target[key]=(target[key]??0)+value; target[reports]=(target[reports]??0)+1; }
   target.inputTokens += row.input_tokens ?? 0;
   target.outputTokens += row.output_tokens ?? 0;
-  target.tokens += row.total_tokens ?? 0;
-  if (row.total_tokens !== null) target.tokenReports++;
+  const total = usageConsumptionTokens({input:row.input_tokens,output:row.output_tokens,cached:row.cached_input_tokens,cacheWrite:row.cache_write_input_tokens,total:row.total_tokens,processed:null},
+    getProviderDefinition(row.provider_id)?.apiPricing?.inputIncludesCache);
+  target.tokens += total ?? 0;
+  if (total !== null) target.tokenReports++;
   if (row.cost_usd !== null) { target.costUsd=(target.costUsd ?? 0)+row.cost_usd; target.costReports++; }
 }
 export function getAccountUsage(ownerId: string, from: string | null = null, to: string | null = null, pricing: PricingSnapshot | null = null, excludedProviders: readonly string[] = []): AccountUsage {

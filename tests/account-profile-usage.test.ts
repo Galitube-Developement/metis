@@ -97,9 +97,9 @@ test("CSV leaves unavailable tokens blank and preserves reported zero values",as
   const {usageCsv}=await import("../lib/account-usage-export");
   const base={modelId:"Example",providerId:"fixture",requests:1,inputTokens:0,outputTokens:0,tokens:0,costUsd:null,tokenReports:0,costReports:0,inputReports:0,outputReports:0};
   const unknown=usageCsv([base]).split("\r\n")[1];
-  assert.equal(unknown,'"Example","fixture","1","","","","","0","0"');
+  assert.equal(unknown,'"Example","fixture","1","","","","","0","0","","","",""');
   const reported=usageCsv([{...base,costUsd:0,tokenReports:1,costReports:1,inputReports:1,outputReports:1}]).split("\r\n")[1];
-  assert.equal(reported,'"Example","fixture","1","0","0","0","0","1","1"');
+  assert.equal(reported,'"Example","fixture","1","0","0","0","0","1","1","","","",""');
 });
 test("CSV quotes labels and neutralizes spreadsheet formulas including leading whitespace",async()=>{
   const {usageCsv}=await import("../lib/account-usage-export");

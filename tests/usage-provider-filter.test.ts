@@ -12,7 +12,7 @@ async function fixture(name:string) {
  const auth=await import("../lib/auth"),usage=await import("../lib/account-usage");
  const user=auth.createUser(name,"synthetic-pass-123");
  for(const [id,providerId,inputTokens,costUsd] of [["a","cursor",100,1],["b","codex",200,2],["c","custom-provider",300,3]] as const)
-  usage.recordAccountUsage(user.id,{id,role:"assistant",runMetadata:{providerId,modelId:"example-model",inputTokens,outputTokens:20,costUsd,completedAt:"2026-10-01T00:00:00Z"}});
+  usage.recordAccountUsage(user.id,{id,role:"assistant",runMetadata:{providerId,modelId:"example-model",inputTokens,outputTokens:20,cachedInputTokens:0,cacheWriteInputTokens:0,costUsd,completedAt:"2026-10-01T00:00:00Z"}});
  return {...user,token:auth.authenticateUser(name,"synthetic-pass-123")!.token};
 }
 test("provider exclusion changes every total, daily graph and exported model while retaining menu choices",async()=>{
