@@ -126,7 +126,7 @@ export function UsageDashboard() {
           </ResponsiveContainer></ChartBoundary>:<div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loading?"Loading usage…":"Usage unavailable"}</div>}
         </div>
       </div>
-      <div className={"grid grid-cols-2 gap-5 border-t border-border/60 p-5 sm:p-6 "+(showCosts?"sm:grid-cols-4":"sm:grid-cols-3")}>
+      <div className={"grid grid-cols-2 gap-5 border-t border-border/60 p-5 sm:p-6 "+(showCosts?"lg:grid-cols-4":"lg:grid-cols-3")}>
         {([["Requests",totals?.requests],["Input tokens",totals?.inputReports?totals.inputTokens:null],["Output tokens",totals?.outputReports?totals.outputTokens:null],[costLabel,totals?usageCost(totals,costMode):null]] as const).filter(([label])=>showCosts || label!==costLabel).map(([label,value])=><div key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={value} loading={loading} format={label===costLabel?"money":"integer"}/></p></div>)}
       </div>
     </section>
