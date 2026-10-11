@@ -1,3 +1,4 @@
+import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
 import { readFileSync } from "node:fs";
@@ -14,8 +15,8 @@ import {
 } from "@/lib/db-store";
 import { getProjectAgentForChat, projectTeamContextBlock } from "@/lib/project-team";
 import { getProject, projectContextBlock } from "@/lib/projects";
-import { alwaysOnSkillsPrompt, projectSkillSettings, skillsCatalogPrompt } from "@/lib/skills";
-import { autoSkillActivationPrompt } from "@/lib/skill-routing";
+import { projectSkillSettings } from "@/lib/skills";
+import { buildSkillContext } from "@/lib/skill-context";
 import { getUserAgentCwd, getMcpServers } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
 import { appendRunEvent, enqueueJob, getJob, touchJob, updateJob } from "@/lib/db-jobs";
@@ -63,6 +64,8 @@ import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { captureKnowledgeFromUserTurn } from "@/lib/knowledge-lifecycle";
 import { isJobWaitingForUser } from "@/lib/user-input-resume";
 import { armAgentRuntime } from "@/lib/agent-runtime";
+
+const asRecord = (value: unknown) => payloadRecord(value);
 
 const AGENT_INIT_TIMEOUT_MS = 90_000;
 const AGENT_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
@@ -153,40 +156,6 @@ function extractProvidedAttachment(value: unknown): ProvidedAttachment | null {
     }
   }
   return null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function asText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        const block = asRecord(item);
-        return asText(block.text ?? block.content ?? block.message);
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (value && typeof value === "object") {
-    const object = asRecord(value);
-    return asText(object.text ?? object.content ?? object.message);
-  }
-  return value == null ? "" : String(value);
 }
 
 function readFileSnapshot(rawPath: string, agentCwd: string): string | undefined {
@@ -1006,9 +975,7 @@ export async function runQueuedJob(job: AgentJob) {
     metisAgentIdentity(),
     project ? projectContextBlock(project, job.userId) : "",
     projectTeamContextBlock(chat.id, job.userId),
-    skillsCatalogPrompt(skillSettings),
-    alwaysOnSkillsPrompt(skillSettings),
-    autoSkillActivationPrompt(job.message, skillSettings, {
+    buildSkillContext(job.message, skillSettings, {
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
       `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
@@ -1176,8 +1143,10 @@ export async function runQueuedJob(job: AgentJob) {
           (eventType === "tool_result" || eventType === "tool-call-completed" || toolResult !== undefined
             ? "completed"
             : "running");
-      const detail = toolDetailFromArgs(toolArgs) || existingTool?.detail;
-      const subagent = extractSubagent(toolName, toolArgs, toolResult);
+      const preparing = eventType === "partial-tool-call" && toolResult === undefined && isActiveToolStatus(toolStatus);
+      const inputChars = preparing && toolArgs !== undefined ? (typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs)).length : undefined;
+      const detail = preparing ? existingTool?.detail : toolDetailFromArgs(toolArgs) || existingTool?.detail;
+      const subagent = preparing ? undefined : extractSubagent(toolName, toolArgs, toolResult);
       let editArgs = toolArgs;
       if (editArgs === undefined && existingTool?.input) {
         try {
@@ -1187,7 +1156,7 @@ export async function runQueuedJob(job: AgentJob) {
         }
       }
       const editMetadata =
-        toolStatus === "running" || isFinishedToolStatus(toolStatus)
+        !preparing && (toolStatus === "running" || isFinishedToolStatus(toolStatus))
           ? extractEditMetadata(
               toolName,
               editArgs,
@@ -1198,7 +1167,7 @@ export async function runQueuedJob(job: AgentJob) {
           : {};
       const resolvedName = resolveMcpToolName(toolName, toolArgs, existingTool?.input);
       const displayName = innerToolName(resolvedName, editArgs, toolResult);
-      const inputText = editArgs !== undefined ? JSON.stringify(editArgs) : undefined;
+      const inputText = !preparing && editArgs !== undefined ? JSON.stringify(editArgs) : undefined;
       const resultText = toolResult !== undefined && !subagent ? JSON.stringify(toolResult) : undefined;
       const todos = todosFromToolPayload(inputText, resultText);
       const kind = classifyToolKind(displayName || resolvedName, editArgs, toolResult);
@@ -1207,6 +1176,8 @@ export async function runQueuedJob(job: AgentJob) {
         id: stableId,
         name: displayName || resolvedName,
         status: toolStatus,
+        phase: preparing ? "preparing" : "executing",
+        ...(inputChars !== undefined ? { inputChars } : {}),
         kind,
         ...(detail ? { detail } : {}),
         ...(editMetadata.path ? { path: editMetadata.path } : {}),
@@ -1229,7 +1200,7 @@ export async function runQueuedJob(job: AgentJob) {
       } else {
         parts.push({ type: "tool", ...nextTool });
       }
-      checkpoint(true);
+      checkpoint(!preparing || existingToolIndex < 0);
       const toolResultText = typeof toolResult === "string"
         ? toolResult
         : toolResult ? JSON.stringify(toolResult) : "";
@@ -1303,6 +1274,8 @@ export async function runQueuedJob(job: AgentJob) {
         name: nextTool.name,
         status: toolStatus,
         kind: nextTool.kind,
+        phase: nextTool.phase,
+        ...(nextTool.inputChars !== undefined ? { inputChars: nextTool.inputChars } : {}),
    ...(nextTool.source ? { source: nextTool.source } : {}),
         ...(nextTool.detail ? { detail: nextTool.detail } : {}),
         ...(nextTool.path ? { path: nextTool.path } : {}),

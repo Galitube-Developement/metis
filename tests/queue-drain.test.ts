@@ -130,3 +130,21 @@ test("the worker scheduler polls persisted chat queues", () => {
   assert.match(worker, /error\.name === "ActiveChatRun"/);
   assert.match(worker, /if \(Date\.now\(\) - lastQueueDrain > 1_000\)/);
 });
+
+for (const waiting of ["question", "approval", "waiting_input", "waiting_for_user"] as const) {
+  test(`automatic drain preserves the queue while waiting for ${waiting}`, () => {
+    const { createChat, updateChat, getChat } = modules[0];
+    const { drainNextQueuedMessage } = modules[1];
+    const chat = createChat("Waiting queue");
+    const queued = { id: randomUUID(), text: "wait until answered" };
+    const pending = waiting === "question" ? { pendingQuestion: { questionId: randomUUID(), questions: [{ question: "Choose" }] } }
+      : waiting === "approval" ? { pendingApproval: { id: randomUUID() } } : { runStatus: waiting };
+    updateChat(chat.id, { queuedMessages: [queued], ...pending } as Parameters<typeof updateChat>[1]);
+    assert.equal(drainNextQueuedMessage(chat.id), null);
+    assert.deepEqual(getChat(chat.id)?.queuedMessages, [queued]);
+    assert.equal(getChat(chat.id)?.messages.length, 0);
+    updateChat(chat.id, { pendingQuestion: null, pendingApproval: null, runStatus: "running" });
+    const job = drainNextQueuedMessage(chat.id);
+    assert.equal(job?.messageId, queued.id);
+  });
+}

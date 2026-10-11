@@ -1,4 +1,8 @@
+import { payloadRecord, payloadText } from "@/lib/agent-payload";
 import { classifyToolKind } from "@/lib/tool-call-display";
+
+const asRecord = (value: unknown) => payloadRecord(value, 3);
+const asText = (value: unknown) => payloadText(value, 3);
 
 export { classifyToolKind as classifyTranscriptTool } from "@/lib/tool-call-display";
 
@@ -34,40 +38,6 @@ const DUMP_LINE =
 const DUMP_TOKEN = /thinkingMessage|assistantMessage|conversationSteps|readToolCall/;
 const TOOL_CALL_KEY = /^(.*)ToolCall$/;
 const MAX_NESTED_RESULT = 4_000;
-
-function asRecord(value: unknown, depth = 0): Record<string, unknown> {
-  if (depth > 3) return {};
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return {};
-    try {
-      return asRecord(JSON.parse(trimmed) as unknown, depth + 1);
-    } catch {
-      return {};
-    }
-  }
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function asText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        const block = asRecord(item);
-        return asText(block.text ?? block.content ?? block.message);
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (value && typeof value === "object") {
-    const object = asRecord(value);
-    return asText(object.text ?? object.content ?? object.message);
-  }
-  return value == null ? "" : String(value);
-}
 
 function compactJson(value: unknown, max = MAX_NESTED_RESULT): string | undefined {
   if (value == null) return undefined;

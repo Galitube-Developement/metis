@@ -78,6 +78,12 @@
       "sourceType": "bundled",
       "skillPath": "skills/bundled/skill-creator/SKILL.md",
       "computedHash": "4ee426f1c45139912942835882d8cc212cc873a6cfaeaf71da335abc8f3af3a9"
+    },
+    "metis-development": {
+      "source": "custom",
+      "sourceType": "local",
+      "skillPath": "skills/manual/metis-development/SKILL.md",
+      "computedHash": "25f4c7c9c4d1941ea9df1dfeeceafe8e820fd9f762952671e2546767b56df11f"
     }
   }
 }

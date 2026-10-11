@@ -1,4 +1,7 @@
 "use client";
+import { AnimatedNumber } from "@/components/animated-number";
+import { ChartBoundary } from "@/components/chart-boundary";
+import { useChartMotion } from "@/components/use-chart-motion";
 import { Fragment, useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, Download, Info, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -14,8 +17,6 @@ import { useUsageProviderFilter } from "./use-usage-provider-filter";
 import { UsageProviderFilter } from "./usage-provider-filter";
 import { UsageModelTooltip } from "./usage-model-tooltip";
 const compact=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:1});
-const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
-const format=(value:number|null,cost=false)=>value===null?"—":cost?money.format(value):value.toLocaleString();
 
 // Match the actual visible table columns, including inside narrow embedded views.
 // A desktop colSpan creates empty ghost columns when CSS hides cells on mobile.
@@ -43,6 +44,8 @@ export function UsageDashboard() {
   const [sort,setSort]=useState<"tokens"|"costUsd"|"requests"|"modelId">("tokens"),[ascending,setAscending]=useState(false);
   const [expanded,setExpanded]=useState<string|null>(null);
   const id=useId().replaceAll(":","");
+  const motion=useChartMotion();
+  const chartData=useMemo(()=>usage?.days.map(day=>({...day,tokens:day.requests && !day.tokenReports ? null:day.tokens,costUsd:day.requests?usageCost(day,costMode):0})) || [],[usage,costMode]);
   useEffect(()=>{
     if(range==="custom" && (!from || !to)) { setUsage(null);setLoading(false);return; }
     const controller=new AbortController();
@@ -104,27 +107,27 @@ export function UsageDashboard() {
         {([["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).filter(([key])=>showCosts || key!=="costUsd").map(([key,label])=><button key={key} type="button" aria-pressed={activeMetric===key} onClick={()=>setMetric(key)}
           className={"min-h-12 border-b-2 px-4 text-sm transition-colors "+(activeMetric===key?"border-primary text-foreground":"border-transparent text-muted-foreground hover:text-foreground")}>{label}</button>)}
       </div>
-      <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[210px_1fr]">
+      <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
         <div><p className="text-xs text-muted-foreground">{activeMetric==="costUsd"?costLabel:activeMetric==="tokens"?"Reported tokens":"Requests"}</p>
-          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl">{totals ? format(activeMetric==="costUsd"?usageCost(totals,costMode):activeMetric==="tokens" && !totals.tokenReports ? null:totals[activeMetric],activeMetric==="costUsd"):loading?"…":"—"}</p>
+          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl"><AnimatedNumber valueKey={activeMetric==="costUsd"?activeMetric+costMode:activeMetric} value={totals ? activeMetric==="costUsd"?usageCost(totals,costMode):activeMetric==="tokens" && !totals.tokenReports ? null:totals[activeMetric]:undefined} loading={loading} format={activeMetric==="costUsd"?"money":"integer"}/></p>
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{usage?.from} — {usage?.to}<br />Daily totals · UTC</p>
           {activeMetric==="costUsd" && totals ? <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{reports ? reports.toLocaleString()+" of "+totals.requests.toLocaleString()+" runs "+(costMode==="estimated"?"estimated":"reported")+(reports<totals.requests?" · Partial total":"") : costMode==="estimated"?"No matching prices and complete token splits for these runs.":"Your providers have not reported costs for these runs."}</p>:null}
         </div>
         <div className="h-60 min-w-0" aria-label={"Daily "+(activeMetric==="costUsd"?costLabel:activeMetric)+" chart"}>
-          {usage && !error && !loading ? <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <AreaChart key={costMode+providerFilterKey} data={usage.days.map(day=>({...day,tokens:day.requests && !day.tokenReports ? null:day.tokens,costUsd:day.requests?usageCost(day,costMode):0}))} margin={{top:8,right:8,bottom:0,left:0}}>
+          {usage && !error && !loading ? <ChartBoundary resetKey={costMode+providerFilterKey+activeMetric+usage.from+usage.to+refresh} label="usage-overview"><ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <AreaChart key={costMode+providerFilterKey} data={chartData} margin={{top:8,right:8,bottom:0,left:0}}>
               <defs><linearGradient id={id+"fill"} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16}/><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0}/></linearGradient></defs>
               <CartesianGrid stroke="var(--border)" vertical={false} strokeDasharray="3 5" opacity={0.6}/>
               <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={36} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
               <YAxis width={48} tickFormatter={n=>activeMetric==="costUsd"?"$"+compact.format(n):compact.format(n)} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
               <Tooltip allowEscapeViewBox={{x:false,y:false}} wrapperStyle={{pointerEvents:"auto"}} content={props=><UsageModelTooltip active={props.active} day={usage.days.find(day=>day.date===props.label)} models={usage.modelDays?.[String(props.label)] || []} metric={activeMetric} costMode={costMode}/>}/>
-              <Area type="monotone" dataKey={activeMetric} stroke="var(--chart-1)" strokeWidth={1.8} fill={"url(#"+id+"fill)"} isAnimationActive={false} connectNulls={false}/>
+              <Area type="monotone" dataKey={activeMetric} stroke="var(--chart-1)" strokeWidth={1.8} fill={"url(#"+id+"fill)"} {...motion} connectNulls={false}/>
             </AreaChart>
-          </ResponsiveContainer>:<div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loading?"Loading usage…":"Usage unavailable"}</div>}
+          </ResponsiveContainer></ChartBoundary>:<div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loading?"Loading usage…":"Usage unavailable"}</div>}
         </div>
       </div>
-      <div className={"grid grid-cols-2 gap-5 border-t border-border/60 p-5 sm:p-6 "+(showCosts?"sm:grid-cols-4":"sm:grid-cols-3")}>
-        {([["Requests",totals?.requests],["Input tokens",totals?.inputReports?totals.inputTokens:null],["Output tokens",totals?.outputReports?totals.outputTokens:null],[costLabel,totals?usageCost(totals,costMode):null]] as const).filter(([label])=>showCosts || label!==costLabel).map(([label,value])=><div key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg tabular-nums">{format(value??null,label===costLabel)}</p></div>)}
+      <div className={"grid grid-cols-2 gap-5 border-t border-border/60 p-5 sm:p-6 "+(showCosts?"lg:grid-cols-4":"lg:grid-cols-3")}>
+        {([["Requests",totals?.requests],["Input tokens",totals?.inputReports?totals.inputTokens:null],["Output tokens",totals?.outputReports?totals.outputTokens:null],[costLabel,totals?usageCost(totals,costMode):null]] as const).filter(([label])=>showCosts || label!==costLabel).map(([label,value])=><div key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={value} loading={loading} format={label===costLabel?"money":"integer"}/></p></div>)}
       </div>
     </section>
     <section aria-label="Usage by model">
@@ -146,10 +149,10 @@ export function UsageDashboard() {
                   <span className="min-w-0"><span className="block truncate font-medium" title={model.modelId}>{model.modelId}</span><span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><span aria-hidden="true"><ProviderLogo providerId={model.providerId} className="size-3.5"/></span><span className="truncate">{model.providerId}</span></span></span>
                 </button>
               </td>
-              {showCosts ? <td className="hidden whitespace-nowrap px-4 py-4 tabular-nums sm:table-cell" title={usageCostReports(model,costMode)+" of "+model.requests+" runs "+(costMode==="estimated"?"estimated":"reported")}>{format(usageCost(model,costMode),true)}</td>:null}
-              <td className="px-3 py-4 tabular-nums sm:px-4">{model.tokenReports?compact.format(model.tokens):"—"}</td>
-              <td className="px-3 py-4 tabular-nums sm:px-4">{compact.format(model.requests)}</td>
-              <td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.inputReports?model.inputTokens:null)}</td><td className="hidden px-4 py-4 tabular-nums lg:table-cell">{format(model.outputReports?model.outputTokens:null)}</td>
+              {showCosts ? <td className="hidden whitespace-nowrap px-4 py-4 tabular-nums sm:table-cell" title={usageCostReports(model,costMode)+" of "+model.requests+" runs "+(costMode==="estimated"?"estimated":"reported")}><AnimatedNumber value={usageCost(model,costMode)} format="money"/></td>:null}
+              <td className="px-3 py-4 tabular-nums sm:px-4"><AnimatedNumber value={model.tokenReports?model.tokens:null} format="compact"/></td>
+              <td className="px-3 py-4 tabular-nums sm:px-4"><AnimatedNumber value={model.requests} format="compact"/></td>
+              <td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.inputReports?model.inputTokens:null}/></td><td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.outputReports?model.outputTokens:null}/></td>
             </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={columns} className="bg-muted/15 px-4 py-5 sm:px-6">
               {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to} costMode={costMode}/>:null}
             </td></tr></Fragment>;

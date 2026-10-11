@@ -173,7 +173,7 @@ test("mobile composer uses a centered header model picker and progressive second
   assert.match(shellSource, /open=\{mobileModelMenuOpen\}/);
   assert.match(shellSource, /w-\[min\(38vw,18rem\)\][\s\S]*aria-label=\{`Model:/);
   assert.match(shellSource, /className="flex flex-col gap-1"/);
-  assert.match(shellSource, /aria-label=\{`Agent mode:[\s\S]*h-11 min-w-0 max-w-\[11rem\]/);
+  assert.match(shellSource, /aria-label=\{`Agent mode:[\s\S]*h-7 min-w-0 max-w-\[11rem\]/);
   assert.match(shellSource, /aria-label=\{`Runtime permissions:[\s\S]*className="hidden size-7[\s\S]*md:flex/);
   assert.match(shellSource, /className="hidden h-7[\s\S]*md:inline-flex"[\s\S]*title=\{`Model:/);
   assert.match(shellSource, /mobileComposerControls=\{\{\s*modes,/);

@@ -1,5 +1,5 @@
 import type { GlobalModelSettings } from "@/lib/store";
-import { enabledSkills } from "@/lib/skills";
+import { enabledSkills, type SkillRecord } from "@/lib/skills";
 
 export const DESIGN_SKILL_IDS = [
   "metis-design-director",
@@ -28,11 +28,11 @@ export function isVisualDesignTask(message: string) {
 export function autoSkillActivationPrompt(
   message: string,
   settings?: GlobalModelSettings,
-  options: { hasVisualReference?: boolean } = {},
+  options: { hasVisualReference?: boolean; installedSkills?: SkillRecord[] } = {},
 ) {
   if (!isVisualDesignTask(message)) return "";
 
-  const available = new Map(enabledSkills(settings).map((skill) => [skill.id, skill]));
+  const available = new Map((options.installedSkills ?? enabledSkills(settings)).map((skill) => [skill.id, skill]));
   const requested = new Set<string>();
   const add = (id: string) => {
     if (available.has(id)) requested.add(id);

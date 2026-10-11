@@ -1,5 +1,7 @@
 "use client";
 
+import { useEscapeDismiss } from "@/components/use-escape-dismiss";
+
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Code2, Fullscreen, Minimize2, ZoomIn, ZoomOut } from "lucide-react";
@@ -62,14 +64,7 @@ export function MermaidDiagram({
     };
   }, [code, reactId]);
 
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+  useEscapeDismiss(fullscreen, setFullscreen);
 
   const zoomAt = useCallback((event: { clientX: number; clientY: number; deltaY: number }) => {
     const surface = surfaceRef.current;

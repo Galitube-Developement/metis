@@ -1,4 +1,5 @@
 "use client";
+import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { createClientId } from "@/lib/client-id";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
@@ -15,7 +16,6 @@ import { RunStatus } from "@/components/run-status";
 
 import {
   ClipboardEvent,
-  DragEvent,
   FormEvent,
   Fragment,
   KeyboardEvent,
@@ -46,6 +46,7 @@ import {
   Cpu,
   Gauge,
   MemoryStick,
+  Monitor,
   Network,
   Users,
   ArrowLeft,
@@ -109,6 +110,7 @@ import {
   CornerUpLeft,
   Undo2,
   Video,
+  Upload,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -117,11 +119,15 @@ import { FileEmbed } from "@/components/file-embed";
 import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
+import { useLiveMessageMotion } from "@/components/use-live-message-motion";
+import type { ToolPart as StoredToolPart } from "@/lib/store";
+import { AgentActivity } from "@/components/agent-activity";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
 import { projectQuestionTranscript, type QuestionAnswerReference } from "@/lib/question-transcript";
 import { extractAssistantImages, uniqueAssistantImages } from "@/lib/assistant-images";
+import { FileDropZone } from "@/components/file-drop-zone";
 import { ChatFileDropZone } from "@/components/chat-file-drop-zone";
 import { RichComposerInput, composerPlainText } from "@/components/rich-composer-input";
 import { QueuedPromptPreview } from "@/components/queued-prompt-preview";
@@ -193,7 +199,7 @@ import {
   shouldPersistComposerSession,
   shouldStartQueuedFollowUp,
 } from "@/lib/composer-send";
-import { removeQueuedFollowUp } from "@/lib/queue-client";
+import { removeQueuedFollowUp, updateChatQueue, type ChatQueueState, type ChatQueueUpdate } from "@/lib/queue-client";
 import { hiddenTranscriptMessageCount, anchoredTranscriptScrollTop, pinScrollTop, shouldPinOpenedChat, shouldLoadEarlierMessages, transcriptScrollAction, visibleTranscriptMessages } from "@/lib/chat-scroll";
 import { mergeIncomingWorkspace, remainingWorkspaceDraft, type WorkspaceDraftPatch } from "@/lib/workspace-drafts";
 import { getMetisDeviceId } from "@/lib/metis-device";
@@ -375,31 +381,9 @@ function formatToolPayload(value?: string) {
   }
 }
 
-type ToolPart = {
-  id: string;
-  name: string;
-  status: string;
-  detail?: string;
-  kind?: "plan" | "edit" | "read" | "shell" | "subagent" | "mcp" | "canvas" | "note" | "todo" | "browser" | "memory" | "automation" | "compaction" | "other";
-  path?: string;
-  diff?: { before?: string; after?: string; additions?: number; deletions?: number };
-  todos?: Array<{ id?: string; content: string; status?: string }>;
-  input?: string;
-  result?: string;
-  resultUrl?: string;
-  inputUrl?: string;
+type ToolPart = StoredToolPart & {
   sourceMessageCreatedAt?: string;
   sourceMessageIsLatestAssistant?: boolean;
-  subagent?: {
-    agentId?: string;
-    chatId?: string;
-    title?: string;
-    mode?: string;
-    model?: string;
-    prompt?: string;
-    messages?: Array<{ role: string; text: string; timestamp?: string }>;
-    tools?: ToolPart[];
-  };
 };
 
 type MsgPart =
@@ -699,7 +683,7 @@ type ChatSessionState = {
   terminalSessionId?: string;
   terminalTabs?: TerminalTab[];
   activeTerminalTabId?: string;
-  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "monitor" | "team" | "memory";
+  workspaceTab?: "canvas" | "plan" | "terminal" | "files" | "browser" | "desktops" | "monitor" | "team" | "memory";
   activeWorkspaceId?: string | null;
   workspaceOpen?: boolean;
   workspaceWidth?: number;
@@ -737,6 +721,7 @@ function normalizeWorkspaceTab(value: unknown): NonNullable<ChatSessionState["wo
     value === "terminal" ||
     value === "files" ||
     value === "browser" ||
+    value === "desktops" ||
     value === "monitor" ||
     value === "team" ||
     value === "memory"
@@ -1870,6 +1855,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [browserHistoryOpen, setBrowserHistoryOpen] = useState(false);
   const [browserError, setBrowserError] = useState("");
   const [browserInstalling, setBrowserInstalling] = useState(false);
+  const [browserFileUploading, setBrowserFileUploading] = useState(false);
+  const browserFileInputRef = useRef<HTMLInputElement>(null);
   const [browserViewport, setBrowserViewport] = useState({ width: 1280, height: 800 });
   const [browserFrameSize, setBrowserFrameSize] = useState({ width: 0, height: 0 });
   const [browserWidthInput, setBrowserWidthInput] = useState("1280");
@@ -1999,7 +1986,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setBusy(value);
   }, []);
   const [runningChatIds, setRunningChatIds] = useState<string[]>([]);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [queuedState, setQueuedState] = useState<ChatQueueState<QueuedMessage>>({ chatId: null, messages: [] });
+  const queuedMessages = queuedState.chatId === activeChatId ? queuedState.messages : [];
+  const setQueuedMessages = useCallback((update: ChatQueueUpdate<QueuedMessage>) => {
+    setQueuedState((current) => updateChatQueue(current, activeChatId, update));
+  }, [activeChatId]);
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dragOverQueueId, setDragOverQueueId] = useState<string | null>(null);
   const queueDrainBlockedRef = useRef(false);
@@ -2205,7 +2196,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const navigateBrowserRef = useRef<(url: string) => void>(() => {});
   const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
   const selectModeRef = useRef<(modeId: string) => Promise<void>>(async () => {});
-  const applyServerQueuedMessagesRef = useRef<(messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
+  const applyServerQueuedMessagesRef = useRef<(chatId: string, messages: PersistedQueuedMessage[], removedIds?: string[]) => void>(() => {});
   const queueDrainRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -2237,6 +2228,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const workspaceDraftChangesRef = useRef<Map<string, WorkspaceDraftPatch>>(new Map());
   const workspaceListSaveTimerRef = useRef<number | null>(null);
   const stateRef = useRef({
+    chatId: activeChatId,
+    queueChatId: queuedState.chatId,
+    loadingChatId,
     messages,
     chatTitle,
     agentId,
@@ -2417,7 +2411,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, []);
 
   useEffect(() => {
-    activeChatIdRef.current = activeChatId;
     activeBrowserTabIdRef.current = activeBrowserTabId;
     browserUrlRef.current = browserUrl;
     browserLoadingRef.current = browserLoading;
@@ -2458,6 +2451,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     stateRef.current = {
+      chatId: activeChatId,
+      queueChatId: queuedState.chatId,
+      loadingChatId,
       messages,
       chatTitle,
       agentId,
@@ -2483,6 +2479,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       input,
     };
   }, [
+    activeChatId,
+    queuedState.chatId,
+    loadingChatId,
     messages,
     chatTitle,
     agentId,
@@ -2720,6 +2719,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const id = activeChatIdRef.current;
     if (!id || activeChatIncognito) return;
     const s = stateRef.current;
+    if (s.chatId !== id || s.queueChatId !== id || s.loadingChatId) return;
     const cachedMessages = s.messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
       ...m,
       streaming: false,
@@ -2829,6 +2829,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- drop a stale waveform after view/chat changes
   }, [activeChatId, automationsOpen, notesOpen]);
 
+  const liveMessageMotionIds = useLiveMessageMotion(activeChatId, messages);
   const isDraft = !activeChatId;
   const isEmpty = messages.length === 0;
   const activeChatIsRunning = Boolean(
@@ -3089,6 +3090,35 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     } finally {
       setBrowserLoading(false);
     }
+  }
+
+  async function uploadFilesToBrowser(files: FileList, event?: DragEvent) {
+    if (!activeChatId || browserFileUploading) return;
+    let point: { x: number; y: number } | undefined;
+    if (event) {
+      const rect = browserScreenshotRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0 || event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+        toast.error("Drop files onto an upload area inside the browser page."); return;
+      }
+      point = { x: (event.clientX - rect.left) / rect.width * browserViewport.width,
+        y: (event.clientY - rect.top) / rect.height * browserViewport.height };
+    }
+    const incoming = Array.from(files);
+    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size || file.size > MAX_FILE_BYTES)) {
+      toast.error("Choose up to 10 files, each 1 GB or smaller."); return;
+    }
+    setBrowserFileUploading(true);
+    try {
+      // Capture this chat, tab and drop location before any background upload waits.
+      const tasks = incoming.map(file => startUpload(file, { label: "Browser · " + (browserTabs.find(tab => tab.id === activeBrowserTabId)?.title || "Page") }));
+      const uploaded = await Promise.all(tasks.map(waitForUpload));
+      const result = await performBrowserAction(point ? "drop_files" : "upload_files", {
+        uploadIds: uploaded.map(file => file.id), url: browserUrl || "about:blank", ...(point || {}),
+      });
+      if (result) toast.success("Files delivered to the browser page");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Browser upload failed");
+    } finally { setBrowserFileUploading(false); }
   }
 
   const browserNeedsInstall = /playwright chromium is not installed|executable doesn't exist|install browser/i.test(browserError);
@@ -3442,6 +3472,33 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setAgentPointer(null);
     };
   }, [activeBrowserAgentRun, activeChatId, browserEnabled]);
+
+  const [desktopAgentClientId, setDesktopAgentClientId] = useState<string | null>(null);
+  const [desktopAgentActive, setDesktopAgentActive] = useState(false);
+  const [desktopActivityTimestamp, setDesktopActivityTimestamp] = useState(0);
+  useEffect(() => {
+    setDesktopAgentClientId(null);
+    setDesktopAgentActive(false);
+    if (!activeChatId || loadingChatId) return;
+    const source = new EventSource(`/api/remote-clients/live?chatId=${encodeURIComponent(activeChatId)}`);
+    source.onmessage = event => {
+      try {
+        const data = JSON.parse(event.data) as { clientId?: string; phase?: string; timestamp?: number };
+        if (!data.clientId) return;
+        if (data.phase === "start") {
+          setDesktopAgentClientId(data.clientId);
+          setDesktopAgentActive(true);
+          setDesktopActivityTimestamp(data.timestamp || Date.now());
+          setWorkspaceTab("desktops");
+          setWorkspaceMounted(true);
+          if (!isMobileChatViewport()) setWorkspaceOpen(true);
+        } else if (data.phase === "end") {
+          setDesktopAgentActive(false);
+        }
+      } catch { /* Ignore malformed activity events. */ }
+    };
+    return () => source.close();
+  }, [activeChatId, loadingChatId]);
 
   // Load persisted navigation history when the browser workspace tab opens.
   useEffect(() => {
@@ -4107,7 +4164,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setMessageOffset(snap.messageOffset);
     setHasEarlierMessages(snap.hasEarlierMessages);
     for (const messageId of snap.removedQueuedMessageIds ?? []) removedIdsFor(id).add(messageId);
-    setQueuedMessages(
+    setQueuedState({ chatId: id, messages:
       mergeQueuedFollowUps(
         [],
         (snap.queuedMessages ?? []).map((message) => ({
@@ -4116,7 +4173,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         })),
         { removedIds: removedQueueIdsRef.current.get(id) },
       ),
-    );
+    });
     setBrowserTabs(browser.tabs);
     setActiveBrowserTabId(browser.activeTabId);
     const activeTab = browser.tabs.find((tab) => tab.id === browser.activeTabId);
@@ -4243,7 +4300,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setReferences([]);
       setMessageOffset(0);
       setHasEarlierMessages(false);
-      setQueuedMessages([]);
+      setQueuedState({ chatId: null, messages: [] });
       setWorkspaces([]);
       setActiveWorkspaceId(null);
       setWorkspaceOpen(false);
@@ -4357,6 +4414,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           chatCacheRef.current.set(id, diskCached);
         }
       }
+      if (activeChatIdRef.current !== id || chatLoadRequestRef.current !== requestId) return false;
       const hasUsableCachedMessages = Boolean(cached?.messages.length);
       if (
         alreadyActive &&
@@ -4418,6 +4476,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               chatLoadRequestRef.current !== requestId
             ) return;
             const data = (await res.json()) as ChatPage;
+            if (activeChatIdRef.current !== id || chatLoadRequestRef.current !== requestId) return;
             if (!acceptServerSnapshot(id, data.chat.updatedAt)) return;
             const mid =
               data.chat.modelId ||
@@ -4476,7 +4535,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             // is still applying deltas. Keep that live state instead of
             // replacing it with the older durable snapshot.
             setMessages(() => messages);
-            applyServerQueuedMessagesRef.current(next.queuedMessages, next.removedQueuedMessageIds);
+            applyServerQueuedMessagesRef.current(id, next.queuedMessages, next.removedQueuedMessageIds);
             setWorkspaces(next.workspaces);
             setBrowserTabs(next.browserContext.tabs);
             setActiveBrowserTabId(next.browserContext.activeTabId);
@@ -4964,6 +5023,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         if (!res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
+        if (activeChatIdRef.current !== chatId) return;
         const activityChanged = chatProgramEventsChanged(stateRef.current.messages, data.chat.messages);
         if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)) return;
         const liveRun = runtimeRef.current.has(chatId);
@@ -4977,7 +5037,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         }
         setChatTitle(data.chat.title);
         setMessages((current) => mergeMessages(current, mapApiMessages(data.chat.messages, data.chat.runStatus)));
-        applyServerQueuedMessagesRef.current(Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
+        applyServerQueuedMessagesRef.current(chatId, Array.isArray(data.chat.queuedMessages) ? data.chat.queuedMessages : [], data.chat.removedQueuedMessageIds);
         const serverModeId = data.chat.sessionState?.modeId || "agent";
         setChatGoal(data.chat.sessionState?.goal || "");
         setChatGoalReferences(data.chat.sessionState?.goalReferences || []);
@@ -5437,7 +5497,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   // Keep in-memory chat cache warm so switches stay instant
   useEffect(() => {
-    if (!activeChatId || activeChatIncognito) return;
+    if (!activeChatId || activeChatIncognito || loadingChatId || queuedState.chatId !== activeChatId) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
     return scheduleUiBackgroundTask(() => {
     const cachedMessages = messages.slice(-CHAT_MESSAGE_PRELOAD_MAX).map((m) => ({
@@ -5500,6 +5560,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [
     activeChatId,
     activeChatIncognito,
+    loadingChatId,
+    queuedState.chatId,
     messages,
     chatTitle,
     agentId,
@@ -5531,7 +5593,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   // a chat instant even after a page reload while the server snapshot is
   // revalidated in the background. Never persist incognito chats.
   useEffect(() => {
-    if (!activeChatId || activeChatIncognito) return;
+    if (!activeChatId || activeChatIncognito || loadingChatId || queuedState.chatId !== activeChatId) return;
     if (!shouldPersistClientChatSnapshot({ busy })) return;
     return scheduleUiBackgroundTask(() => {
       const snapshot = chatCacheRef.current.get(activeChatId);
@@ -5540,6 +5602,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [
     activeChatId,
     activeChatIncognito,
+    loadingChatId,
+    queuedState.chatId,
     messages,
     chatTitle,
     modelId,
@@ -5556,7 +5620,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!activeChatId || isDraft || loadingChatId) return;
-    const timer = window.setTimeout(() => persistQueuedFollowUps(queuedMessages), 400);
+    const timer = window.setTimeout(() => persistQueuedFollowUps(activeChatId, queuedMessages), 400);
     return () => window.clearTimeout(timer);
   }, [activeChatId, isDraft, loadingChatId, queuedMessages]);
 
@@ -5971,6 +6035,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       if (!res.ok) return null;
       const data = (await res.json()) as { chat: Chat };
+      const draftQueuedMessages = stateRef.current.chatId === null ? stateRef.current.queuedMessages : [];
       chatCacheRef.current.set(data.chat.id, {
         messages: stateRef.current.messages,
         chatTitle: data.chat.title,
@@ -5979,7 +6044,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         modelId: stateRef.current.modelId,
         modelParams: stateRef.current.modelParams,
         runtimeMode: normalizeRuntimeMode(data.chat.runtimeMode),
-        queuedMessages: stateRef.current.queuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
+        queuedMessages: draftQueuedMessages.map(({ id, text, referenceText, references, storedAttachments }) => ({
           id,
           text,
           ...(referenceText ? { referenceText } : {}),
@@ -6003,6 +6068,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       const stillOnDraft = !activeChatIdRef.current;
       if (stillOnDraft) {
+        setQueuedState({ chatId: data.chat.id, messages: draftQueuedMessages });
         const files = pendingByChatRef.current.get("__draft__");
         if (files) { pendingByChatRef.current.set(data.chat.id, files); pendingByChatRef.current.delete("__draft__"); }
         setActiveChatId(data.chat.id);
@@ -6201,6 +6267,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         );
         return false;
       }
+      if (activeChatIdRef.current !== chatId) return false;
       const nextMessages = mapApiMessages(data.chat.messages, data.chat.runStatus);
       const nextWorkspaces = workspacesFromChat(data.chat);
       const nextModelId = data.chat.modelId || modelId;
@@ -6209,12 +6276,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setActiveWorkspaceId(nextWorkspaces[0]?.id ?? null);
       setAgentId(data.chat.agentId);
       setChatTitle(data.chat.title);
-      setQueuedMessages(
-        (data.chat.queuedMessages ?? []).map((message) => ({
-          ...message,
-          files: [],
-        })),
-      );
+      setQueuedState({ chatId, messages: (data.chat.queuedMessages ?? []).map((message) => ({
+        ...message, files: [],
+      })) });
       setLiveStatus("");
       setBusySynced(false);
       sendInFlightKeysRef.current.delete(chatId);
@@ -6605,23 +6669,23 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
   }
 
-  function applyServerQueuedMessages(server: PersistedQueuedMessage[], removedIds?: string[]) {
-    const chatId = activeChatIdRef.current || "";
+  function applyServerQueuedMessages(chatId: string, server: PersistedQueuedMessage[], removedIds?: string[]) {
+    if (activeChatIdRef.current !== chatId) return;
     for (const id of removedIds ?? []) removedIdsFor(chatId).add(id);
     const consumed = new Set<string>(stateRef.current.messages
       .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
       .map((message) => message.id));
-    setQueuedMessages((current) => mergeQueuedFollowUps(
-      current,
+    setQueuedState((current) => updateChatQueue(current, chatId, (items) => mergeQueuedFollowUps(
+      items,
       server.map((message) => ({ ...message, files: [] as PendingFile[] })),
       { consumedIds: consumed, removedIds: removedIdsFor(chatId) },
-    ));
+    )));
   }
   applyServerQueuedMessagesRef.current = applyServerQueuedMessages;
 
-  function persistQueuedFollowUps(items: QueuedMessage[]) {
-    const chatId = activeChatIdRef.current;
-    if (!chatId) return;
+  function persistQueuedFollowUps(chatId: string | null, items: QueuedMessage[]) {
+    if (!chatId || activeChatIdRef.current !== chatId ||
+      stateRef.current.chatId !== chatId || stateRef.current.queueChatId !== chatId || stateRef.current.loadingChatId) return;
     const consumed = new Set<string>(stateRef.current.messages
       .filter((message) => message.role === "user" && !queuedSendRef.current.has(message.id))
       .map((message) => message.id));
@@ -6644,6 +6708,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function queueCurrentMessage(text: string, files: PendingFile[]) {
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId) return;
     setQueuedMessages((current) => {
       if (text && current.some((item) => item.text === text)) return current;
       const next = [
@@ -6657,7 +6722,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ...(restoredAttachments.length ? { storedAttachments: [...restoredAttachments] } : {}),
       },
     ];
-      persistQueuedFollowUps(next);
+      persistQueuedFollowUps(activeChatId, next);
       return next;
     });
     setInputGuarded("", "queued");
@@ -6670,6 +6735,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function sendQueuedMessage(message: QueuedMessage) {
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId ||
+      !queuedMessages.some((item) => item.id === message.id)) return;
+    if (pendingQuestion || pendingQuestionIdRef.current || answeringQuestion) {
+      toast.info("Answer the agent's question before sending queued messages.");
+      return;
+    }
     if (queuedSendRef.current.has(message.id)) return;
     const activeId = activeChatIdRef.current;
     const activeRuntime = activeId ? runtimeRef.current.get(activeId) : undefined;
@@ -6678,7 +6749,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       drainInFlight: queueDrainRef.current || queuedSendRef.current.size > 0,
       sendInFlight: sendInFlightKeysRef.current.has(sendLockKey),
       busy: busy || busyRef.current,
-      waitingForQuestion: Boolean(pendingQuestion),
+      waitingForQuestion: Boolean(pendingQuestion || pendingQuestionIdRef.current),
       hasActiveRuntime: Boolean(activeRuntime),
       interruptActiveRun: true,
     });
@@ -6715,11 +6786,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         () => {
           releaseQueueSubmission();
           setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
-          if (activeChatIdRef.current === activeId) {
-            pendingQuestionIdRef.current = null;
-            setPendingQuestion(null);
-            setPendingApproval(null);
-          }
         },
         message.storedAttachments,
         true,
@@ -6730,7 +6796,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   async function removeMessageFromQueue(message: QueuedMessage) {
-    const chatId = activeChatIdRef.current;
+    if (activeChatIdRef.current !== activeChatId || loadingChatId || queuedState.chatId !== activeChatId) return false;
+    const chatId = activeChatId;
     const index = queuedMessages.findIndex((item) => item.id === message.id);
     try {
       return await removeQueuedFollowUp({
@@ -6919,7 +6986,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     storedAttachmentsOverride?: MsgAttachment[],
     sendQueuedNow = false,
   ) {
-    if (reverting) return;
+    if (reverting || loadingChatId || activeChatIdRef.current !== activeChatId) return;
     if (
       e &&
       "key" in e &&
@@ -6997,9 +7064,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       storedAttachmentsToSend.length > 0 ||
       referencesToSend.length > 0 ||
       !incognito && Boolean((referenceTextOverride ?? referenceText).trim());
-    if (pendingQuestionIdRef.current && !pendingQuestion) {
-      pendingQuestionIdRef.current = null;
-    }
     const duplicate = isDuplicateComposerSend(text, lastSendFingerprintRef.current);
     const sendLockKey = activeChatIdRef.current || "__draft__";
     const sendInFlightForChat = sendInFlightKeysRef.current.has(sendLockKey);
@@ -7012,7 +7076,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       hasContent: hasComposerContent,
       sendInFlight: sendInFlightForChat,
       busy: busy || busyRef.current,
-      waitingForQuestion: Boolean(pendingQuestion),
+      waitingForQuestion: Boolean(pendingQuestion || pendingQuestionIdRef.current),
       duplicate,
       hasActiveRuntime: Boolean(activeRuntime),
     });
@@ -7117,9 +7181,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       storedAttachmentsToSend.length > 0 ||
       referencesToSend.length > 0 ||
       !incognito && Boolean((referenceTextOverride ?? referenceText).trim());
-    if (pendingQuestionIdRef.current && !pendingQuestion) {
-      pendingQuestionIdRef.current = null;
-    }
     if (
       (pendingQuestion && !isOverride) ||
       (!hasComposerContent)
@@ -7598,6 +7659,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               payload.diff && typeof payload.diff === "object"
                 ? payload.diff as ToolPart["diff"]
                 : undefined;
+            const phase = payload.phase === "preparing" || payload.phase === "executing" ? payload.phase : undefined;
+            const inputChars = typeof payload.inputChars === "number" && Number.isFinite(payload.inputChars) && payload.inputChars >= 0 ? payload.inputChars : undefined;
             const input = typeof payload.input === "string" ? payload.input : undefined;
             const result = typeof payload.result === "string" ? payload.result : undefined;
             const subagent =
@@ -7667,6 +7730,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   id: prevTool?.id || callId,
                   name,
                   status,
+                  phase: phase ?? (status === "running" ? prevTool?.phase : undefined),
+                  inputChars: inputChars ?? prevTool?.inputChars,
                   detail: detail ?? prevTool?.detail,
                   kind: resolvedKind ?? prevTool?.kind,
                   path: path ?? prevTool?.path,
@@ -7997,8 +8062,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     if (!activeChatIdRef.current || !queuedMessages.length) return;
-    persistQueuedFollowUps(queuedMessages);
-  }, [queuedMessages, busy, pendingQuestion]);
+    persistQueuedFollowUps(activeChatId, queuedMessages);
+  }, [activeChatId, queuedMessages, busy, pendingQuestion]);
 
   useEffect(() => {
     const flush = () => {
@@ -8010,7 +8075,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           body: JSON.stringify({ draftInput: stateRef.current.input }),
         });
       }
-      persistQueuedFollowUps(queuedMessages);
+      persistQueuedFollowUps(activeChatId, queuedMessages);
     };
     const onHide = () => {
       if (document.visibilityState === "hidden") flush();
@@ -8021,7 +8086,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHide);
     };
-  }, [queuedMessages, persistActiveSnapshot]);
+  }, [activeChatId, queuedMessages, persistActiveSnapshot]);
 
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const availableProviderIds = new Set([
@@ -8638,7 +8703,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </div>
             ) : null}
           </div>
-          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => sendQueuedMessage(message)}>
+          <Button type="button" size="xs" variant="ghost" className="h-7 shrink-0 px-2 text-xs" disabled={Boolean(pendingQuestion) || answeringQuestion} title={pendingQuestion ? "Answer the agent's question first" : undefined} onClick={() => sendQueuedMessage(message)}>
             Send now
           </Button>
           <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 max-md:min-h-11 max-md:min-w-11" aria-label="Edit queued message" title="Edit queued message" onClick={() => editQueuedMessage(message)}>
@@ -9267,7 +9332,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     variant="ghost"
                     size="sm"
                     aria-label={`Agent mode: ${selectedMode.name}`}
-                    className="hidden h-11 min-w-0 max-w-[11rem] shrink-0 items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-muted-foreground/75 hover:bg-muted/35 hover:text-foreground md:flex"
+                    className="hidden h-7 min-w-0 max-w-[11rem] shrink-0 items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-muted-foreground/75 hover:bg-muted/35 hover:text-foreground md:flex"
                     title={`${selectedMode.name} — ${selectedMode.description}`}
                   >
                     <ModeIcon mode={selectedMode} className="size-3.5 shrink-0" />
@@ -9943,9 +10008,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   return (
-    <ChatFileDropZone
-      enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
-      onFiles={addPendingFiles}
+    <div
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -10092,8 +10155,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </aside>
       </div>
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {accountView ? <AccountPanel view={accountView} onView={openAccountPage} onOpenManagementPage={openAccountPage} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
+      <ChatFileDropZone
+        enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
+        onFiles={addPendingFiles}
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {accountView ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
           {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
         setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
         setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
@@ -10747,11 +10813,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                 bi > 0 && blocks[bi - 1]?.type === "text" && "mt-3",
                               )}
                             >
-                              {m.streaming ? (
-                                <StreamingMarkdown content={displayContent} thinkingDurationMs={m.thinkingDurationMs} />
-                              ) : (
-                                <Markdown content={displayContent} thinkingDurationMs={m.thinkingDurationMs} />
-                              )}
+                              <StreamingMarkdown content={displayContent} streaming={Boolean(m.streaming)} animate={Boolean(m.streaming) || liveMessageMotionIds.has(m.id)} thinkingDurationMs={m.thinkingDurationMs} />
                             </div>
                           );
                         })}
@@ -10909,8 +10971,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     role="status"
                     aria-label="Agent running"
                   >
-                    <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-                    <span className="min-w-0 truncate">{liveStatus || "Agent running…"}</span>
+                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
                   </div>
                 ) : null}
                 {pendingApproval ? (
@@ -10999,8 +11060,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       role="status"
                       aria-label="Agent running"
                     >
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                      <span>{liveStatus || "Agent running…"}</span>
+                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
                     </div>
                   ) : null}
                   {runningSubagents.length > 0 ? (
@@ -11063,7 +11123,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ) : null}
         </div>
         </>}
-      </div>
+      </ChatFileDropZone>
 
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
         <div className="fixed inset-0 z-40 bg-background/55" aria-hidden="true" />
@@ -11072,7 +11132,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <aside
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
-            (workspaceTab === "browser" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
+            (workspaceTab === "browser" || workspaceTab === "desktops" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
             workspaceFullscreen && "fixed inset-[1%] z-50 !w-auto rounded-lg border border-border/70 shadow-xl",
             workspaceOpen ? "workspace-panel-enter" : "workspace-panel-exit",
           )}
@@ -11095,7 +11155,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           )}
           <div className="flex shrink-0 items-center gap-1 border-b border-border/30 px-2 py-1.5">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {(["team", "canvas", "plan", "memory", "files", "terminal", "browser", "monitor"] as const)
+              {(["team", "canvas", "plan", "memory", "files", "terminal", "browser", "desktops", "monitor"] as const)
                 .filter((tab) => (tab !== "browser" || browserEnabled) && (tab !== "team" || isAgentChat))
                 .map((tab) => (
                 <Button
@@ -11121,7 +11181,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   )}
                   aria-label={tab === "team" ? "Agent overview" : tab === "plan" ? "Plans" : tab === "canvas" ? "Canvas" : tab === "memory" ? "Memory" : tab[0].toUpperCase() + tab.slice(1)}
                 >
-                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "memory" ? <Brain className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
+                  {tab === "team" ? <Users className="size-4 shrink-0" /> : tab === "memory" ? <Brain className="size-4 shrink-0" /> : tab === "canvas" ? <Palette className="size-4 shrink-0" /> : tab === "plan" ? <ClipboardList className="size-4 shrink-0" /> : tab === "files" ? <FileCode2 className="size-4 shrink-0" /> : tab === "terminal" ? <Terminal className="size-4 shrink-0" /> : tab === "browser" ? <Globe2 className="size-4 shrink-0" /> : tab === "desktops" ? <Monitor className="size-4 shrink-0" /> : tab === "monitor" ? <Activity className="size-4 shrink-0" /> : <CalendarClock className="size-4 shrink-0" />}
                   <span className={cn(
                     "overflow-hidden whitespace-nowrap text-xs transition-[max-width,opacity,transform] duration-300",
                     workspaceTab === tab
@@ -11159,15 +11219,24 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               <X className="size-4" />
             </Button>
           </div>
-          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", workspaceTab === "browser" && "max-sm:p-1.5")}>
+          <div className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", workspaceTab === "team" ? "p-0" : "p-2.5", (workspaceTab === "browser" || workspaceTab === "desktops") && "max-sm:p-1.5")}>
             {loadingChatId !== null && loadingChatId === activeChatId ? (
               <WorkspaceLoadingSkeleton />
             ) : workspaceTab === "memory" ? (
               activeChatId ? <WorkspaceMemoryPanel key={activeChatId} chatId={activeChatId} label={isAgentChat ? "Agent Memory" : "Chat Memory"}/> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open a chat to view its memories.</div>
             ) : workspaceTab === "team" ? (
               isAgentChat && activeProjectId && activeChatId ? <ProjectTeamWorkspace key={activeProjectId} projectId={activeProjectId} chatId={activeChatId} onOpenChat={(chatId) => { void loadChat(chatId).then(() => { if (activeChatIdRef.current === chatId) { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); } }); }} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Open an agent chat to view its team.</div>
+            ) : workspaceTab === "desktops" ? (
+              <WorkspaceDesktopsPanel active={workspaceOpen && !accountView} agentClientId={desktopAgentClientId} agentActive={desktopAgentActive} activityTimestamp={desktopActivityTimestamp}
+                onOpenDevices={() => { setSettingsTab("devices"); openAccountPage("settings"); }} />
             ) : workspaceTab === "browser" ? (
-              <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <FileDropZone className="relative flex min-h-0 flex-1 flex-col gap-1.5" enabled={workspaceOpen && browserEnabled && Boolean(activeChatId) && !browserFileUploading}
+                title="Drop files into the browser" detail="Files go to the upload area under your pointer."
+                onFiles={(files, event) => void uploadFilesToBrowser(files, event)}>
+                <input ref={browserFileInputRef} type="file" multiple className="hidden" aria-label="Upload files to browser" onChange={event => {
+                  if (event.target.files?.length) void uploadFilesToBrowser(event.target.files);
+                  event.target.value = "";
+                }} />
                 <div className="flex h-8 shrink-0 items-end gap-1 overflow-x-auto rounded-lg border border-border/50 bg-muted/15 px-1 pt-1 max-sm:h-7">
                   {browserTabs.map((tab) => (
                     <div key={tab.id} className={cn(
@@ -11314,6 +11383,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   >
                     <ExternalLink className="size-3.5" />
                   </Button>
+                  <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 rounded-lg" aria-label="Upload files to browser page" title="Upload files to browser page"
+                    disabled={!activeChatId || !browserEnabled || browserFileUploading} onClick={() => browserFileInputRef.current?.click()}>
+                    {browserFileUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button type="button" size="icon-xs" variant="ghost" className="size-7 shrink-0 rounded-lg" aria-label="Browser options" title="Browser options">
@@ -11432,7 +11505,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     <div className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">{browserError}</div>
                   )
                 ) : null}
-              </div>
+              </FileDropZone>
             ) : workspaceTab === "monitor" ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {monitorData.current ? (
@@ -12229,6 +12302,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </ChatFileDropZone>
+    </div>
   );
 }

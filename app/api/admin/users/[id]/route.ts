@@ -1,22 +1,10 @@
-import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { isHostAdmin } from "@/lib/user-access";
+import { requireHostAdmin as requireAdmin } from "@/lib/api-auth";
 import { deleteManagedUser, patchManagedUser } from "@/lib/admin-users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
-
-async function requireAdmin(req: Request) {
-  if (!(await isAuthenticated(req))) {
-    return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  }
-  const userId = await getAuthenticatedUserId(req);
-  if (!isHostAdmin(userId)) {
-    return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { userId: userId! };
-}
 
 export async function PATCH(req: Request, { params }: Params) {
   const auth = await requireAdmin(req);

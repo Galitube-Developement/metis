@@ -1,11 +1,13 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Compass, Library, PlugZap, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ConnectionCatalog } from "@/components/connection-catalog";
 import type { AgentMode, ToolPermissionCategory } from "@/lib/store";
@@ -50,7 +52,10 @@ export function HubConnections({isHostAdmin}: {isHostAdmin: boolean}) {
  const [mcpError,setMcpError]=useState("");
  const [mcpDraft,setMcpDraft]=useState<McpDraft>(emptyMcpDraft);
  const [mcpBusy,setMcpBusy]=useState(false);
- const [formOpen,setFormOpen]=useState(false);
+ const [view,setView]=useState<"installed"|"discover"|"custom">("installed");
+ const [query,setQuery]=useState("");
+ const [selectedId,setSelectedId]=useState<string|null>(null);
+ const [catalogBusy,setCatalogBusy]=useState(false);
  const [deleteTarget,setDeleteTarget]=useState<McpServer|null>(null);
   const loadMcpServers = useCallback(async () => {
     setMcpError("");
@@ -81,7 +86,7 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
   }
 
   async function saveMcpServer() {
-    if (mcpBusy) return;
+    if (!isHostAdmin || mcpBusy) return;
     setMcpBusy(true);
     try {
       if (!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(mcpDraft.id)) {
@@ -111,6 +116,7 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
       if (!res.ok) throw new Error(data.error || "Failed to save MCP server");
       setMcpDraft(emptyMcpDraft);
       await loadMcpServers();
+      setView("installed");
       toast.success("Connection saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save MCP server");
@@ -120,8 +126,8 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
   }
 
   function editMcpServer(server: McpServer) {
-    setFormOpen(true);
-    requestAnimationFrame(() => document.getElementById("custom-connection-form")?.scrollIntoView({ block: "start" }));
+    setSelectedId(null);
+    setView("custom");
     setMcpDraft({
       id: server.id,
       name: server.name,
@@ -135,47 +141,102 @@ useEffect(() => { void loadMcpServers(); }, [loadMcpServers]);
   }
 
   async function toggleMcpServer(server: McpServer) {
-    const res = await fetch(`/api/mcp-servers/${encodeURIComponent(server.id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !server.enabled }),
-    });
-    if (!res.ok) {
-      toast.error("Failed to update MCP server");
-      return;
-    }
-    await loadMcpServers();
+    if (!isHostAdmin || mcpBusy) return;
+    setMcpBusy(true);
+    try {
+      const res = await fetch("/api/mcp-servers/" + encodeURIComponent(server.id), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !server.enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to update connection");
+      await loadMcpServers();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update connection");
+    } finally { setMcpBusy(false); }
   }
 
   async function deleteMcpServer(server: McpServer) {
-    const res = await fetch(`/api/mcp-servers/${encodeURIComponent(server.id)}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast.error("Failed to delete MCP server");
-      return;
-    }
-    await loadMcpServers();
-    if (mcpDraft.id === server.id) setMcpDraft(emptyMcpDraft);
-    toast.success("Connection deleted");
+    if (!isHostAdmin || mcpBusy) return;
+    setMcpBusy(true);
+    try {
+      const res = await fetch("/api/mcp-servers/" + encodeURIComponent(server.id), { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete connection");
+      await loadMcpServers();
+      setSelectedId(null);
+      if (mcpDraft.id === server.id) setMcpDraft(emptyMcpDraft);
+      toast.success("Connection deleted");
+    } finally { setMcpBusy(false); }
   }
 
-return <div className="space-y-8 p-5 sm:p-7"><ConnectionCatalog isHostAdmin={isHostAdmin} onCustomize={async id => {
-    try {
-      const response = await fetch("/api/mcp-servers", { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not load the connection configuration.");
-      const body = await response.json() as { servers?: McpServer[] };
-      const server = body.servers?.find(item => item.id === id);
-      if (!server) throw new Error("The connection configuration is no longer available.");
-      setMcpServers(body.servers || []);
-      editMcpServer(server);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not open configuration."); }
-  }} onInstalled={() => { void loadMcpServers(); toast.success("Connection ready"); }} /><section className="flex flex-col gap-4">
-                <div>
-                  <h3 className="text-lg font-semibold">Your connections/MCPs</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Manage registered connections, including those configured by your agent. Credentials remain write-only.
-                  </p>
-                </div>
-<details id="custom-connection-form" className="rounded-xl border border-border p-4" open={formOpen} onToggle={event => setFormOpen(event.currentTarget.open)}><summary className="min-h-10 cursor-pointer text-sm font-medium">Add or edit a custom connection</summary><fieldset disabled={!isHostAdmin || mcpBusy} className="space-y-4 pt-3">                <div className="grid gap-2 sm:grid-cols-2">
+  const selected = mcpServers.find(server => server.id === selectedId);
+  const filtered = mcpServers.filter(server => query.toLowerCase().trim().split(/\s+/).filter(Boolean).every(term =>
+    [server.name, server.id, server.kind, server.url, server.command, server.enabled ? "enabled" : "disabled"].join(" ").toLowerCase().includes(term)
+  ));
+  const confirmation = <ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={open => !open && setDeleteTarget(null)} title="Delete connection?" description={"Remove "+(deleteTarget?.name || "this connection")+" and its saved configuration?"} confirmLabel="Delete" onConfirm={() => deleteTarget ? deleteMcpServer(deleteTarget) : undefined} />;
+
+  if (selected) return <section className="flex min-h-0 flex-1 flex-col" aria-label="Connection details">
+    <header className="space-y-4 border-b border-border px-5 py-4 sm:px-7">
+      <Button variant="ghost" className="h-9 px-0 text-muted-foreground" onClick={() => setSelectedId(null)}><ArrowLeft /> All connections</Button>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3"><PlugZap className="mt-1 size-7 shrink-0" /><div className="min-w-0"><h3 className="break-words text-xl font-semibold">{selected.name}</h3><p className="mt-1 break-words text-xs text-muted-foreground">{selected.kind === "remote" ? "Remote connection" : "Local tool"} · {selected.enabled ? "Enabled" : "Disabled"}</p></div></div>
+        <div className="flex gap-2"><Button variant="outline" disabled={!isHostAdmin || mcpBusy} onClick={() => editMcpServer(selected)}>Edit connection</Button><Button variant="ghost" size="icon" disabled={!isHostAdmin || mcpBusy} onClick={() => setDeleteTarget(selected)} aria-label={"Delete " + selected.name}><Trash2 className="size-4" /></Button></div>
+      </div>
+    </header>
+    <div className="min-w-0 overflow-auto p-5 sm:p-7">
+      <div className="space-y-4 rounded-xl border border-border bg-background p-4">
+        <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[6rem_minmax(0,1fr)]">
+          <dt className="text-muted-foreground">Name</dt><dd className="break-words">{selected.name}</dd>
+          <dt className="text-muted-foreground">Server ID</dt><dd className="break-all">{selected.id}</dd>
+          <dt className="text-muted-foreground">{selected.kind === "remote" ? "URL" : "Command"}</dt><dd className="break-all">{selected.kind === "remote" ? selected.url || "Not provided" : selected.command || "Not provided"}</dd>
+          {selected.args?.length ? <><dt className="text-muted-foreground">Arguments</dt><dd className="whitespace-pre-wrap break-all">{selected.args.join("\n")}</dd></> : null}
+          {(selected.configured_env_keys?.length || selected.configured_header_keys?.length) ? <><dt className="text-muted-foreground">Credentials</dt><dd className="break-words">{[...(selected.configured_env_keys || []), ...(selected.configured_header_keys || [])].join(", ")}</dd></> : null}
+        </dl>
+        <div className="border-t border-border pt-3"><label className="flex items-center gap-3 text-sm"><Switch checked={Boolean(selected.enabled)} disabled={!isHostAdmin || mcpBusy} aria-label={"Enable " + selected.name} onCheckedChange={() => void toggleMcpServer(selected)} />Enabled</label></div>
+        <p className="text-xs text-muted-foreground">Saved credentials remain private. Their values are never returned to the editor.</p>
+      </div>
+      {mcpError ? <p role="alert" className="mt-4 text-sm text-destructive">{mcpError}</p> : null}
+      {!isHostAdmin ? <p className="mt-4 text-xs text-muted-foreground">A host administrator can manage server connections.</p> : null}
+    </div>{confirmation}
+  </section>;
+
+  return <section className="min-w-0 overflow-auto p-5 sm:p-7" aria-label="Connection library">
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+      <div><h3 className="text-xl font-semibold">Connections</h3><p className="mt-1 text-sm text-muted-foreground">Services and tools for your agent through MCP.</p></div>
+      <Button variant="outline" disabled={mcpBusy || catalogBusy} onClick={() => { setMcpDraft(emptyMcpDraft); setView("custom"); }}><Plus /> Add connection</Button>
+    </div>
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      <Tabs value={view} onValueChange={value => setView(value as typeof view)}><TabsList aria-label="Connection library views">
+        <TabsTrigger value="installed" disabled={mcpBusy || catalogBusy}><Library className="size-4" /> Installed</TabsTrigger>
+        <TabsTrigger value="discover" disabled={mcpBusy || catalogBusy}><Compass className="size-4" /> Discover</TabsTrigger>
+        <TabsTrigger value="custom" disabled={mcpBusy || catalogBusy}><Plus className="size-4" /> Custom</TabsTrigger>
+      </TabsList></Tabs>
+      {view !== "custom" ? <div className="relative min-w-0 sm:ml-auto sm:w-64 sm:shrink-0"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input className="h-10 pl-9" value={query} disabled={catalogBusy} onChange={event => setQuery(event.target.value)} placeholder="Search connections…" aria-label="Search connections" /></div> : null}
+    </div>
+    {view === "installed" ? <>
+      {mcpError ? <div role="alert" className="mb-4 text-sm text-destructive">{mcpError}<Button variant="ghost" onClick={() => void loadMcpServers()}>Try again</Button></div> : null}
+      {!mcpLoaded ? <div role="status" aria-label="Loading connections" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0,1,2].map(item => <Skeleton key={item} className="h-44 rounded-xl" />)}</div>
+      : !mcpError && !filtered.length ? <p className="text-sm text-muted-foreground">{query.trim() ? "No connections match your search." : "No connections installed. Discover a service or add a custom connection."}</p>
+      : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filtered.map(server => <button type="button" key={server.id} onClick={() => setSelectedId(server.id)} className="group flex min-h-44 min-w-0 flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <div className="flex items-center justify-between"><PlugZap className="size-5 text-muted-foreground" /><ArrowUpRight className="size-4 text-muted-foreground" /></div>
+        <h4 className="mt-4 break-words text-sm font-semibold">{server.name}</h4>
+        <p className="mt-1 line-clamp-2 break-all text-xs leading-5 text-muted-foreground">{server.kind === "remote" ? server.url || server.id : server.command || server.id}</p>
+        <p className="mt-auto break-words pt-4 text-[11px] text-muted-foreground">{server.kind === "remote" ? "Remote" : "Local tool"} · {server.enabled ? "Enabled" : "Disabled"}</p>
+      </button>)}</div>}
+    </> : null}
+    {view === "discover" ? <ConnectionCatalog query={query} isHostAdmin={isHostAdmin} onBusyChange={setCatalogBusy} onCustomize={async id => {
+      try {
+        const response = await fetch("/api/mcp-servers", { cache: "no-store" });
+        if (!response.ok) throw new Error("Could not load the connection configuration.");
+        const body = await response.json() as { servers?: McpServer[] };
+        const server = body.servers?.find(item => item.id === id);
+        if (!server) throw new Error("The connection configuration is no longer available.");
+        setMcpServers(body.servers || []);
+        editMcpServer(server);
+      } catch (error) { toast.error(error instanceof Error ? error.message : "Could not load the connection configuration."); }
+    }} onInstalled={() => { void loadMcpServers(); setQuery(""); setView("installed"); toast.success("Connection ready"); }} /> : null}
+    {view === "custom" ? <form id="custom-connection-form" aria-label="Custom connection" className="max-w-2xl space-y-4" onSubmit={event => { event.preventDefault(); void saveMcpServer(); }}>
+      <div><h4 className="text-sm font-semibold">{mcpDraft.id && mcpServers.some(server => server.id === mcpDraft.id) ? "Edit connection" : "Add a custom connection"}</h4><p className="mt-1 text-xs leading-5 text-muted-foreground">Connect an MCP server by URL or run a local tool. Leave credentials blank to keep existing values.</p></div>
+      <fieldset disabled={!isHostAdmin || mcpBusy} className="min-w-0 space-y-4">                <div className="grid gap-2 sm:grid-cols-2">
                   <Input
                     value={mcpDraft.name}
                     onBlur={() => setMcpDraft(current => ({ ...current, id: current.id || current.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64) }))}
@@ -184,7 +245,7 @@ return <div className="space-y-8 p-5 sm:p-7"><ConnectionCatalog isHostAdmin={isH
                     aria-label="MCP server name"
                   />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant={mcpDraft.kind === "remote" ? "default" : "outline"}
@@ -247,54 +308,21 @@ return <div className="space-y-8 p-5 sm:p-7"><ConnectionCatalog isHostAdmin={isH
                   />
                 </div>
                 </details>
-                <div className="flex gap-2">
-                  <Button type="button" onClick={() => void saveMcpServer()} disabled={mcpBusy}>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={mcpBusy}>
                     {mcpBusy ? "Saving…" : "Save connection"}
                   </Button>
                   <Button type="button" variant="ghost" onClick={() => setMcpDraft(emptyMcpDraft)}>
                     Clear
                   </Button>
                 </div>
-</fieldset></details>
-{mcpError ? <div role="alert" className="text-sm text-destructive">{mcpError}<Button variant="ghost" onClick={() => void loadMcpServers()}>Try again</Button></div> : null}
-{mcpLoaded && !mcpError && !mcpServers.length ? <p className="text-sm text-muted-foreground">No connections configured. Search the catalog or add a custom connection.</p> : null}
-<fieldset disabled={!isHostAdmin} className="min-w-0"><ul className="flex flex-col gap-2">
-                  {!mcpLoaded ? (
-                    [0, 1, 2].map((item) => (
-                      <li key={item} className="space-y-2 rounded-lg border border-border/60 bg-card/40 p-3" aria-label="Loading MCP servers" role="status">
-                        <Skeleton className="h-4 w-2/5" />
-                        <Skeleton className="h-3 w-3/5" />
-                      </li>
-                    ))
-                  ) : mcpServers.map((server) => (
-                    <li key={server.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/40 p-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{server.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {server.id} · {server.kind} · {server.enabled ? "enabled" : "disabled"}
-                        </p>
-                        {(server.configured_env_keys?.length || server.configured_header_keys?.length) ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Secrets configured: {[...(server.configured_env_keys || []), ...(server.configured_header_keys || [])].join(", ")}
-                          </p>
-                        ) : null}
-                      </div>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void toggleMcpServer(server)}>
-                        {server.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => editMcpServer(server)}>
-                        Edit
-                      </Button>
-                      <Button type="button" size="icon-sm" variant="ghost" onClick={() => setDeleteTarget(server)} aria-label={`Delete ${server.name}`}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul></fieldset>
-              </section>
-
-<ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={open => !open && setDeleteTarget(null)} title="Delete connection?" description={"Remove "+(deleteTarget?.name || "this connection")+" and its saved configuration?"} confirmLabel="Delete" onConfirm={() => deleteTarget ? deleteMcpServer(deleteTarget) : undefined} /></div>;
+</fieldset>
+      {!isHostAdmin ? <p className="text-xs text-muted-foreground">A host administrator can manage server connections.</p> : null}
+    </form> : null}
+    {confirmation}
+  </section>;
 }
+
 export function HubModes({onModesChanged}: {onModesChanged?: () => void}) {
 const [modeError,setModeError]=useState("");
 const [modesLoaded,setModesLoaded]=useState(false);

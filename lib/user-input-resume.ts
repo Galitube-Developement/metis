@@ -12,6 +12,16 @@ export function isJobWaitingForUser(status: JobStatus | undefined) {
   return status === "waiting_input" || status === "waiting_for_user";
 }
 
+/** Queue submissions must preserve any outstanding request for user input. */
+export function isChatWaitingForUser(chat: {
+  pendingQuestion?: unknown;
+  pendingApproval?: unknown;
+  runStatus?: string;
+} | null | undefined) {
+  return Boolean(chat && (chat.pendingQuestion || chat.pendingApproval ||
+    chat.runStatus === "waiting_input" || chat.runStatus === "waiting_for_user"));
+}
+
 export function shouldQueueUserInputResume(
   status: JobStatus | undefined,
   heartbeatAt: string | undefined,

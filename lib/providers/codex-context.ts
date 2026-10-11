@@ -41,7 +41,7 @@ export function codexContextFromRollout(tail: string): CodexThreadContext | unde
 }
 
 /** Read at most 1 MiB of the exact thread's native rollout, without loading chat content. */
-export function readCodexThreadContext(home: string, threadId: string): CodexThreadContext | undefined {
+export function readCodexThreadRolloutTail(home: string, threadId: string): string | undefined {
   if (!/^[a-f0-9-]{36}$/i.test(threadId)) return undefined;
   let fd: number | undefined;
   try {
@@ -55,10 +55,15 @@ export function readCodexThreadContext(home: string, threadId: string): CodexThr
     const buffer = Buffer.alloc(length);
     fd = openSync(filename, "r");
     const bytesRead = readSync(fd, buffer, 0, length, size - length);
-    return codexContextFromRollout(buffer.subarray(0, bytesRead).toString("utf8"));
+    return buffer.subarray(0, bytesRead).toString("utf8");
   } catch {
     return undefined;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+export function readCodexThreadContext(home: string, threadId: string): CodexThreadContext | undefined {
+  const tail = readCodexThreadRolloutTail(home, threadId);
+  return tail === undefined ? undefined : codexContextFromRollout(tail);
 }

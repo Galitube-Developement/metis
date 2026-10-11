@@ -121,6 +121,8 @@ export interface MetisRuntimeToolStartedEvent extends MetisRuntimeEventEnvelope 
     name: string;
     /** Provider-neutral presentation category from the durable tool event. */
     kind?: string;
+    phase?: "preparing" | "executing";
+    inputChars?: number;
     /** Short input representation for the compact chip. */
     input?: unknown;
     summary?: string;

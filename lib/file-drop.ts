@@ -65,3 +65,9 @@ export function registerFileDrop(host: EventTarget, options: FileDropOptions) {
     resetTarget.removeEventListener("keydown", key);
   };
 }
+
+/** The nearest surface owns a drop; pinned note editors keep their own uploads. */
+export function ownsFileDrop(surface: Element, target: EventTarget | null): boolean {
+  return target instanceof Element && surface.contains(target)
+    && target.closest("[data-file-drop-target], [data-note-drop-target]") === surface;
+}

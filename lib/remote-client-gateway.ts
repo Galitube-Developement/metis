@@ -1,3 +1,4 @@
+import { remoteDesktopEvents } from "@/lib/remote-desktop-events";
 import { bindNotificationSession } from "@/lib/notification-remote";
 import {
   appendRemoteAudit,
@@ -120,6 +121,10 @@ export function requestRemoteClient(input: {
   runId?: string;
   toolCallId?: string;
   timeoutMs?: number;
+  /** Passive viewer frames stay in memory and never enter the audit database. */
+  ephemeralPreview?: boolean;
+  /** Trusted chat context supplied by the internal run lease, never by device input. */
+  chatId?: string;
 }) {
   const client = getRemoteClient(input.clientId, input.ownerId);
   if (!client) throw new Error("Remote client not found");
@@ -161,7 +166,7 @@ export function requestRemoteClient(input: {
   }
   const connection = connections.get(input.clientId);
   if (!connection || connection.socket.readyState !== OPEN) throw new Error("Remote client is offline");
-  const audit = appendRemoteAudit({
+  const audit = input.ephemeralPreview ? null : appendRemoteAudit({
     ownerId: input.ownerId,
     clientId: input.clientId,
     source: input.source || "user",
@@ -169,6 +174,15 @@ export function requestRemoteClient(input: {
     requestData: redact(input.params),
     status: "running",
   });
+  const desktopActivity = input.source === "agent" && input.chatId && client.capabilities.includes("desktop_gui")
+    && ["computer_use", "execute_command", "pty_input"].includes(input.action);
+  const publishDesktop = (phase: "start" | "end") => {
+    if (desktopActivity) remoteDesktopEvents.emit("activity", {
+      ownerId: input.ownerId, chatId: input.chatId, clientId: input.clientId,
+      action: input.action, phase, timestamp: Date.now(),
+    });
+  };
+  publishDesktop("start");
   const startedAt = Date.now();
   const requestId = crypto.randomUUID();
   const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs || 60_000, 300_000));
@@ -213,7 +227,7 @@ export function requestRemoteClient(input: {
     });
   });
   return resultPromise.then((result) => {
-    updateRemoteAudit(audit.id, {
+    if (audit) updateRemoteAudit(audit.id, {
       status: "completed",
       resultData: result && typeof result === "object"
         ? (input.action === "computer_use"
@@ -222,15 +236,17 @@ export function requestRemoteClient(input: {
         : { value: result },
       durationMs: Date.now() - startedAt,
     });
+    publishDesktop("end");
     return result;
   }).catch((error) => {
     const message = error instanceof Error ? error.message : "Remote request failed";
-    updateRemoteAudit(audit.id, {
+    if (audit) updateRemoteAudit(audit.id, {
       status: /disconnected|timed out/i.test(message) ? "unknown" : "error",
       error: message,
       resultData: error instanceof Error ? (error as Error & { resultData?: Record<string, unknown> }).resultData : undefined,
       durationMs: Date.now() - startedAt,
     });
+    publishDesktop("end");
     throw error;
   });
 }

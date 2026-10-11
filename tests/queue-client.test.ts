@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mergeQueuedFollowUps } from "../lib/composer-send";
-import { removeQueuedFollowUp } from "../lib/queue-client";
+import { removeQueuedFollowUp, updateChatQueue } from "../lib/queue-client";
 
 test("clicking remove suppresses live-sync echoes before DELETE completes", async () => {
   const message = { id: "q-remove", text: "delete", files: ["attachment"] };
@@ -72,4 +72,22 @@ test("draft removal stays local and persisted IDs are safely encoded", async () 
   assert.equal(calls, 0);
   assert.equal(await removeQueuedFollowUp({ ...base, removedIds: new Set(), chatId: "chat/id" }), true);
   assert.equal(calls, 1);
+});
+
+
+test("late queue updaters retain the destination state and never execute against its items", () => {
+  const current = { chatId: "destination", messages: [{ id: "destination-message" }] };
+  let invoked = false;
+  const next = updateChatQueue(current, "outgoing", () => { invoked = true; return []; });
+  assert.equal(next, current);
+  assert.equal(invoked, false);
+  assert.equal(updateChatQueue(current, "outgoing", []), current);
+});
+
+test("a queue update is scoped to its owner, including drafts", () => {
+  const current = { chatId: null, messages: [{ id: "draft" }] };
+  const next = updateChatQueue(current, null, items => [...items, { id: "second" }]);
+  assert.deepEqual(next.messages.map(item => item.id), ["draft", "second"]);
+  assert.deepEqual(current.messages.map(item => item.id), ["draft"]);
+  assert.equal(next.chatId, null);
 });

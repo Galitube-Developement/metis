@@ -16,6 +16,10 @@ export type ToolPart = {
   id: string;
   name: string;
   status: "running" | "completed" | "error" | string;
+  /** Presentation phase, reported from real provider input-stream events. */
+  phase?: "preparing" | "executing";
+  /** Number of serialized argument characters received, never an estimated token count. */
+  inputChars?: number;
   detail?: string;
   kind?: "plan" | "edit" | "read" | "shell" | "subagent" | "mcp" | "canvas" | "note" | "todo" | "browser" | "memory" | "automation" | "compaction" | "other";
   source?: "mcp" | "native" | "browser";
@@ -89,6 +93,7 @@ export type ChatMessage = {
     inputTokensEstimated?: boolean;
     totalTokens?: number;
     totalProcessedTokens?: number;
+    tokenUsageScope?: "turn";
     contextUsedTokens?: number;
     contextWindow?: number;
     configuredContextWindow?: number;
@@ -362,6 +367,8 @@ export type ProviderSessionBinding = {
   /** Newly observed cursor; promoted only after the turn is durably completed. */
   candidateCursor?: string;
   modelId?: string;
+  /** Native cumulative usage at the last completed turn, scoped to this cursor. */
+  lastUsageTotals?: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number };
   lastContextTokens?: number;
   lastContextWindow?: number;
   lastCompactionAt?: string;

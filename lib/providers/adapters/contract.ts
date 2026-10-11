@@ -9,6 +9,7 @@ export type ProviderUsage = {
   cacheWriteInputTokens?: number;
   totalTokens?: number;
   totalProcessedTokens?: number;
+  tokenUsageScope?: "turn";
   usedTokens?: number;
   maxTokens?: number;
   maxOutputTokens?: number;

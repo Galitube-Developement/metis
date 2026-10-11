@@ -11,7 +11,7 @@ test("Skill Creator is bundled, enabled by default and exposes a complete packag
   const skill = listInstalledSkills().find(item => item.id === "skill-creator");
   assert.equal(skill?.sourceType, "bundled");
   assert.equal(skillEnabled("skill-creator"), true);
-  assert.equal(isAlwaysOnSkill("skill-creator"), false);
+  assert.equal(isAlwaysOnSkill("skill-creator"), true);
   const files = listSkillFiles("skill-creator");
   for (const file of ["SKILL.md", "license.txt", "references/openai_yaml.md", "scripts/init_skill.py", "scripts/quick_validate.py"]) assert.ok(files.some(item => item.path === file), file);
   assert.match(readSkillFile("skill-creator", "SKILL.md").content, /Metis integration/);

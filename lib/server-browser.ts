@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { getUserAgentCwd } from "@/lib/mcp";
 import { isPrivateAddress } from "@/lib/url-security";
 import { isPlaywrightBrowserMissing } from "@/lib/playwright-install";
+import { trackBrowserFileChooser, uploadBrowserFiles } from "@/lib/browser-file-upload";
 import { closeBrowserResources } from "@/lib/browser-resource-cleanup";
 
 const MAX_SNAPSHOT_LENGTH = 120_000;
@@ -38,6 +39,7 @@ type BrowserAction = {
   value?: string;
   targetSelector?: string;
   filePath?: string;
+  uploadIds?: string[];
   x?: number;
   y?: number;
   deltaY?: number;
@@ -397,6 +399,7 @@ async function installRequestGuard(page: Page) {
 // Tracks a session page so page-initiated navigations (links, redirects,
 // JS router pushes) surface as live events even without an explicit action.
 function attachPageEventTracking(page: Page, ownerId: string, chatId: string, tabId: string) {
+  trackBrowserFileChooser(page);
   pageMeta.set(page, { ownerId, chatId, tabId });
   page.on("framenavigated", (frame) => {
     if (frame !== page.mainFrame()) return;
@@ -730,6 +733,9 @@ async function performBrowserActionUnlocked(ownerId: string, chatId: string, act
     state.tabs.set(tabId, page);
     state.activeTabId = tabId;
   } else {
+    if (["upload_files", "drop_files"].includes(action.action) && action.tabId && !state.tabs.has(action.tabId)) {
+      throw new Error("The browser tab for this upload was closed.");
+    }
     tabId = tabIdFor(state, action.tabId);
     page = state.tabs.get(tabId)!;
   }
@@ -865,6 +871,10 @@ async function performBrowserActionUnlocked(ownerId: string, chatId: string, act
     } else {
       throw new Error("wait_for requires a selector or text");
     }
+  } else if (action.action === "upload_files" || action.action === "drop_files") {
+    if (action.url && action.url !== page.url()) throw new Error("The browser page changed while uploading. Choose the files again on the intended page.");
+    await uploadBrowserFiles(page, ownerId, action.uploadIds,
+      action.action === "drop_files" ? { x: action.x!, y: action.y! } : undefined);
   } else if (action.action === "upload_file") {
     if (!action.selector || !action.filePath) throw new Error("A selector and file path are required for upload_file");
     const local = path.resolve(String(action.filePath));
@@ -917,7 +927,7 @@ async function performBrowserActionUnlocked(ownerId: string, chatId: string, act
   // Direct browser UI calls retain automatic frames. Agent/MCP calls set
   // includeScreenshot=false and request an explicit screenshot only when visual
   // reasoning is actually needed, avoiding base64+JPEG work after every click.
-  const SCREENSHOT_ACTIONS = ["screenshot", "navigate", "click", "type", "reload", "back", "forward", "select_tab", "scroll", "resize", "drag", "select_option", "upload_file"];
+  const SCREENSHOT_ACTIONS = ["screenshot", "navigate", "click", "type", "reload", "back", "forward", "select_tab", "scroll", "resize", "drag", "select_option", "upload_file", "upload_files", "drop_files"];
   if (SCREENSHOT_ACTIONS.includes(action.action) && action.includeScreenshot !== false) {
     result.screenshot = (await screenshotPage(page, { type: "jpeg", quality: 60 })).toString("base64");
   }
