@@ -7,9 +7,10 @@ function cell(value:unknown) {
 }
 export function usageCsv(models:UsageModel[], mode:UsageCostMode="reported") {
   const costs=mode!=="hidden";
-  const rows:unknown[][]=[["Model","Provider","Requests (Metis runs)","Input tokens","Output tokens","Total tokens",
+  const rows:unknown[][]=[["Model","Provider","Requests (Metis runs)","Reported input tokens","Output tokens","Total tokens",
     ...(costs?[mode==="estimated"?"Estimated standard API value USD":"Reported cost USD"]:[]),
     "Token reports",...(costs?[mode==="estimated"?"Estimated runs":"Cost reports"]:[]),
+    "Input (uncached)","Cached input tokens","Cache write tokens","Unclassified input tokens",
     ...(mode==="estimated"?["API price provider","API price model","Input USD / 1M","Output USD / 1M","Cache read USD / 1M","Cache write USD / 1M"]:[])]];
   for(const model of models) rows.push([
     model.modelId,model.providerId,model.requests,
@@ -17,6 +18,10 @@ export function usageCsv(models:UsageModel[], mode:UsageCostMode="reported") {
     model.outputReports?model.outputTokens:null,
     model.tokenReports?model.tokens:null,
     ...(costs?[usageCost(model,mode)]:[]),model.tokenReports,...(costs?[usageCostReports(model,mode)]:[]),
+    model.uncachedInputReports?model.uncachedInputTokens:null,
+    model.cachedInputReports?model.cachedInputTokens:null,
+    model.cacheWriteInputReports?model.cacheWriteInputTokens:null,
+    model.unclassifiedInputReports?model.unclassifiedInputTokens:null,
     ...(mode==="estimated"?[model.apiPrice?.providerId,model.apiPrice?.modelId,model.apiPrice?.input,model.apiPrice?.output,model.apiPrice?.cacheRead,model.apiPrice?.cacheWrite]:[]),
   ]);
   return rows.map(row=>row.map(cell).join(",")).join("\r\n");

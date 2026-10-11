@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatedNumber } from "@/components/animated-number";
+import { usageTokenOptions, usageTokenLabel, usageTokenValue, usageTokenReports, type UsageTokenMetric } from "@/lib/usage-token-split";
 import { ChartBoundary } from "@/components/chart-boundary";
 import { useChartMotion } from "@/components/use-chart-motion";
 import { useEffect, useId, useMemo, useState } from "react";
@@ -10,8 +12,8 @@ import type { UsageBucket, UsageConfigurationCounts, UsageModel, UsageModelDetai
 import { usageCost, usageCostLabel, usageCostReports, type UsageCostMode } from "@/lib/usage-cost-view";
 const money=new Intl.NumberFormat("en",{style:"currency",currency:"USD",maximumFractionDigits:4});
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 });
-type Metric = "cost" | "tokens" | "requests" | keyof UsageConfigurationCounts;
-const labels: Record<Metric,string> = {cost:"API value",tokens:"Tokens",requests:"Requests",context:"Context",speed:"Fast mode",reasoning:"Reasoning"};
+type Metric = "cost" | UsageTokenMetric | "requests" | keyof UsageConfigurationCounts;
+const labels = {cost:"API value",requests:"Requests",context:"Context",speed:"Fast mode",reasoning:"Reasoning",...Object.fromEntries(usageTokenOptions.map(option=>[option.key,option.label]))} as Record<Metric,string>;
 const colors = ["var(--chart-1)","var(--chart-2)","var(--chart-3)","var(--chart-4)","var(--chart-5)"];
 function bucketLabel(metric: Metric, value: string | null) {
   if(value === null)return "Not recorded";
@@ -40,11 +42,12 @@ function Distribution({dimension,buckets,requests}: {dimension:keyof UsageConfig
   </div>;
 }
 
-export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:UsageModel;from:string;to:string;costMode?:UsageCostMode}) {
+export function ModelUsageDetails({model,from,to,costMode="reported",tokenMetric="tokens"}: {model:UsageModel;from:string;to:string;costMode?:UsageCostMode;tokenMetric?:UsageTokenMetric}) {
   const [details,setDetails]=useState<UsageModelDetails|null>(null);
   const [error,setError]=useState("");
   const [retry,setRetry]=useState(0);
-  const [metric,setMetric]=useState<Metric>("tokens");
+  const [metric,setMetric]=useState<Metric>(tokenMetric);
+  useEffect(()=>setMetric(tokenMetric),[tokenMetric]);
   const id=useId();
   const motion=useChartMotion();
   useEffect(()=>{
@@ -63,8 +66,8 @@ export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:Us
   const metricLabel=activeMetric==="cost"?usageCostLabel(costMode):labels[activeMetric];
   const chart=useMemo<{data:Array<Record<string,string|number|null>>;series:Array<{key:string;label:string}>}>(()=>{
     if(!details)return {data:[],series:[]};
-    if(activeMetric === "cost" || activeMetric === "tokens" || activeMetric === "requests")return {
-      data:details.days.map(day=>({date:day.date,value:activeMetric==="cost"?(day.requests?usageCost(day,costMode):0):activeMetric==="tokens" && day.requests && !day.tokenReports ? null:day[activeMetric]})),
+    if(activeMetric !== "context" && activeMetric !== "speed" && activeMetric !== "reasoning")return {
+      data:details.days.map(day=>({date:day.date,value:activeMetric==="cost"?(day.requests?usageCost(day,costMode):0):activeMetric==="requests"?day.requests:usageTokenValue(day,activeMetric)})),
       series:[{key:"value",label:metricLabel}],
     };
     const buckets=details.configurations[activeMetric];
@@ -102,6 +105,13 @@ export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:Us
         </BarChart>
       </ResponsiveContainer></ChartBoundary>
     </div>
+    <dl className="grid grid-cols-2 gap-4 border-t border-border/50 pt-4 sm:grid-cols-3">
+      {usageTokenOptions.filter(option=>option.key!=="tokens").map(option=><div key={option.key}>
+        <dt className="text-[11px] text-muted-foreground">{usageTokenLabel(option.key)}</dt>
+        <dd className="mt-1 text-sm tabular-nums"><AnimatedNumber value={usageTokenValue(details,option.key)} format="compact"/></dd>
+        <p className="mt-1 text-[10px] text-muted-foreground">{usageTokenReports(details,option.key)} / {details.requests} runs reported</p>
+      </div>)}
+    </dl>
     <div className="grid gap-5 border-t border-border/50 pt-4 sm:grid-cols-3">
       {(["context","speed","reasoning"] as const).map(dimension=><Distribution key={dimension} dimension={dimension} buckets={details.configurations[dimension]} requests={details.requests}/>)}
     </div>
@@ -109,7 +119,7 @@ export function ModelUsageDetails({model,from,to,costMode="reported"}: {model:Us
     {costMode==="estimated" ? <p className="text-[11px] leading-relaxed text-muted-foreground">{details.apiPrice ? "Standard API rates / 1M tokens: Input "+money.format(details.apiPrice.input)+" · Output "+money.format(details.apiPrice.output)+(details.apiPrice.cacheRead!==undefined?" · Cached input "+money.format(details.apiPrice.cacheRead):"")+(details.apiPrice.cacheWrite!==undefined?" · Cache write "+money.format(details.apiPrice.cacheWrite):"")+" · "+details.apiPrice.providerId+"/"+details.apiPrice.modelId+". ":"No exact API price match. "}{usageCostReports(details,costMode)} of {details.requests} runs estimated{usageCostReports(details,costMode)<details.requests?" · Partial total":""}.</p>:null}
     <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground sm:hidden">
       {costMode!=="hidden" ? <div><dt className="inline">{usageCostLabel(costMode)} </dt><dd className="inline tabular-nums">{usageCost(details,costMode)===null?"—":money.format(usageCost(details,costMode)!)}</dd></div>:null}
-      <div><dt className="inline">Input </dt><dd className="inline tabular-nums">{details.inputReports?compact.format(details.inputTokens):"—"}</dd></div>
+      <div><dt className="inline">Input (uncached) </dt><dd className="inline tabular-nums">{details.uncachedInputReports?compact.format(details.uncachedInputTokens!):"—"}</dd></div>
       <div><dt className="inline">Output </dt><dd className="inline tabular-nums">{details.outputReports?compact.format(details.outputTokens):"—"}</dd></div>
     </dl>
   </section>;

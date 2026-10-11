@@ -5,6 +5,10 @@ export type AccountProfile = {
 };
 export type UsageTotals = {
   requests: number; inputTokens: number; outputTokens: number; tokens: number;
+  uncachedInputTokens?: number; uncachedInputReports?: number;
+  cachedInputTokens?: number; cachedInputReports?: number;
+  cacheWriteInputTokens?: number; cacheWriteInputReports?: number;
+  unclassifiedInputTokens?: number; unclassifiedInputReports?: number;
   estimatedCostUsd?: number | null; estimatedCostReports?: number;
   costUsd: number | null; tokenReports: number; costReports: number; inputReports: number; outputReports: number;
 };
