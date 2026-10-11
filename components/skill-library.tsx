@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUpRight, Plus, Puzzle, Search, Sparkles } from "lucide-react";
+import { ArrowUpRight, Compass, Download, Library, Plus, Puzzle, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,7 +72,13 @@ export function SkillLibrary({ onTry, isHostAdmin }: { onTry: (skill: SkillSetti
   return <section className="min-w-0 overflow-auto p-5 sm:p-7" aria-label="Skill library">
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-xl font-semibold">Skills</h3><p className="mt-1 text-sm text-muted-foreground">Reusable instructions, references and tools for your agent.</p></div><Button variant="outline" onClick={() => setView("import")}><Plus /> Add skill</Button></div>
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <Tabs value={view} onValueChange={setView}><TabsList><TabsTrigger value="installed">Installed</TabsTrigger><TabsTrigger value="discover">Discover</TabsTrigger><TabsTrigger value="import">Import</TabsTrigger></TabsList></Tabs>
+      <Tabs value={view} onValueChange={setView}>
+        <TabsList>
+          <TabsTrigger value="installed"><Library className="size-4" aria-hidden="true" />Installed</TabsTrigger>
+          <TabsTrigger value="discover"><Compass className="size-4" aria-hidden="true" />Discover</TabsTrigger>
+          <TabsTrigger value="import"><Download className="size-4" aria-hidden="true" />Import</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {view !== "import" ? <div className="relative sm:w-64"><Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" /><Input className="h-10 pl-9" aria-label="Search skills" placeholder="Search skills…" value={query} onChange={event => setQuery(event.target.value)} /></div> : null}
     </div>
     {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">Loading skill library…</p> : null}
