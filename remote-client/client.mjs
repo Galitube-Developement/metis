@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import { executeFileEdit } from "./file-edit.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -179,17 +180,8 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       fs.writeFileSync(file, params.content, "utf8");
       return { path: file, bytes: Buffer.byteLength(params.content, "utf8") };
     }
-    if (action === "edit_file") {
-      const file = String(params.path || "");
-      const oldText = String(params.oldText ?? "");
-      const newText = String(params.newText ?? "");
-      if (!file) throw new Error("Path is required");
-      const content = fs.readFileSync(file, "utf8");
-      const position = content.indexOf(oldText);
-      if (position < 0) throw new Error("The requested oldText was not found in the file");
-      const next = `${content.slice(0, position)}${newText}${content.slice(position + oldText.length)}`;
-      fs.writeFileSync(file, next, "utf8");
-      return { path: file, replacements: 1, bytes: Buffer.byteLength(next, "utf8") };
+    if (action === "edit_file" || action === "edit_file_batch") {
+      return executeFileEdit(fs, params);
     }
     if (action === "delete_file") {
       const file = String(params.path || "");

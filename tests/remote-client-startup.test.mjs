@@ -76,6 +76,28 @@ for (const modulePath of ["remote-client/client.mjs", "public/install/remote-cli
     }
   });
 
+  test(modulePath + " validates batches and dry runs before writing", async () => {
+    const fixture = await connectedClient(modulePath);
+    try {
+      const file = path.join(fixture.directory, "edit.txt");
+      fs.writeFileSync(file, "one one\ntwo");
+      async function edit(requestId, params) {
+        fixture.sockets[0].send(JSON.stringify({ type: "request", requestId, action: "edit_file_batch", params:{path:file,...params} }));
+        await waitFor(() => fixture.responses.some(({message})=>message.requestId===requestId));
+        return fixture.responses.find(({message})=>message.requestId===requestId).message;
+      }
+      const dry=await edit("dry",{edits:[{oldText:"one",newText:"first",replaceAll:true},{oldText:"two",newText:"second"}],dryRun:true});
+      assert.equal(dry.ok,true);assert.equal(dry.result.replacements,3);
+      assert.equal(fs.readFileSync(file,"utf8"),"one one\ntwo");
+      const bad=await edit("bad",{edits:[{oldText:"two",newText:"second"},{oldText:"absent",newText:"x"}]});
+      assert.equal(bad.ok,false);assert.match(bad.error,/Edit 2:/);
+      assert.equal(fs.readFileSync(file,"utf8"),"one one\ntwo");
+      const result=await edit("apply",{edits:[{oldText:"one",newText:"first",replaceAll:true,expectedOccurrences:2},{oldText:"two",newText:"second"}]});
+      assert.equal(result.ok,true);assert.equal(result.result.changed,true);
+      assert.equal(fs.readFileSync(file,"utf8"),"first first\nsecond");
+    } finally { await fixture.close(); }
+  });
+
   test(modulePath + " ignores requests before authentication", async () => {
     const fixture = await connectedClient(modulePath, false);
     try {

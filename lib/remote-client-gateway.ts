@@ -1,4 +1,5 @@
 import { remoteDesktopEvents } from "@/lib/remote-desktop-events";
+import { buildFileEditProgram, normalizeFileEdit } from "../remote-client/file-edit.mjs";
 import { bindNotificationSession } from "@/lib/notification-remote";
 import {
   appendRemoteAudit,
@@ -128,6 +129,7 @@ export function requestRemoteClient(input: {
 }) {
   const client = getRemoteClient(input.clientId, input.ownerId);
   if (!client) throw new Error("Remote client not found");
+  if (input.action === "edit_file") normalizeFileEdit(input.params);
   const authorization = authorizeRemoteAction(client, input.action, input.params);
   if (!authorization.allowed) {
     appendRemoteAudit({
@@ -193,10 +195,14 @@ export function requestRemoteClient(input: {
     }, timeoutMs);
     connection.pending.set(requestId, { resolve, reject, timer });
   });
+  // A distinct wire action makes older clients reject batches instead of silently ignoring edits.
+  const advancedEdit = input.action === "edit_file" && (Array.isArray(input.params?.edits)
+    || input.params?.dryRun === true || input.params?.replaceAll === true
+    || input.params?.expectedOccurrences != null);
   connection.socket.send(JSON.stringify({
     type: "request",
     requestId,
-    action: input.action,
+    action: advancedEdit ? "edit_file_batch" : input.action,
     params: input.params || {},
     timestamp: Date.now(),
   }));
@@ -222,8 +228,17 @@ export function requestRemoteClient(input: {
     const legacyAction = input.action === "write_file" || input.action === "edit_file" || input.action === "delete_file";
     const unsupported = error instanceof Error && /unsupported remote action/i.test(error.message);
     if (!legacyAction || !unsupported) throw error;
+    if (advancedEdit && getRemoteClient(input.clientId, input.ownerId)?.policy.mode !== "full_access") {
+      throw new Error("Batch edits under this remote policy require an updated remote client; no command fallback was executed.");
+    }
     return send("execute_command", {
       command: legacyFileCommand(client, input.action, input.params || {}),
+    }).then(result => {
+      if (input.action === "edit_file" && result && typeof result === "object" && "stdout" in result) {
+        try { return JSON.parse(String(result.stdout).trim()); }
+        catch { throw new Error("Legacy file edit returned no valid result; check the file before retrying"); }
+      }
+      return result;
     });
   });
   return resultPromise.then((result) => {
@@ -280,15 +295,19 @@ function base64(value: unknown) {
 }
 
 function legacyFileCommand(client: { os?: string }, action: string, params: Record<string, unknown>) {
+  if (action === "edit_file") {
+    const program = Buffer.from(buildFileEditProgram(params), "utf8").toString("base64");
+    const command = `node -e "eval(Buffer.from(\'${program}\',\'base64\').toString(\'utf8\'))"`;
+    if (client.os?.toLowerCase().includes("win") && command.length > 7500) {
+      throw new Error("This edit requires an updated remote client; the legacy Windows command is too large.");
+    }
+    return command;
+  }
   const file = base64(params.path);
   const content = base64(params.content);
-  const oldText = base64(params.oldText);
-  const newText = base64(params.newText);
   const script = action === "write_file"
     ? `const f=Buffer.from('${file}','base64').toString(),c=Buffer.from('${content}','base64');fs.mkdirSync(path.dirname(f),{recursive:true});fs.writeFileSync(f,c)`
-    : action === "edit_file"
-      ? `const f=Buffer.from('${file}','base64').toString(),o=Buffer.from('${oldText}','base64').toString(),n=Buffer.from('${newText}','base64').toString(),c=fs.readFileSync(f,'utf8'),i=c.indexOf(o);if(i<0)throw Error('oldText was not found');fs.writeFileSync(f,c.slice(0,i)+n+c.slice(i+o.length))`
-      : `fs.rmSync(Buffer.from('${file}','base64').toString())`;
+    : `fs.rmSync(Buffer.from('${file}','base64').toString())`;
   const command = `node -e "const fs=require('fs'),path=require('path');${script}"`;
   return client.os?.toLowerCase().includes("win")
     ? command
