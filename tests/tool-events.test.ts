@@ -27,3 +27,10 @@ test("grok-build and opencode route to CLI runtimes with MCP", () => {
     assert.equal(provider?.capabilities.tools, true);
   }
 });
+
+
+test("MCP-prefixed reads retain their transport after semantic classification", () => {
+  const tool = canonicalizeToolPart({ id: "mcp-read", name: "mcp__custom__read_file", status: "running" });
+  assert.equal(tool.kind, "read");
+  assert.equal(tool.source, "mcp");
+});

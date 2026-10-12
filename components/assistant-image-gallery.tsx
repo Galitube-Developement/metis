@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react";
 import { ImageOff } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ImageViewer } from "@/components/image-viewer";
 import type { AssistantImage } from "@/lib/assistant-images";
 
 function GalleryImage({ image, large = false }: { image: AssistantImage; large?: boolean }) {
@@ -50,12 +50,7 @@ export function AssistantImageGallery({ images }: { images: AssistantImage[] }) 
           </button>
         ))}
       </div>
-      <Dialog open={Boolean(active)} onOpenChange={(open) => { if (!open) setActive(null); }}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-5xl sm:max-w-5xl" aria-describedby={undefined}>
-          <DialogTitle className="truncate pr-8">{active?.alt || "Image"}</DialogTitle>
-          {active ? <GalleryImage key={active.src} image={active} large /> : null}
-        </DialogContent>
-      </Dialog>
+      <ImageViewer image={active} onOpenChange={open => { if (!open) setActive(null); }}/>
     </div>
   );
 }

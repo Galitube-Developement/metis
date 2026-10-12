@@ -1751,6 +1751,9 @@ export async function runQueuedJob(job: AgentJob) {
               modelId: result.model?.id || job.modelId || chat.modelId,
               connectionId: cursorConnection.id,
               ...(typeof usage?.outputTokens === "number" ? { outputTokens: usage.outputTokens } : {}),
+              ...(typeof usage?.cacheReadTokens === "number" ? { cachedInputTokens: usage.cacheReadTokens } : {}),
+              ...(typeof usage?.cacheWriteTokens === "number" ? { cacheWriteInputTokens: usage.cacheWriteTokens } : {}),
+              ...(typeof usage?.totalTokens === "number" ? { totalTokens: usage.totalTokens } : {}),
               ...(typeof usage?.inputTokens === "number" ? {
                 inputTokens: usage.inputTokens,
                 contextUsedTokens: (() => {

@@ -7,7 +7,7 @@ export function canonicalizeToolPart(tool: ToolPart): ToolPart {
   const name = (tool.name || "tool").trim() || "tool";
   const kind = tool.kind || classifyToolKind(name, tool.input, tool.result);
   const source = tool.source
-    || (kind === "mcp" || kind === "browser" || GATEWAY_HINT.test(name) ? "mcp" : "native");
+    || (name.startsWith("mcp__") || kind === "mcp" || kind === "browser" || GATEWAY_HINT.test(name) ? "mcp" : "native");
   return {
     ...tool,
     id: tool.id || crypto.randomUUID(),

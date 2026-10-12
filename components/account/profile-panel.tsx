@@ -97,7 +97,7 @@ export function ProfilePanel({profile,onChange}: {profile:AccountProfile;onChang
           </div>
           <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="h-11" disabled={saving || uploading} onClick={()=>setEditing(false)}>Cancel</Button><Button className="h-11" type="submit" disabled={saving || uploading}>{saving?"Saving…":"Save profile"}</Button></div>
         </form>:null}
-        {activity ? <TokenHeatmap days={activity.days}/> : <div className="rounded-xl border border-border/60 p-5 text-sm text-muted-foreground" role="status">{activityError || "Loading token activity…"}</div>}
+        {activity ? <TokenHeatmap days={activity.days} detailDays={activity.days}/> : <div className="rounded-xl border border-border/60 p-5 text-sm text-muted-foreground" role="status">{activityError || "Loading token activity…"}</div>}
         <section className="rounded-xl border border-border/60 p-5">
           <h2 className="flex items-center gap-2 text-sm font-medium"><Share2 className="size-4"/> Share profile</h2>
           <div className="mt-4 flex items-center justify-between gap-4"><div><label htmlFor="profile-sharing" className="text-sm">Shareable link</label><p className="mt-1 text-xs text-muted-foreground">Anyone with the link can see your name, picture, bio and links.</p></div>

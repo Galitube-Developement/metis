@@ -38,18 +38,18 @@ test("unknown splits, invalid cache and missing discount prices stay unavailable
 test("estimates are owner-isolated, deduplicated, zero-fill days and never replace reported costs",async()=>{
  const auth=await import("../lib/auth"),{recordAccountUsage,getAccountUsage,getAccountModelUsage}=await import("../lib/account-usage");
  const user=auth.createUser("api-cost-owner","synthetic-pass-123"),other=auth.createUser("api-cost-other","synthetic-pass-123");
- const meta={providerId:"cursor",modelId:"example-model",inputTokens:1000000,outputTokens:100000,cachedInputTokens:600000,costUsd:9,completedAt:"2026-10-01T00:00:00Z"};
+ const meta={providerId:"cursor",modelId:"example-model",inputTokens:1000000,outputTokens:100000,cachedInputTokens:600000,cacheWriteInputTokens:0,costUsd:9,completedAt:"2026-10-01T00:00:00Z"};
  const record=(id:string,overrides:Record<string,unknown>={},ownerId=user.id)=>recordAccountUsage(ownerId,{id,role:"assistant",runMetadata:{...meta,...overrides}});
  record("priced");record("priced");record("unknown",{modelId:"absent",costUsd:undefined});
  record("estimated-input",{inputTokensEstimated:true,costUsd:undefined});record("other",{},other.id);
  const result=getAccountUsage(user.id,"2026-10-01","2026-10-02",catalog);
  assert.equal(result.totals.costUsd,9);assert.equal(result.totals.costReports,1);
- assert.equal(result.totals.estimatedCostUsd,1.72);assert.equal(result.totals.estimatedCostReports,1);
- assert.deepEqual(result.days.map(day=>day.estimatedCostUsd),[1.72,null]);
+ assert.equal(result.totals.estimatedCostUsd,2.92);assert.equal(result.totals.estimatedCostReports,1);
+ assert.deepEqual(result.days.map(day=>day.estimatedCostUsd),[2.92,null]);
  assert.equal(result.pricing?.checkedAt,catalog.checkedAt);
  assert.equal(getAccountUsage(user.id,"2026-10-01","2026-10-02").totals.estimatedCostUsd,null);
  const details=getAccountModelUsage(user.id,"cursor","example-model","2026-10-01","2026-10-02",catalog)!;
- assert.equal(details.estimatedCostUsd,1.72);assert.equal(details.requests,2);assert.equal(details.apiPrice?.input,2);
+ assert.equal(details.estimatedCostUsd,2.92);assert.equal(details.requests,2);assert.equal(details.apiPrice?.input,2);
 });
 test("historical sync retains cache measurements and excludes cloned consumption",async()=>{
  const auth=await import("../lib/auth"),{getDatabase}=await import("../lib/sqlite"),{getAccountUsage}=await import("../lib/account-usage");
@@ -80,5 +80,5 @@ test("authenticated estimate endpoint uses cached price catalog without touching
  const {GET}=await import("../app/api/account-usage/route");
  const response=await GET(new Request("http://localhost/api/account-usage?from=2026-10-01&to=2026-10-01&costMode=estimated",{headers:{cookie:"ai_chat_auth="+token}}));
  assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"private, no-store");
- const {usage}=await response.json();assert.equal(usage.totals.estimatedCostUsd,2.8);assert.equal(usage.totals.costUsd,null);
+ const {usage}=await response.json();assert.equal(usage.totals.estimatedCostUsd,null);assert.equal(usage.totals.estimatedCostReports,0);assert.equal(usage.totals.costUsd,null);
 });

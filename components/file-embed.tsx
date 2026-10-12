@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Download, File, Pencil, X } from "lucide-react";
-import { fileViewKind, type FileEmbedSpec } from "@/lib/file-types";
+import { Download, File, Maximize, Pencil, X } from "lucide-react";
+import { flushSync } from "react-dom";
+import { ImageSurface, ImageViewer, type ImageViewerHandle } from "@/components/image-viewer";
+import { fileDownloadUrl, fileViewKind, type FileEmbedSpec } from "@/lib/file-types";
 import { formatFileBytes } from "@/lib/upload-limits";
 import { readTextFilePreview } from "@/lib/text-file-preview";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -15,6 +17,8 @@ export function FileEmbed({ file, onChange, onRemove, className = "", resizable 
   const [editing,setEditing] = useState(false);
   const [draft,setDraft] = useState("");
   const [removing,setRemoving] = useState(false);
+  const [imageFullscreen,setImageFullscreen] = useState(false);
+  const imageViewerRef = useRef<ImageViewerHandle>(null);
   const movedRef = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const officeUrl = kind === "office" ? (file.url.startsWith("/api/share/attachment?") ? file.url + "&preview=1" : file.url.split("?")[0] + "/preview") : file.url;
@@ -38,8 +42,7 @@ export function FileEmbed({ file, onChange, onRemove, className = "", resizable 
       onClick={()=>setRemoving(true)}><X className="size-4" aria-hidden="true"/></button>}
     <div className="min-h-0 flex-1 overflow-auto" style={{minHeight:kind === "audio" ? 60:120}}>
       {kind === "image" ?
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={file.url} alt={file.name} draggable={false} className="h-full max-h-[70vh] w-full object-contain" loading="lazy" onError={()=>setError("Image could not be displayed. Download the original file.")}/>
+        <div className="h-full max-h-[70dvh] min-h-32"><ImageSurface key={file.url} src={file.url} alt={file.name} loading="lazy"/></div>
         : kind === "video" ? <video src={file.url} controls playsInline preload="metadata" aria-label={file.name} className="h-full max-h-[70vh] w-full object-contain" onError={()=>setError("This video format cannot be played by your browser. Download the original file.")}/>
         : kind === "audio" ? <audio src={file.url} controls preload="metadata" aria-label={file.name} className="w-full px-2 py-4" onError={()=>setError("This audio format cannot be played by your browser. Download the original file.")}/>
         : kind === "pdf" ? <iframe src={file.url} title={file.name} className="h-full min-h-64 w-full border-0" />
@@ -55,7 +58,10 @@ export function FileEmbed({ file, onChange, onRemove, className = "", resizable 
     <div className="flex shrink-0 items-center gap-2 border-t border-border/40 bg-background/80 px-2 py-1.5 text-xs">
       <span className="min-w-0 flex-1 truncate" title={file.name}>{file.name}{file.size === undefined ? "" : " · " + formatFileBytes(file.size)}</span>
       {canEdit && !editing && <button type="button" aria-label={"Edit " + file.name} className="flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={()=>{setDraft(text!);setEditing(true);}}><Pencil className="size-3.5" aria-hidden="true"/></button>}
-      <a href={file.url.startsWith("blob:") ? file.url : file.url + (file.url.includes("?") ? "&" : "?") + "download=1"} download={file.name} aria-label={"Download " + file.name} className="flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><Download className="size-3.5" aria-hidden="true"/></a>
+      <a href={fileDownloadUrl(file.url)} download={file.name} aria-label={"Download " + file.name} className="flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><Download className="size-3.5" aria-hidden="true"/></a>
+      {kind === "image" && <button type="button" aria-label={"Fullscreen " + file.name} title="Fullscreen"
+        className="flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+        onClick={()=>{flushSync(()=>setImageFullscreen(true));imageViewerRef.current?.enterFullscreen();}}><Maximize className="size-3.5" aria-hidden="true"/></button>}
       {onChange && resizable && <button type="button" aria-label="Resize embedded file" title="Resize embedded file" className="size-7 shrink-0 cursor-nwse-resize rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
         onClick={()=>{ if(movedRef.current)return; onChange({...file,height:Math.min(1200,(file.height || rootRef.current?.clientHeight || 240)+80)});}}
         onPointerDown={e=>{
@@ -66,6 +72,7 @@ export function FileEmbed({ file, onChange, onRemove, className = "", resizable 
           node.addEventListener("pointermove",move);node.addEventListener("pointerup",up);node.addEventListener("pointercancel",up);
         }}>↘</button>}
     </div>
+    {imageFullscreen && <ImageViewer ref={imageViewerRef} image={{src:file.url,alt:file.name,name:file.name}} initialFullscreen onOpenChange={open=>setImageFullscreen(open)}/>}
     <ConfirmDialog open={removing} onOpenChange={setRemoving} title="Remove file?" description="Remove this embedding. The original uploaded file is kept." confirmLabel="Remove" onConfirm={()=>onRemove?.()}/>
   </div>;
 }

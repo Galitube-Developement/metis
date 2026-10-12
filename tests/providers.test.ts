@@ -181,3 +181,10 @@ test("Codex todo_list items render as a Tasks state snapshot", () => {
     ],
   );
 });
+
+
+test("Codex preserves its explicit MCP source even when the tool name has no gateway hint", () => {
+  const tool = codexTool({ id: "custom-mcp", type: "mcp_tool_call", tool: "fetch_widget", server: "custom", arguments: {} }, "running");
+  assert.equal(tool?.name, "fetch_widget");
+  assert.equal(tool?.source, "mcp");
+});

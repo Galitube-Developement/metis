@@ -122,6 +122,7 @@ export interface MetisRuntimeToolStartedEvent extends MetisRuntimeEventEnvelope 
     /** Provider-neutral presentation category from the durable tool event. */
     kind?: string;
     phase?: "preparing" | "executing";
+    source?: "mcp" | "native" | "browser";
     inputChars?: number;
     /** Short input representation for the compact chip. */
     input?: unknown;

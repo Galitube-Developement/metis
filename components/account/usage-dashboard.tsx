@@ -16,6 +16,8 @@ import { usageCost, usageCostLabel, usageCostReports, type UsageCostMode } from 
 import { useUsageProviderFilter } from "./use-usage-provider-filter";
 import { UsageProviderFilter } from "./usage-provider-filter";
 import { UsageModelTooltip } from "./usage-model-tooltip";
+import { usageMetricValue, type UsageMetric } from "@/lib/usage-model-contributions";
+import { usageTokenOptions, usageTokenLabel, usageTokenValue, usageTokenReports, type UsageTokenMetric } from "@/lib/usage-token-split";
 const compact=new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:1});
 
 // Match the actual visible table columns, including inside narrow embedded views.
@@ -39,13 +41,16 @@ export function UsageDashboard() {
   const [range,setRange]=useState("30");
   const [from,setFrom]=useState(""),[to,setTo]=useState("");
   const [metric,setMetric]=useState<"costUsd"|"tokens"|"requests">("tokens");
+  const [tokenMetric,setTokenMetric]=useState<UsageTokenMetric>("tokens");
+  const activeTab=metric==="costUsd" && !showCosts ? "tokens":metric;
+  const activeMetric:UsageMetric=activeTab==="tokens" ? tokenMetric:activeTab;
   const [usage,setUsage]=useState<AccountUsage|null>(null);
   const [error,setError]=useState(""),[loading,setLoading]=useState(true),[refresh,setRefresh]=useState(0);
   const [sort,setSort]=useState<"tokens"|"costUsd"|"requests"|"modelId">("tokens"),[ascending,setAscending]=useState(false);
   const [expanded,setExpanded]=useState<string|null>(null);
   const id=useId().replaceAll(":","");
   const motion=useChartMotion();
-  const chartData=useMemo(()=>usage?.days.map(day=>({...day,tokens:day.requests && !day.tokenReports ? null:day.tokens,costUsd:day.requests?usageCost(day,costMode):0})) || [],[usage,costMode]);
+  const chartData=useMemo(()=>usage?.days.map(day=>({...day,value:usageMetricValue(day,activeMetric,costMode)})) || [],[usage,costMode,activeMetric]);
   useEffect(()=>{
     if(range==="custom" && (!from || !to)) { setUsage(null);setLoading(false);return; }
     const controller=new AbortController();
@@ -62,9 +67,9 @@ export function UsageDashboard() {
   },[range,from,to,refresh,costMode,providerFilterKey]);
   const models=useMemo(()=>[...(usage?.models || [])].sort((a,b)=>{
     const key=sort==="costUsd" && !showCosts ? "tokens":sort;
-    const value=key==="modelId"?a.modelId.localeCompare(b.modelId):key==="costUsd"?(usageCost(a,costMode)??-1)-(usageCost(b,costMode)??-1):(a[key]??-1)-(b[key]??-1);
+    const value=key==="modelId"?a.modelId.localeCompare(b.modelId):key==="costUsd"?(usageCost(a,costMode)??-1)-(usageCost(b,costMode)??-1):key==="tokens"?(usageTokenValue(a,tokenMetric)??-1)-(usageTokenValue(b,tokenMetric)??-1):(a[key]??-1)-(b[key]??-1);
     return ascending?value:-value;
-  }),[usage,sort,ascending,costMode,showCosts]);
+  }),[usage,sort,ascending,costMode,showCosts,tokenMetric]);
   function exportCsv() {
     if(!usage)return;
     const text=usageCsv(models,costMode);
@@ -76,7 +81,7 @@ export function UsageDashboard() {
   const providers=usage?.providers || [];
   const activeProviderCount=providers.filter(provider=>!excludedProviders.includes(provider.id)).length;
   const filtered=excludedProviders.length>0;
-  const activeMetric=metric==="costUsd" && !showCosts ? "tokens":metric;
+  const metricLabel=activeMetric==="costUsd" ? usageCostLabel(costMode):activeMetric==="requests" ? "Requests":usageTokenLabel(activeMetric);
   const costLabel=usageCostLabel(costMode);
   const reports=totals ? usageCostReports(totals,costMode):0;
   return <div className="space-y-8">
@@ -99,21 +104,29 @@ export function UsageDashboard() {
       </label>
       {costMode==="estimated" ? <details className="text-xs text-muted-foreground"><summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5"><Info className="size-3.5" aria-hidden="true"/> How estimates work <ChevronDown className="size-3"/></summary><p className="mt-2 max-w-2xl leading-relaxed">Recorded input and output tokens × current standard text API prices, with cache discounts when reported. This is an approximate API value, not your invoice or subscription cost. Fast / priority premiums, long-context surcharges, media pricing and non-token fees are excluded. Missing prices or token splits stay unavailable. <a href="https://models.dev" target="_blank" rel="noreferrer" className="underline underline-offset-2">Price source: models.dev</a>{usage?.pricing ? " · Checked "+new Date(usage.pricing.checkedAt).toLocaleDateString("en",{timeZone:"UTC"}):" · Price catalog unavailable."}</p></details>:null}
     </div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">Token type
+        <select aria-label="Token type" value={tokenMetric} onChange={event=>{setTokenMetric(event.target.value as UsageTokenMetric);setMetric("tokens");}} className="h-10 max-w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground">
+          {usageTokenOptions.map(option=><option key={option.key} value={option.key}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Input excludes cache reads and writes. Missing cache counts stay unreported; input without a known split stays unclassified. Token type applies to the chart and model token column; costs include all token types.</p>
+    </div>
     {filtered ? <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="status"><span>{activeProviderCount} of {providers.length} recorded providers included. Totals, charts and CSV use this selection.</span><button type="button" className="min-h-9 underline underline-offset-2 hover:text-foreground" onClick={()=>setExcludedProviders([])}>Reset provider filters</button></div>:null}
     {range==="custom" ? <div className="flex flex-wrap gap-3"><label className="space-y-1 text-xs text-muted-foreground">From<Input type="date" aria-label="Usage from" value={from} onChange={e=>setFrom(e.target.value)} className="h-11" /></label><label className="space-y-1 text-xs text-muted-foreground">To<Input type="date" aria-label="Usage to" value={to} onChange={e=>setTo(e.target.value)} className="h-11" /></label></div>:null}
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p>:null}
     <section aria-label="Usage overview" aria-busy={loading} className="rounded-xl border border-border/60">
       <div className="flex flex-wrap gap-1 border-b border-border/60 px-4 sm:px-6">
-        {([["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).filter(([key])=>showCosts || key!=="costUsd").map(([key,label])=><button key={key} type="button" aria-pressed={activeMetric===key} onClick={()=>setMetric(key)}
-          className={"min-h-12 border-b-2 px-4 text-sm transition-colors "+(activeMetric===key?"border-primary text-foreground":"border-transparent text-muted-foreground hover:text-foreground")}>{label}</button>)}
+        {([["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).filter(([key])=>showCosts || key!=="costUsd").map(([key,label])=><button key={key} type="button" aria-pressed={activeTab===key} onClick={()=>setMetric(key)}
+          className={"min-h-12 border-b-2 px-4 text-sm transition-colors "+(activeTab===key?"border-primary text-foreground":"border-transparent text-muted-foreground hover:text-foreground")}>{label}</button>)}
       </div>
       <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
-        <div><p className="text-xs text-muted-foreground">{activeMetric==="costUsd"?costLabel:activeMetric==="tokens"?"Reported tokens":"Requests"}</p>
-          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl"><AnimatedNumber valueKey={activeMetric==="costUsd"?activeMetric+costMode:activeMetric} value={totals ? activeMetric==="costUsd"?usageCost(totals,costMode):activeMetric==="tokens" && !totals.tokenReports ? null:totals[activeMetric]:undefined} loading={loading} format={activeMetric==="costUsd"?"money":"integer"}/></p>
+        <div><p className="text-xs text-muted-foreground">{metricLabel}</p>
+          <p className="mt-3 break-words text-3xl font-medium tracking-tight tabular-nums sm:text-4xl"><AnimatedNumber valueKey={activeMetric==="costUsd"?activeMetric+costMode:activeMetric} value={totals ? usageMetricValue(totals,activeMetric,costMode):undefined} loading={loading} format={activeMetric==="costUsd"?"money":"integer"}/></p>
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{usage?.from} — {usage?.to}<br />Daily totals · UTC</p>
           {activeMetric==="costUsd" && totals ? <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{reports ? reports.toLocaleString()+" of "+totals.requests.toLocaleString()+" runs "+(costMode==="estimated"?"estimated":"reported")+(reports<totals.requests?" · Partial total":"") : costMode==="estimated"?"No matching prices and complete token splits for these runs.":"Your providers have not reported costs for these runs."}</p>:null}
         </div>
-        <div className="h-60 min-w-0" aria-label={"Daily "+(activeMetric==="costUsd"?costLabel:activeMetric)+" chart"}>
+        <div className="h-60 min-w-0" aria-label={"Daily "+metricLabel+" chart"}>
           {usage && !error && !loading ? <ChartBoundary resetKey={costMode+providerFilterKey+activeMetric+usage.from+usage.to+refresh} label="usage-overview"><ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart key={costMode+providerFilterKey} data={chartData} margin={{top:8,right:8,bottom:0,left:0}}>
               <defs><linearGradient id={id+"fill"} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.16}/><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0}/></linearGradient></defs>
@@ -121,13 +134,19 @@ export function UsageDashboard() {
               <XAxis dataKey="date" tickFormatter={date=>new Date(date).toLocaleDateString("en",{month:"short",day:"numeric",timeZone:"UTC"})} minTickGap={36} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
               <YAxis width={48} tickFormatter={n=>activeMetric==="costUsd"?"$"+compact.format(n):compact.format(n)} tick={{fill:"var(--muted-foreground)",fontSize:11}} tickLine={false} axisLine={false} />
               <Tooltip allowEscapeViewBox={{x:false,y:false}} wrapperStyle={{pointerEvents:"auto"}} content={props=><UsageModelTooltip active={props.active} day={usage.days.find(day=>day.date===props.label)} models={usage.modelDays?.[String(props.label)] || []} metric={activeMetric} costMode={costMode}/>}/>
-              <Area type="monotone" dataKey={activeMetric} stroke="var(--chart-1)" strokeWidth={1.8} fill={"url(#"+id+"fill)"} {...motion} connectNulls={false}/>
+              <Area type="monotone" dataKey="value" name={metricLabel} stroke="var(--chart-1)" strokeWidth={1.8} fill={"url(#"+id+"fill)"} {...motion} connectNulls={false}/>
             </AreaChart>
           </ResponsiveContainer></ChartBoundary>:<div className="flex h-full items-center justify-center text-sm text-muted-foreground">{loading?"Loading usage…":"Usage unavailable"}</div>}
         </div>
       </div>
       <div className={"grid grid-cols-2 gap-5 border-t border-border/60 p-5 sm:p-6 "+(showCosts?"lg:grid-cols-4":"lg:grid-cols-3")}>
-        {([["Requests",totals?.requests],["Input tokens",totals?.inputReports?totals.inputTokens:null],["Output tokens",totals?.outputReports?totals.outputTokens:null],[costLabel,totals?usageCost(totals,costMode):null]] as const).filter(([label])=>showCosts || label!==costLabel).map(([label,value])=><div key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={value} loading={loading} format={label===costLabel?"money":"integer"}/></p></div>)}
+        <div><p className="text-xs text-muted-foreground">Requests</p><p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={totals?.requests} loading={loading}/></p></div>
+        {usageTokenOptions.filter(option=>option.key!=="tokens").map(option=><div key={option.key}>
+          <p className="text-xs text-muted-foreground">{option.label}</p>
+          <p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={totals?usageTokenValue(totals,option.key):undefined} loading={loading}/></p>
+          {totals?.requests ? <p className="mt-1 text-[10px] text-muted-foreground">{usageTokenReports(totals,option.key)} / {totals.requests} runs reported</p>:null}
+        </div>)}
+        {showCosts ? <div><p className="text-xs text-muted-foreground">{costLabel}</p><p className="mt-2 text-lg tabular-nums"><AnimatedNumber value={totals?usageCost(totals,costMode):undefined} loading={loading} format="money"/></p></div>:null}
       </div>
     </section>
     <section aria-label="Usage by model">
@@ -136,8 +155,8 @@ export function UsageDashboard() {
         <table className="w-full table-fixed text-left text-sm"><caption className="sr-only">Model usage for the selected date range</caption>
           <thead className="border-b border-border/60 bg-muted/25 text-xs text-muted-foreground"><tr>
             {([["modelId","Model"],["costUsd","Cost"],["tokens","Tokens"],["requests","Requests"]] as const).filter(([key])=>showCosts || key!=="costUsd").map(([key,label])=><th key={key} scope="col" aria-sort={sort===key?(ascending?"ascending":"descending"):"none"} className={"px-3 py-2 font-normal sm:px-4 "+(key==="costUsd"?"hidden sm:table-cell":key==="modelId"?"w-[48%] sm:w-[35%]":"")}>
-              <button type="button" className="flex min-h-9 items-center gap-1.5" onClick={()=>sortBy(key)}>{key==="costUsd"?(costMode==="estimated"?"API value":"Cost"):label}{sort===key?(ascending?<ArrowUp className="size-3" />:<ArrowDown className="size-3" />):null}</button></th>)}
-            <th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Input</th><th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Output</th>
+              <button type="button" className="flex min-h-9 items-center gap-1.5" onClick={()=>sortBy(key)}>{key==="costUsd"?(costMode==="estimated"?"API value":"Cost"):key==="tokens"?usageTokenLabel(tokenMetric):label}{sort===key?(ascending?<ArrowUp className="size-3" />:<ArrowDown className="size-3" />):null}</button></th>)}
+            <th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Input (uncached)</th><th className="hidden px-4 py-4 font-normal lg:table-cell" scope="col">Output</th>
           </tr></thead>
           <tbody>{!loading && !error ? models.map((model:UsageModel)=>{
             const key=JSON.stringify([model.providerId,model.modelId]),open=expanded===key;
@@ -150,11 +169,11 @@ export function UsageDashboard() {
                 </button>
               </td>
               {showCosts ? <td className="hidden whitespace-nowrap px-4 py-4 tabular-nums sm:table-cell" title={usageCostReports(model,costMode)+" of "+model.requests+" runs "+(costMode==="estimated"?"estimated":"reported")}><AnimatedNumber value={usageCost(model,costMode)} format="money"/></td>:null}
-              <td className="px-3 py-4 tabular-nums sm:px-4"><AnimatedNumber value={model.tokenReports?model.tokens:null} format="compact"/></td>
+              <td className="px-3 py-4 tabular-nums sm:px-4"><AnimatedNumber value={usageTokenValue(model,tokenMetric)} format="compact"/></td>
               <td className="px-3 py-4 tabular-nums sm:px-4"><AnimatedNumber value={model.requests} format="compact"/></td>
-              <td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.inputReports?model.inputTokens:null}/></td><td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.outputReports?model.outputTokens:null}/></td>
+              <td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.uncachedInputReports?model.uncachedInputTokens:null}/></td><td className="hidden px-4 py-4 tabular-nums lg:table-cell"><AnimatedNumber value={model.outputReports?model.outputTokens:null}/></td>
             </tr><tr id={detailId} hidden={!open} className="border-b border-border/40 last:border-b-0"><td colSpan={columns} className="bg-muted/15 px-4 py-5 sm:px-6">
-              {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to} costMode={costMode}/>:null}
+              {open && usage ? <ModelUsageDetails key={key+usage.from+usage.to+refresh} model={model} from={usage.from} to={usage.to} costMode={costMode} tokenMetric={tokenMetric}/>:null}
             </td></tr></Fragment>;
           }):null}
           {loading || error || !models.length ? <tr><td colSpan={columns} className="px-4 py-12 text-center text-muted-foreground">{loading?"Loading…":error?"Usage unavailable.":filtered?"No usage for the selected providers.":"No recorded usage in this period."}</td></tr>:null}

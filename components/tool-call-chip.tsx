@@ -1,7 +1,8 @@
 "use client";
 
 import { RunStatus } from "@/components/run-status";
-import { ToolInputStatus, toolPreparationLabel } from "@/components/tool-input-status";
+import { ToolInputStatus, ToolPreparationDetails } from "@/components/tool-input-status";
+import { latestPreparingTool } from "@/lib/tool-preparation";
 import { AnimatedNumber } from "@/components/animated-number";
 
 import {
@@ -401,7 +402,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   const clickable = resolvedKind === "edit" && Boolean(diff || path);
   const subagentClickable = resolvedKind === "subagent";
   const workspaceClickable = resolvedKind === "plan" || resolvedKind === "canvas" || resolvedKind === "browser";
-  if (running && phase === "preparing") return <ToolInputStatus name={resolvedName} kind={resolvedKind} characters={inputChars}/>;
+  if (running && phase === "preparing") return <ToolInputStatus name={resolvedName} kind={resolvedKind} source={source} characters={inputChars}/>;
   if (todoItems?.length) {
     const completed = todoItems.filter((todo) => /^(completed|done)$/i.test(todo.status || "")).length;
     const percent = Math.round((completed / todoItems.length) * 100);
@@ -779,8 +780,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  durationMs: thinkingList.reduce((sum, item) => sum + (item.durationMs || 0), 0) || thinkingList.at(-1)?.durationMs,
  }
  : undefined;
- const preparingTool = regularEntries.find(tool => tool.phase === "preparing" && isToolRunning(tool.status) && tool.result === undefined);
- const groupTitle = preparingTool ? toolPreparationLabel(preparingTool.kind) : activityGroupLabel(regularEntries, combinedThinking);
+ const preparingTool = latestPreparingTool(regularEntries);
+ const groupTitle = activityGroupLabel(regularEntries, combinedThinking);
   const groupOpen = userOpen ?? Boolean(live || autoExpand);
   const renderTool = (tool: ToolCallData, nested = false) => (
     <ToolCallChip
@@ -881,8 +882,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  ) : (
  <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
  )}
- <span className="truncate">{groupTitle}</span>
- {!groupOpen && preparingTool?.inputChars !== undefined ? <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] tabular-nums"><AnimatedNumber value={preparingTool.inputChars}/> chars</span> : null}
+ {preparingTool ? <ToolPreparationDetails name={preparingTool.name} kind={preparingTool.kind} source={preparingTool.source} characters={!groupOpen ? preparingTool.inputChars : undefined}/> : <span className="truncate">{groupTitle}</span>}
  </button>
  {groupOpen ? (
  <div className="flex flex-col gap-1 pl-4">

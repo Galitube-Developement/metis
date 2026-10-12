@@ -25,10 +25,11 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   startTransition,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { startUpload, waitForUpload, cancelUpload } from "@/lib/background-uploads";
+import { startUpload, waitForUpload, cancelUpload, subscribeUploads, getUploadStatus } from "@/lib/background-uploads";
 import { UploadProgress, UploadTray } from "@/components/upload-progress";
 import { readTextFilePreview } from "@/lib/text-file-preview";
 import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
@@ -116,12 +117,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { FileEmbed } from "@/components/file-embed";
-import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
+import { ImageViewer } from "@/components/image-viewer";
+import { canAutoRevealBrowser } from "@/lib/browser-auto-reveal";
+import { fileViewKind, isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { useLiveMessageMotion } from "@/components/use-live-message-motion";
 import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
+import { latestPreparingTool } from "@/lib/tool-preparation";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
@@ -191,6 +195,7 @@ import {
   composerTranscriptInsert,
   composerUserEditMeta,
   decideComposerSend,
+  hasUnfinishedComposerUploads,
   isDuplicateComposerSend,
   mergeQueuedFollowUps,
   shouldAcceptRemoteComposerInput,
@@ -1636,6 +1641,8 @@ function AttachmentViewer({
 }) {
   const attachment = active?.attachment;
   const url = attachment?.storedName && active?.chatId ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}` : attachment?.previewUrl;
+  if (attachment && url && fileViewKind(attachment.mimeType,attachment.name) === "image")
+    return <ImageViewer image={{src:url,alt:attachment.name,name:attachment.name}} onOpenChange={onOpenChange}/>;
   return <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[90dvh] max-w-5xl overflow-auto p-4">
       <DialogHeader><DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle></DialogHeader>
@@ -1777,6 +1784,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const lastWorkspaceInteractionAtRef = useRef(Date.now());
+  const workspaceWasOpenRef = useRef(false);
+  const markWorkspaceInteraction = useCallback((event: React.SyntheticEvent) => {
+    if (event.nativeEvent.isTrusted) lastWorkspaceInteractionAtRef.current = Date.now();
+  }, []);
+  useEffect(() => {
+    // Closing the pane must not let the next agent event immediately reopen it.
+    if (workspaceWasOpenRef.current && !workspaceOpen) lastWorkspaceInteractionAtRef.current = Date.now();
+    workspaceWasOpenRef.current = workspaceOpen;
+  }, [workspaceOpen]);
+  useEffect(() => { lastWorkspaceInteractionAtRef.current = Date.now(); }, [activeChatId]);
   const [workspaceMounted, setWorkspaceMounted] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<NonNullable<ChatSessionState["workspaceTab"]>>("canvas");
   const [notesOpen, setNotesOpen] = useState(false);
@@ -2014,6 +2032,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [paneKey, setPaneKey] = useState(0);
   const [pendingFiles, setVisiblePendingFiles] = useState<PendingFile[]>([]);
   const pendingByChatRef = useRef(new Map<string, PendingFile[]>());
+  // Boolean snapshot avoids rerendering the whole chat for every upload byte.
+  const attachmentSendBlocked = useSyncExternalStore(
+    subscribeUploads,
+    () => hasUnfinishedComposerUploads(pendingFiles, getUploadStatus),
+    () => false,
+  );
   const [restoredAttachments, setRestoredAttachments] = useState<MsgAttachment[]>([]);
   const [activeAttachment, setActiveAttachment] = useState<{
     attachment: MsgAttachment;
@@ -2876,6 +2900,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const runningSubagents = subagentOutputs.filter((tool) =>
     isBarSubagentLive(tool, childRunByChatId[tool.subagent?.chatId || ""], isToolRunning),
   );
+  const latestAssistantPreparingTool = useMemo(() => latestPreparingTool(
+    (latestAssistantMessage?.parts ?? (latestAssistantMessage ? partsFromFlat(latestAssistantMessage) : []))
+      .filter((part): part is ToolMsgPart => part.type === "tool"),
+  ), [latestAssistantMessage]);
   const latestAssistantHasRunningTool = Boolean(
     latestAssistantMessage &&
       (latestAssistantMessage.parts ?? partsFromFlat(latestAssistantMessage))
@@ -3411,8 +3439,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     };
   }, [browserViewport.height, browserViewport.width, workspaceFullscreen, workspaceTab, workspaceWidth]);
 
-  // Subscribe only while the current chat has a genuinely active run. Browser
-  // events from paused/waiting/completed runs and other chats must never move the UI.
+  // Current-chat browser events update the preview in the background. Revealing
+  // it is separate: an active run must not interrupt an open/recently used workspace.
   const activeBrowserAgentRun = Boolean(
     activeChatId &&
       !chats.some((chat) =>
@@ -3422,9 +3450,26 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (busy || runningChatIds.includes(activeChatId) || chats.some((chat) => chat.id === activeChatId && chat.runStatus === "running")),
   );
 
+  const browserAutoRevealStateRef = useRef({workspaceOpen,activeRun:activeBrowserAgentRun,blocked:false});
+  browserAutoRevealStateRef.current = {
+    workspaceOpen,activeRun:activeBrowserAgentRun,
+    blocked:Boolean(accountView || notesOpen || automationsOpen || projectHomeId || loadingChatId || workspaceFullscreen),
+  };
   useEffect(() => {
     if (typeof window === "undefined" || !browserEnabled || !activeChatId) return;
     const chatId = activeChatId;
+    const revealBrowserIfIdle = () => {
+      const current = browserAutoRevealStateRef.current;
+      if (!canAutoRevealBrowser({
+        workspaceOpen:current.workspaceOpen,lastWorkspaceInteractionAt:lastWorkspaceInteractionAtRef.current,
+        now:Date.now(),mobile:isMobileChatViewport(),activeRun:current.activeRun,
+        blocked:current.blocked || document.visibilityState === "hidden" || activeChatIdRef.current !== chatId,
+      })) return;
+      current.workspaceOpen = true;
+      setWorkspaceMounted(true);
+      setWorkspaceTab("browser");
+      setWorkspaceOpen(true);
+    };
     const source = new EventSource(`/api/browser/live?chatId=${encodeURIComponent(chatId)}`);
     source.onmessage = (event) => {
       try {
@@ -3434,8 +3479,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         };
         if (data.source !== "agent") return;
         if (data.type === "pointer" && typeof data.x === "number" && typeof data.y === "number") {
-          if (!isMobileChatViewport()) setWorkspaceOpen(true);
-          setWorkspaceTab("browser");
+          revealBrowserIfIdle();
           setAgentPointer({
             x: Math.max(0, Math.min(1, data.x)),
             y: Math.max(0, Math.min(1, data.y)),
@@ -3450,10 +3494,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           return;
         }
         if (data.type !== "action" && data.type !== "navigation") return;
-        // The event itself is proof that the active run is using the browser now.
-        // No follow mode: the browser simply mirrors that one active run.
-        if (!isMobileChatViewport()) setWorkspaceOpen(true);
-        setWorkspaceTab("browser");
+        revealBrowserIfIdle();
         if (data.tabId && data.tabId !== activeBrowserTabIdRef.current) setActiveBrowserTabId(data.tabId);
         if (data.type === "navigation") {
           void fetch(`/api/browser/history?chatId=${encodeURIComponent(chatId)}`)
@@ -7002,6 +7043,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     }
     e?.preventDefault();
     const isOverride = textOverride !== undefined;
+    // Read the live task map: Enter/form submission can beat the next React render.
+    if (hasUnfinishedComposerUploads(attachmentsOverride ?? pendingFilesRef.current, getUploadStatus)) return;
     let text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
     let goalMessage: string | null = null;
     const slashCommand = !isOverride ? matchSlashCommand(text) : null;
@@ -7055,7 +7098,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       goalMessage = goal;
       text = goal;
     }
-    const filesToSend = attachmentsOverride ?? pendingFiles;
+    const filesToSend = attachmentsOverride ?? pendingFilesRef.current;
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
     const hasComposerContent =
@@ -7170,7 +7213,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     sendQueuedNow = false,
   ) {
     const text = (textOverride ?? composerLiveText(textareaRef.current ? composerPlainText(textareaRef.current, "Message Metis…") : "", input)).trim();
-    const filesToSend = attachmentsOverride ?? pendingFiles;
+    const filesToSend = attachmentsOverride ?? pendingFilesRef.current;
     const uploadOriginKey = activeChatIdRef.current || "__draft__";
     const referencesToSend = incognito ? [] : (referencesOverride ?? references);
     const storedAttachmentsToSend = storedAttachmentsOverride ?? restoredAttachments;
@@ -7660,6 +7703,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 ? payload.diff as ToolPart["diff"]
                 : undefined;
             const phase = payload.phase === "preparing" || payload.phase === "executing" ? payload.phase : undefined;
+            const source = payload.source === "mcp" || payload.source === "native" || payload.source === "browser" ? payload.source : undefined;
             const inputChars = typeof payload.inputChars === "number" && Number.isFinite(payload.inputChars) && payload.inputChars >= 0 ? payload.inputChars : undefined;
             const input = typeof payload.input === "string" ? payload.input : undefined;
             const result = typeof payload.result === "string" ? payload.result : undefined;
@@ -7732,6 +7776,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   status,
                   phase: phase ?? (status === "running" ? prevTool?.phase : undefined),
                   inputChars: inputChars ?? prevTool?.inputChars,
+                  source: source ?? prevTool?.source,
                   detail: detail ?? prevTool?.detail,
                   kind: resolvedKind ?? prevTool?.kind,
                   path: path ?? prevTool?.path,
@@ -9295,8 +9340,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           <Button
             type={voiceRecording || (busy && !canSend) || voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "button" : "submit"}
             size="icon"
-            disabled={voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? true : !canSend && !busy && !voiceRecording}
-            aria-label={voiceRecording ? "Stop recording" : voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "Transcribing voice input" : busy && !canSend ? "Stop agent" : busy ? "Queue message" : "Send"}
+            disabled={voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? true : !voiceRecording && (attachmentSendBlocked || (!canSend && !busy))}
+            aria-label={voiceRecording ? "Stop recording" : attachmentSendBlocked ? "Waiting for attachments" : voiceState === "permission" || voiceState === "uploading" || voiceState === "transcribing" ? "Transcribing voice input" : busy && !canSend ? "Stop agent" : busy ? "Queue message" : "Send"}
+            title={attachmentSendBlocked ? "Finish uploading or remove the unfinished attachment before sending" : undefined}
             className="size-11 shrink-0 self-end rounded-full sm:size-9"
             onClick={
               voiceRecording
@@ -10965,13 +11011,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </article>
                   );
                 })}
-                {activeChatIsRunning && !latestAssistantHasRunningTool ? (
+                {activeChatIsRunning && (!latestAssistantHasRunningTool || Boolean(latestAssistantPreparingTool)) ? (
                   <div
                     className="flex min-w-0 items-center gap-2 px-1 text-xs text-muted-foreground md:hidden"
                     role="status"
                     aria-label="Agent running"
                   >
-                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
+                    <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined} tool={latestAssistantPreparingTool}/>
                   </div>
                 ) : null}
                 {pendingApproval ? (
@@ -11054,13 +11100,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ) : null}
                     </Button>
                   ) : null}
-                  {activeChatIsRunning && !latestAssistantHasRunningTool ? (
+                  {activeChatIsRunning && (!latestAssistantHasRunningTool || Boolean(latestAssistantPreparingTool)) ? (
                     <div
                       className="mb-2 hidden items-center justify-center gap-2 text-xs text-muted-foreground md:flex"
                       role="status"
                       aria-label="Agent running"
                     >
-                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined}/>
+                      <AgentActivity activityKey={`${activeChatId}:${latestAssistantMessage?.content.length}:${latestAssistantMessage?.thinking?.length}:${latestAssistantMessage?.parts?.length}`} label={liveStatus || undefined} tool={latestAssistantPreparingTool}/>
                     </div>
                   ) : null}
                   {runningSubagents.length > 0 ? (
@@ -11130,6 +11176,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ) : null}
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
+          onPointerDownCapture={markWorkspaceInteraction}
+          onPointerMoveCapture={markWorkspaceInteraction}
+          onKeyDownCapture={markWorkspaceInteraction}
+          onInputCapture={markWorkspaceInteraction}
+          onWheelCapture={markWorkspaceInteraction}
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
             (workspaceTab === "browser" || workspaceTab === "desktops" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",

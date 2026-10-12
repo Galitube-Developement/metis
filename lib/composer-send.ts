@@ -187,3 +187,11 @@ export function mergeQueuedFollowUps<T extends { id: string }>(
     ? local
     : merged;
 }
+
+/** Only attachments for this submission gate send; other chats' uploads do not. */
+export function hasUnfinishedComposerUploads(
+  attachments: ReadonlyArray<{ uploadTaskId?: string }>,
+  statusFor: (id: string) => string | undefined,
+) {
+  return attachments.some((file) => file.uploadTaskId && statusFor(file.uploadTaskId) !== "completed");
+}

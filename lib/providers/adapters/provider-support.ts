@@ -1,3 +1,4 @@
+import { createAiUsageAccumulator } from "@/lib/providers/ai-usage-accumulator";
 import { createToolInputProgress } from "@/lib/tool-input-progress";
 import { providerErrorWithCause } from "@/lib/provider-rate-limit";
 import {
@@ -1022,17 +1023,8 @@ export async function consumeAiStream(
   }));
   const loopGuard = new LoopGuard();
   let fallbackIndex = 0;
-  const usage: Usage = {};
-
-  const addUsage = (part: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  }) => {
-    usage.inputTokens = (usage.inputTokens || 0) + (part.inputTokens || 0);
-    usage.outputTokens = (usage.outputTokens || 0) + (part.outputTokens || 0);
-    usage.totalTokens = (usage.totalTokens || 0) + (part.totalTokens || 0);
-  };
+  const accumulator = createAiUsageAccumulator();
+  const usage = accumulator.usage;
 
   const consumeRound = async (streamResult: ReturnType<typeof streamText>) => {
     let providerError = "";
@@ -1326,7 +1318,7 @@ export async function consumeAiStream(
       throw providerErrorWithCause(providerError || message, providerErrorCause ?? error);
     }
     if (providerError) throw providerErrorWithCause(providerError, providerErrorCause);
-    addUsage(roundUsage);
+    accumulator.add(roundUsage);
     void rawText;
     const steps = await Promise.resolve(streamResult.steps)
       .then((value) => value)

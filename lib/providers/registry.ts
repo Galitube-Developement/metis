@@ -100,7 +100,8 @@ function models(...entries: Array<ProviderModelDefinition>) {
 export const PROVIDERS: ProviderDefinition[] = [
   {
     key: "cursor",
-    apiPricing: { providers: ["openai", "anthropic", "google", "xai"], inputIncludesCache: true },
+    // Cursor SDK TokenUsage.totalTokens sums input + output + cache read + cache write.
+    apiPricing: { providers: ["openai", "anthropic", "google", "xai"], inputIncludesCache: false },
     name: "Cursor",
     description: "Cursor Agent SDK with filesystem tools, MCP, plans, and canvases.",
     kind: "cursor-agent",

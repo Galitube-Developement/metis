@@ -315,6 +315,7 @@ export async function runAlternativeProviderJob(
       name: normalizedTool.name,
       status: normalizedTool.status,
       kind: normalizedTool.kind,
+      ...(normalizedTool.source ? { source: normalizedTool.source } : {}),
       ...(normalizedTool.phase ? { phase: normalizedTool.phase } : {}),
       ...(normalizedTool.inputChars !== undefined ? { inputChars: normalizedTool.inputChars } : {}),
       ...(normalizedTool.input ? { input: normalizedTool.input } : {}),

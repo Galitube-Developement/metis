@@ -111,6 +111,7 @@ const TOOL_LINE = /(?:calling|called|using|ran)\s+(?:mcp\s+)?tool[:\s]+[`\"]?([A
 
 type AntigravityCliUsage = {
   inputTokens?: number;
+  cachedInputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
 };
@@ -133,6 +134,7 @@ export function parseAntigravityCliChunk(chunk: string): {
     const next: AntigravityCliUsage = {};
     if (typeof record.input_tokens === "number") next.inputTokens = record.input_tokens;
     if (typeof record.output_tokens === "number") next.outputTokens = record.output_tokens;
+    if (typeof record.cached_tokens === "number") next.cachedInputTokens = record.cached_tokens;
     if (typeof record.total_tokens === "number") next.totalTokens = record.total_tokens;
     return Object.keys(next).length ? next : undefined;
   };
@@ -724,6 +726,7 @@ export async function runAntigravitySdkJob(context: {
         usage = {
           ...(typeof parsed.input_tokens === "number" ? { inputTokens: parsed.input_tokens } : {}),
           ...(typeof parsed.output_tokens === "number" ? { outputTokens: parsed.output_tokens } : {}),
+          ...(typeof parsed.cached_tokens === "number" ? { cachedInputTokens: parsed.cached_tokens } : {}),
           ...(typeof parsed.total_tokens === "number" ? { totalTokens: parsed.total_tokens } : {}),
         };
         context.onStream({ type: "usage", ...parsed });
