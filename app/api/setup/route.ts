@@ -7,6 +7,7 @@ import { hostPlatform } from "@/lib/user-isolation";
 import { config } from "@/lib/config";
 import { requestIsSecure } from "@/lib/request-network";
 import { consumeRateLimit } from "@/lib/rate-limit";
+import { setupTokenConsumed, validSetupToken } from "@/lib/setup-token";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,16 @@ function sessionCookie(res: NextResponse, token: string, maxAge: number, req: Re
   return res;
 }
 
+function osUserSuggestions() {
+  const osUsers = listHostOsUsers().map(({ username, home }) => ({ username, home }));
+  const inferred = inferOsUsernameForWorkspace(config.agentCwd);
+  return {
+    osUsers,
+    suggestedOsUsername: osUsers.some(user => user.username === inferred) ? inferred : "",
+    osUsersAvailable: true,
+  };
+}
+
 export async function GET(req: Request) {
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
   const status = getSetupStatus(ownerId);
@@ -29,10 +40,7 @@ export async function GET(req: Request) {
   return Response.json({
     ...status,
     platform: hostPlatform(),
-    osUsers: canListOsUsers
-      ? listHostOsUsers().map(({ username, home }) => ({ username, home }))
-      : [],
-    suggestedOsUsername: canListOsUsers ? inferOsUsernameForWorkspace(config.agentCwd) || "" : "",
+    ...(canListOsUsers ? osUserSuggestions() : { osUsers: [], suggestedOsUsername: "", osUsersAvailable: false }),
   });
 }
 
@@ -52,6 +60,20 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid setup request" }, { status: 400 });
   }
   const action = body.action || "";
+
+  if (action === "os-users") {
+    const limit = consumeRateLimit("setup:os-users", 20, 60_000);
+    if (!limit.allowed) return Response.json({ error: "Too many setup attempts." }, {
+      status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) },
+    });
+    if (getSetupStatus().hasUsers || setupTokenConsumed()) {
+      return Response.json({ error: "Sign in as an admin to list OS users." }, { status: 409 });
+    }
+    if (!validSetupToken(body.setupToken)) {
+      return Response.json({ error: "A valid operator setup token is required." }, { status: 403 });
+    }
+    return Response.json({ platform: hostPlatform(), ...osUserSuggestions() });
+  }
 
   if (action === "bootstrap") {
     // Global bucket: spoofed proxy/address headers cannot bypass this limiter.
