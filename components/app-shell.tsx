@@ -118,6 +118,7 @@ import {
 import { toast } from "sonner";
 import { FileEmbed } from "@/components/file-embed";
 import { ImageViewer } from "@/components/image-viewer";
+import { canAutoRevealBrowser } from "@/lib/browser-auto-reveal";
 import { fileViewKind, isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
@@ -1783,6 +1784,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const lastWorkspaceInteractionAtRef = useRef(Date.now());
+  const workspaceWasOpenRef = useRef(false);
+  const markWorkspaceInteraction = useCallback((event: React.SyntheticEvent) => {
+    if (event.nativeEvent.isTrusted) lastWorkspaceInteractionAtRef.current = Date.now();
+  }, []);
+  useEffect(() => {
+    // Closing the pane must not let the next agent event immediately reopen it.
+    if (workspaceWasOpenRef.current && !workspaceOpen) lastWorkspaceInteractionAtRef.current = Date.now();
+    workspaceWasOpenRef.current = workspaceOpen;
+  }, [workspaceOpen]);
+  useEffect(() => { lastWorkspaceInteractionAtRef.current = Date.now(); }, [activeChatId]);
   const [workspaceMounted, setWorkspaceMounted] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<NonNullable<ChatSessionState["workspaceTab"]>>("canvas");
   const [notesOpen, setNotesOpen] = useState(false);
@@ -3427,8 +3439,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     };
   }, [browserViewport.height, browserViewport.width, workspaceFullscreen, workspaceTab, workspaceWidth]);
 
-  // Subscribe only while the current chat has a genuinely active run. Browser
-  // events from paused/waiting/completed runs and other chats must never move the UI.
+  // Current-chat browser events update the preview in the background. Revealing
+  // it is separate: an active run must not interrupt an open/recently used workspace.
   const activeBrowserAgentRun = Boolean(
     activeChatId &&
       !chats.some((chat) =>
@@ -3438,9 +3450,26 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (busy || runningChatIds.includes(activeChatId) || chats.some((chat) => chat.id === activeChatId && chat.runStatus === "running")),
   );
 
+  const browserAutoRevealStateRef = useRef({workspaceOpen,activeRun:activeBrowserAgentRun,blocked:false});
+  browserAutoRevealStateRef.current = {
+    workspaceOpen,activeRun:activeBrowserAgentRun,
+    blocked:Boolean(accountView || notesOpen || automationsOpen || projectHomeId || loadingChatId || workspaceFullscreen),
+  };
   useEffect(() => {
     if (typeof window === "undefined" || !browserEnabled || !activeChatId) return;
     const chatId = activeChatId;
+    const revealBrowserIfIdle = () => {
+      const current = browserAutoRevealStateRef.current;
+      if (!canAutoRevealBrowser({
+        workspaceOpen:current.workspaceOpen,lastWorkspaceInteractionAt:lastWorkspaceInteractionAtRef.current,
+        now:Date.now(),mobile:isMobileChatViewport(),activeRun:current.activeRun,
+        blocked:current.blocked || document.visibilityState === "hidden" || activeChatIdRef.current !== chatId,
+      })) return;
+      current.workspaceOpen = true;
+      setWorkspaceMounted(true);
+      setWorkspaceTab("browser");
+      setWorkspaceOpen(true);
+    };
     const source = new EventSource(`/api/browser/live?chatId=${encodeURIComponent(chatId)}`);
     source.onmessage = (event) => {
       try {
@@ -3450,8 +3479,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         };
         if (data.source !== "agent") return;
         if (data.type === "pointer" && typeof data.x === "number" && typeof data.y === "number") {
-          if (!isMobileChatViewport()) setWorkspaceOpen(true);
-          setWorkspaceTab("browser");
+          revealBrowserIfIdle();
           setAgentPointer({
             x: Math.max(0, Math.min(1, data.x)),
             y: Math.max(0, Math.min(1, data.y)),
@@ -3466,10 +3494,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           return;
         }
         if (data.type !== "action" && data.type !== "navigation") return;
-        // The event itself is proof that the active run is using the browser now.
-        // No follow mode: the browser simply mirrors that one active run.
-        if (!isMobileChatViewport()) setWorkspaceOpen(true);
-        setWorkspaceTab("browser");
+        revealBrowserIfIdle();
         if (data.tabId && data.tabId !== activeBrowserTabIdRef.current) setActiveBrowserTabId(data.tabId);
         if (data.type === "navigation") {
           void fetch(`/api/browser/history?chatId=${encodeURIComponent(chatId)}`)
@@ -11151,6 +11176,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ) : null}
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
+          onPointerDownCapture={markWorkspaceInteraction}
+          onPointerMoveCapture={markWorkspaceInteraction}
+          onKeyDownCapture={markWorkspaceInteraction}
+          onInputCapture={markWorkspaceInteraction}
+          onWheelCapture={markWorkspaceInteraction}
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
             (workspaceTab === "browser" || workspaceTab === "desktops" || workspaceTab === "team" || workspaceTab === "memory") && "max-xl:absolute max-xl:inset-0 max-xl:z-40 max-xl:!w-full max-xl:border-l-0",
