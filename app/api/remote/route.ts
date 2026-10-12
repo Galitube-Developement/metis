@@ -114,6 +114,8 @@ export async function POST(req: Request) {
     path?: string;
     cwd?: string;
     content?: string;
+    preview?: boolean;
+    line?: number;
     newPath?: string;
     command?: string;
     timeout?: number;
@@ -253,10 +255,11 @@ export async function POST(req: Request) {
       const output = await callRemoteGatewayTool("read_file", {
         target: "server",
         path: targetPath,
-        offset: 1,
-        limit: 5000,
+        offset: body.preview === true && Number.isSafeInteger(body.line) && body.line! > 0 ? Math.max(1, body.line! - 3) : 1,
+        limit: body.preview === true ? 80 : 5000,
       }, isolation);
-      return Response.json({ path: targetPath, content: stripReadFileLinePrefixes(output) });
+      const content = stripReadFileLinePrefixes(output);
+      return Response.json({ path: targetPath, content: body.preview === true ? content.slice(0, 8000) : content });
     }
     if (body.action === "write") {
       if (typeof body.content !== "string") {
