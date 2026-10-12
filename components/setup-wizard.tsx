@@ -36,6 +36,8 @@ export function SetupWizard({
   const [osUsername, setOsUsername] = useState("");
   const [platform, setPlatform] = useState<OsPlatform>("linux");
   const [osUsers, setOsUsers] = useState<OsUser[]>([]);
+  const [osUsersState, setOsUsersState] = useState<"pending" | "loading" | "ready" | "error">("pending");
+  const [osUsersError, setOsUsersError] = useState("");
   const [users, setUsers] = useState<CreatedUser[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,10 +63,14 @@ export function SetupWizard({
           osUsers?: OsUser[];
           hasUsers?: boolean;
           suggestedOsUsername?: string;
+          osUsersAvailable?: boolean;
         };
         setPlatform(body.platform || "linux");
-        setOsUsers(body.osUsers || []);
-        setOsUsername((current) => current || body.suggestedOsUsername || "");
+        if (body.osUsersAvailable) {
+          setOsUsers(body.osUsers || []);
+          setOsUsersState("ready");
+          setOsUsername((current) => current || body.suggestedOsUsername || "");
+        }
       })
       .catch(() => undefined);
     if (hasUsers && users.length === 0) {
@@ -76,6 +82,35 @@ export function SetupWizard({
         .catch(() => undefined);
     }
   }, [open, step, hasUsers, users.length]);
+
+  useEffect(() => {
+    if (!open || step !== "people" || hasUsers || users.length) return;
+    setOsUsersState("pending");
+    setOsUsersError("");
+    setOsUsers([]);
+    if (!setupToken.trim()) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setOsUsersState("loading");
+      void fetch("/api/setup", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "os-users", setupToken }), signal: controller.signal,
+      }).then(async response => {
+        const body = await response.json();
+        if (controller.signal.aborted) return;
+        if (!response.ok) throw new Error(body.error || "Could not load OS users.");
+        setPlatform(body.platform || "linux");
+        setOsUsers(body.osUsers || []);
+        setOsUsername(current => current || body.suggestedOsUsername || "");
+        setOsUsersState("ready");
+      }).catch(cause => {
+        if (controller.signal.aborted) return;
+        setOsUsersError(cause instanceof Error ? cause.message : "Could not load OS users.");
+        setOsUsersState("error");
+      });
+    }, 400);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [open, step, hasUsers, users.length, setupToken]);
 
   const steps = useMemo(
     () => [
@@ -268,7 +303,14 @@ export function SetupWizard({
                 ariaLabel={platformLabel(platform)}
                 className="h-11 font-normal"
               />
-              <span className="text-xs font-normal text-muted-foreground">Pick a host user or type a custom name that exists on this machine.</span>
+              <span className="text-xs font-normal text-muted-foreground" role="status">
+                {osUsersState === "loading" ? "Loading OS users…" :
+                  osUsersState === "error" ? osUsersError :
+                  osUsersState === "pending" && !hasUsers && !users.length ? "Enter the operator setup token to load OS users. You can leave this field blank to create the admin." :
+                  osUsersState === "ready" && !osUsers.length ? "No eligible OS users found. Leave this field blank to create the admin, then configure an OS user before running agents." :
+                  !hasUsers && !users.length ? "Choose an existing OS user, or leave this blank and configure it after creating the admin." :
+                  "Pick a host user or type a custom name that exists on this machine."}
+              </span>
             </label>
             <div className="flex flex-wrap gap-2">
               <Button type="submit" className="h-11 min-h-11 rounded-xl" disabled={busy}>
