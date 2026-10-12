@@ -165,6 +165,14 @@ During a normal interactive installation, every installer asks for the
 installation directory before it creates files or installs dependencies. Press
 Enter to accept `~/metis-ai`, or enter a different path.
 
+When the native Linux/macOS installer runs as root, it also asks whether the
+admin's agents should run as root. Answer `yes` to enable it; the first-run UI
+then offers the root OS user after the operator setup token is entered. For an
+unattended root installation, pass `--allow-root-agents`. That explicit flag also
+overrides an older `AI_CHAT_ALLOW_ROOT_AGENTS=false` setting on upgrade.
+`--deny-root-agents` disables it again; upgrades without either flag preserve the
+current setting. Root agent workspaces must be inside the root user's home.
+
 All three installers also accept argument-only configuration for the install
 directory, data directory, agent workspace, ports, bind address, service name
 and public URL. Use `--help` on Linux/macOS or `-Help`
@@ -204,6 +212,7 @@ macOS use Bash options; Windows uses PowerShell named parameters.
 | Native (no Docker) | default | `--native` | `-Native` | default on every platform |
 | Docker Compose | `--docker` | `--docker` | `-Docker` | opt-in |
 | Allow root agents (Host-Admins only) | `--allow-root-agents` | `--allow-root-agents` | — | off |
+| Disable root agents (also on upgrade) | `--deny-root-agents` | `--deny-root-agents` | — | preserve current setting |
 | Dry run | `--dry-run` | `--dry-run` | `-DryRun` | off |
 | Skip runtime installation | — | — | `-SkipRuntimeInstall` | off |
 | Show help | `--help` or `-h` | `--help` or `-h` | `-Help` | — |
