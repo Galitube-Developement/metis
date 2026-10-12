@@ -169,7 +169,8 @@ test("real setup route: operator-only bootstrap, one-time consumption, authoriza
     const cookie = winner.cookie!.split(";")[0];
     assert.equal((await post({ action: "complete" })).status, 401);
     const adminGet = await (await GET(new Request("http://localhost/api/setup", { headers: { cookie } }))).json();
-    assert.ok(adminGet.osUsers.length > 0);
+    const { listHostOsUsers } = await import("../lib/user-access");
+    assert.deepEqual(adminGet.osUsers, listHostOsUsers().map(({username,home}) => ({username,home})));
     assert.equal((await post({ action: "os-user", osUsername: null }, { cookie })).status, 200);
     assert.equal((await post({ action: "complete" }, { cookie })).status, 200);
     // Authorization fixture only; no OS provisioning or external host mutation.
