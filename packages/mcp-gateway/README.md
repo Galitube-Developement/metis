@@ -23,6 +23,38 @@ Never commit bearer tokens, chat passwords, `.env` files, databases, or
 runtime state. Keep the gateway bound to localhost unless it is protected by
 authentication and a trusted network boundary.
 
+## File edits
+
+`edit_file` accepts the existing `path, oldText, newText` form or several ordered
+replacements for one file:
+
+```json
+{
+  "path": "src/config.ts",
+  "edits": [
+    { "oldText": "enabled: false", "newText": "enabled: true" },
+    { "oldText": "timeout: 30", "newText": "timeout: 60" }
+  ],
+  "dryRun": true
+}
+```
+
+Later replacements see the preceding replacements. The tool validates every
+match before atomically saving the file; a failed edit leaves the file unchanged.
+`dryRun` validates and reports replacement counts and first matching lines
+without writing. For repeated snippets, explicitly set `replaceAll: true` on
+that replacement and optionally `expectedOccurrences` to assert the count.
+Legacy single edits support those same flags at the top level.
+
+UTF-8/BOM, existing line endings, ownership and mode are preserved. Files are
+limited to 32 MiB, batches to 100 edits. Hard-linked files cannot be atomically
+replaced. Server edits execute as the mapped OS identity and remain inside the
+permitted workspace. For a Remote Device, use `target: "client:<id>"`.
+Updated clients use the native batch operation. Older clients may use a bounded
+command transport only under full-access policy; otherwise update the client.
+There is one file per call, so existing edit snapshots and message Revert remain
+available.
+
 The gateway can discover and call registered child MCP servers, expose web and
 documentation tools, run allowlisted platform operations, persist workflows,
 and provision supported servers from the official MCP Registry. Dangerous

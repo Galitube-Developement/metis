@@ -1,4 +1,5 @@
 import { createAiUsageAccumulator } from "@/lib/providers/ai-usage-accumulator";
+import { FILE_EDIT_DESCRIPTION, FILE_EDIT_PROPERTIES } from "../../../remote-client/file-edit.mjs";
 import { createToolInputProgress } from "@/lib/tool-input-progress";
 import { providerErrorWithCause } from "@/lib/provider-rate-limit";
 import {
@@ -251,10 +252,14 @@ export function providerRemoteTools(context: ProviderContext): ToolSet {
       "Create or overwrite a UTF-8 file on a remote client.",
       (args) => call("write_file", args),
     );
-    tools.edit_file = remoteTool(
-      "Replace oldText with newText in a remote client file.",
-      (args) => call("edit_file", args),
-    );
+    tools.edit_file = tool({
+      description: FILE_EDIT_DESCRIPTION + " Requires target client:<remote-client-id>.",
+      inputSchema: jsonSchema<Record<string, unknown>>({
+        type: "object", properties: { target: { type: "string" }, ...FILE_EDIT_PROPERTIES },
+        required: ["path", "target"], additionalProperties: false,
+      }),
+      execute: (args) => call("edit_file", args),
+    });
     tools.delete_file = remoteTool(
       "Delete a file on a remote client.",
       (args) => call("delete_file", args),

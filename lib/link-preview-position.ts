@@ -6,5 +6,5 @@ export function positionLinkPreview(anchor: Rect, preview: Rect, viewportWidth: 
   const above = anchor.top - preview.height - gap;
   const below = anchor.bottom + gap;
   const top = above >= gap ? above : Math.min(below, viewportHeight - preview.height - gap);
-  return { left, top: Math.max(gap, top) };
+  return { left, top: Math.max(gap, top), side: above >= gap ? "top" : "bottom" };
 }

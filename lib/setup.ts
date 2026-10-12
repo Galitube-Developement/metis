@@ -1,7 +1,7 @@
 import { pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { ensureAllModelAccess } from "@/lib/model-access";
-import { ensureUserAccess, getUserAccess, inferOsUsernameForWorkspace, resolveManagedWorkspaceRoot } from "@/lib/user-access";
+import { ensureUserAccess, getUserAccess, inferOsUsernameForWorkspace, lookupHostOsUser, resolveManagedWorkspaceRoot } from "@/lib/user-access";
 import { consumeSetupToken, removeSetupTokenFile, setupTokenConsumed, validSetupToken } from "@/lib/setup-token";
 import { getDatabase, transaction } from "@/lib/sqlite";
 import { listChatProviderConnections } from "@/lib/provider-connections";
@@ -81,10 +81,17 @@ export function bootstrapSetupAccount(input: {
     const createdAt = new Date().toISOString();
     const workspace = resolveManagedWorkspaceRoot(config.agentCwd);
     const osUsername = input.osUsername?.trim() || inferOsUsernameForWorkspace(workspace);
+    if (osUsername && lookupHostOsUser(osUsername)?.uid === 0 && !config.allowRootAgents) {
+      throw new SetupBootstrapError("Root agent execution is disabled on this installation. Leave the OS user blank to create the admin, or choose an existing unprivileged OS user.", 400);
+    }
     getDatabase().prepare("INSERT INTO users (id, username, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, 1)")
       .run(id, username, passwordHash, createdAt);
     ensureAllModelAccess(id);
-    ensureUserAccess(id, workspace, osUsername || undefined);
+    try {
+      ensureUserAccess(id, workspace, osUsername || undefined);
+    } catch (cause) {
+      throw new SetupBootstrapError(cause instanceof Error ? cause.message : "Could not assign the OS user. Leave it blank to create the admin and configure it later.", 400);
+    }
     consumeSetupToken();
     markSetupIncomplete();
     const access = getUserAccess(id);

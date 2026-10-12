@@ -215,19 +215,21 @@ Options:
   --native                Install with Node.js + systemd (default)
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
-  --allow-root-agents     Explicitly permit root agents (default: false; unsafe)
+  --allow-root-agents     Permit root agents (default: true)
+  --deny-root-agents      Disable root agents, including on an existing install
   --dry-run               Collect configuration and print the plan, then exit
   -h, --help              Show this help
 
 Security: use a dedicated unprivileged service user. For multiuser deployments,
 use separate OS users for agent isolation; application accounts alone do not
-separate operating-system permissions. Root agents require explicit opt-in.
+separate operating-system permissions. Root agents are enabled by default for Host-Admins; use --deny-root-agents to disable them.
 EOF
 }
 
 non_interactive=0
 dry_run=0
-allow_root_agents=false
+allow_root_agents=true
+root_agents_set=0
 install_dir="$DEFAULT_DIR"
 data_dir=""
 data_dir_set=0
@@ -311,16 +313,13 @@ while [[ $# -gt 0 ]]; do
     --docker) force_docker=1; shift ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
-    --allow-root-agents) allow_root_agents=true; shift ;;
+    --allow-root-agents) allow_root_agents=true; root_agents_set=1; shift ;;
+    --deny-root-agents) allow_root_agents=false; root_agents_set=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (use --help for usage)" ;;
   esac
 done
-
-if [[ "$allow_root_agents" == true ]]; then
-  printf 'Warning: --allow-root-agents permits agents with root privileges. Prefer a dedicated unprivileged service user; use separate OS users for multiuser isolation.\n' >&2
-fi
 
 if (( force_docker && force_native )); then
   die "Use either --docker or --native, not both."
@@ -348,6 +347,17 @@ install_dir="${install_dir/#\~/$HOME}"
 agent_cwd="${agent_cwd/#\~/$HOME}"
 data_dir="${data_dir/#\~/$HOME}"
 
+
+configure_root_agents() {
+  local previous=""
+  (( root_agents_set )) && return 0
+  if [[ -f "$install_dir/.env" ]]; then
+    previous="$(awk -F= '/^AI_CHAT_ALLOW_ROOT_AGENTS=/{sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$install_dir/.env")"
+    case "$previous" in true|1|yes) allow_root_agents=true ;; false|0|no) allow_root_agents=false ;; esac
+  fi
+}
+
+configure_root_agents
 
 default_public_host() {
   local host
@@ -435,6 +445,7 @@ Dry run; no files or services will be changed.
   install dir:   $install_dir
   data dir:      $data_dir
   agent cwd:     $agent_cwd
+  root agents:   $allow_root_agents
   bind:          $ai_chat_host:$port
   mcp port:      $mcp_port
   service name:  $service_name
@@ -535,7 +546,7 @@ merge_preserved_env() {
   [[ -n "$preserved" && -f "$preserved" && -f "$dest" ]] || return 0
   tmp="$dest.tmp"
   # METIS_ENV_MERGE_BEGIN
-  awk -v preserved="$preserved" '
+  awk -v preserved="$preserved" -v root_agents_set="${root_agents_set:-0}" '
     function key_of(line,   k) {
       if (line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/) return ""
       k = line
@@ -545,6 +556,7 @@ merge_preserved_env() {
       return k
     }
     function is_structural(k) {
+      if (k == "AI_CHAT_ALLOW_ROOT_AGENTS" && root_agents_set == 1) return 1
       return (k == "AI_CHAT_ROOT" || k == "AI_CHAT_INSTALL_DIR" || k == "METIS_NODE_BIN" || k == "METIS_NODE_HOME" || k == "METIS_PNPM_HOME" || k == "CHAT_DATA_DIR" || k == "METIS_DATA_DIR" || k == "AGENT_CWD" || k == "METIS_WORKSPACE" || k == "AI_CHAT_MCP_STATE_DIR" || k == "METIS_DOCKER" || k == "AI_CHAT_SERVICE_NAME")
     }
     BEGIN {

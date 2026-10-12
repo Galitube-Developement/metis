@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 const dataDir = mkdtempSync(path.join(os.tmpdir(), "metis-setup-security-"));
 Object.assign(process.env, {
   CHAT_DATA_DIR: dataDir, CHAT_DB_PATH: path.join(dataDir, "chat.sqlite"),
-  AGENT_CWD: dataDir, AI_CHAT_ROOT: dataDir, CHAT_LEGACY_HEADER_AUTH: "false",
+  AGENT_CWD: dataDir, AI_CHAT_ROOT: dataDir, CHAT_LEGACY_HEADER_AUTH: "false", AI_CHAT_ALLOW_ROOT_AGENTS: "false",
 });
 delete process.env.AI_CHAT_SETUP_TOKEN;
 delete process.env.METIS_AI_BOOTSTRAP_PASSWORD;
@@ -47,6 +47,33 @@ test("real setup route: operator-only bootstrap, one-time consumption, authoriza
     assert.equal(JSON.stringify(result).includes(secret), false);
     tokens.initializeSetupToken();
     assert.equal(readFileSync(tokens.setupTokenFile, "utf8").trim(), secret);
+  });
+
+  await t.test("first-run OS suggestions require an operator token and do not consume it", async () => {
+    assert.equal((await post({ action: "os-users" })).status, 403);
+    assert.equal((await post({ action: "os-users", setupToken: "wrong" })).status, 403);
+    const response = await post({ action: "os-users", setupToken: secret });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const { listHostOsUsers } = await import("../lib/user-access");
+    assert.deepEqual(body.osUsers, listHostOsUsers().map(({username,home}) => ({username,home})));
+    assert.equal(body.osUsersAvailable, true);
+    assert.equal(JSON.stringify(body).includes(secret), false);
+    assert.equal(tokens.validSetupToken(secret), true);
+    assert.equal(count(), 0);
+  });
+
+  await t.test("invalid OS mappings return actionable errors and preserve first-run state", async () => {
+    const missing = await post({ ...bootstrap(secret), osUsername: "metis_missing_diagnostic_user" });
+    assert.equal(missing.status, 400);
+    assert.match((await missing.json()).error, /does not exist on this host/);
+    if (process.platform === "linux") {
+      const root = await post({ ...bootstrap(secret), osUsername: "root" });
+      assert.equal(root.status, 400);
+      assert.match((await root.json()).error, /Root agent execution is disabled.*Leave the OS user blank/);
+    }
+    assert.equal(count(), 0);
+    assert.equal(tokens.validSetupToken(secret), true);
   });
 
   await t.test("unsafe files, symlinks and weak explicit secrets are rejected", () => {
@@ -142,7 +169,8 @@ test("real setup route: operator-only bootstrap, one-time consumption, authoriza
     const cookie = winner.cookie!.split(";")[0];
     assert.equal((await post({ action: "complete" })).status, 401);
     const adminGet = await (await GET(new Request("http://localhost/api/setup", { headers: { cookie } }))).json();
-    assert.ok(adminGet.osUsers.length > 0);
+    const { listHostOsUsers } = await import("../lib/user-access");
+    assert.deepEqual(adminGet.osUsers, listHostOsUsers().map(({username,home}) => ({username,home})));
     assert.equal((await post({ action: "os-user", osUsername: null }, { cookie })).status, 200);
     assert.equal((await post({ action: "complete" }, { cookie })).status, 200);
     // Authorization fixture only; no OS provisioning or external host mutation.
@@ -155,6 +183,7 @@ test("real setup route: operator-only bootstrap, one-time consumption, authoriza
     assert.equal(memberGet.suggestedOsUsername, "");
     assert.equal((await post({ action: "complete" }, { cookie: memberCookie })).status, 403);
     assert.equal((await post({ action: "os-user", osUsername: null }, { cookie: memberCookie })).status, 403);
+    assert.equal((await post({ action: "os-users", setupToken: secret })).status, 409);
     assert.equal((await post(bootstrap(secret))).status, 409);
   });
 

@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { positionLinkPreview } from "@/lib/link-preview-position";
+import { useEffect, useState, type ReactNode } from "react";
+import { HoverPreview } from "@/components/hover-preview";
 
 type LinkPreviewProps = {
   href: string;
@@ -17,84 +16,22 @@ type Preview = {
 };
 
 export function LinkPreview({ href, children }: LinkPreviewProps) {
-  const [open, setOpen] = useState(false);
+  return <HoverPreview content={<WebPreview key={href} href={href} />}>{children}</HoverPreview>;
+}
+
+function WebPreview({ href }: { href: string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const timerRef = useRef<number | null>(null);
-  const anchorRef = useRef<HTMLSpanElement>(null);
-  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/link-preview?url=${encodeURIComponent(href)}`, { cache: "force-cache", signal: controller.signal })
+      .then(async response => { if (response.ok) setPreview(await response.json() as Preview); })
+      .catch(() => { /* The link remains usable without metadata. */ })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [href]);
 
-  useEffect(() => () => {
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const anchor = anchorRef.current;
-    const tooltip = tooltipRef.current;
-    if (!anchor || !tooltip) return;
-    const updatePosition = () => {
-      const position = positionLinkPreview(
-        anchor.getBoundingClientRect(),
-        tooltip.getBoundingClientRect(),
-        window.innerWidth,
-        window.innerHeight,
-      );
-      tooltip.style.left = `${position.left}px`;
-      tooltip.style.top = `${position.top}px`;
-      tooltip.style.visibility = "visible";
-    };
-    updatePosition();
-    const observer = new ResizeObserver(updatePosition);
-    observer.observe(tooltip);
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("resize", updatePosition);
-    window.visualViewport?.addEventListener("resize", updatePosition);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-      window.visualViewport?.removeEventListener("resize", updatePosition);
-    };
-  }, [href, loading, open, preview]);
-
-  function show() {
-    setOpen(true);
-    if (preview || loading || timerRef.current !== null) return;
-    timerRef.current = window.setTimeout(async () => {
-      timerRef.current = null;
-      setLoading(true);
-      try {
-        const response = await fetch(`/api/link-preview?url=${encodeURIComponent(href)}`, {
-          cache: "force-cache",
-        });
-        if (response.ok) setPreview((await response.json()) as Preview);
-      } catch {
-        // Keep the link usable when preview metadata is unavailable.
-      } finally {
-        setLoading(false);
-      }
-    }, 220);
-  }
-
-  function hide() {
-    setOpen(false);
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }
-
-  return (
-    <span ref={anchorRef} className="inline" onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show} onBlurCapture={hide}>
-      {children}
-      {open && typeof document !== "undefined" ? createPortal(
-        <span
-          ref={tooltipRef}
-          role="tooltip"
-          style={{ visibility: "hidden", zIndex: 2147483647 }}
-          className="pointer-events-none fixed block w-72 max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border/70 bg-popover p-3 text-left text-popover-foreground shadow-xl"
-        >
+  return <>
           {loading ? (
             <span className="text-xs text-muted-foreground">Loading link…</span>
           ) : (
@@ -121,9 +58,5 @@ export function LinkPreview({ href, children }: LinkPreviewProps) {
               </span>
             </span>
           )}
-        </span>,
-        document.body,
-      ) : null}
-    </span>
-  );
+  </>;
 }

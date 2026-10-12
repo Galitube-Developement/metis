@@ -498,7 +498,7 @@ test("installers merge a previous .env on replace and upgrade", () => {
     const end = source.indexOf("# METIS_ENV_MERGE_END");
     assert.ok(begin >= 0 && end > begin, "env merge awk markers");
     const block = source.slice(begin, end);
-    const match = block.match(/awk -v preserved="\$preserved" '([\s\S]*)' "\$dest"/);
+    const match = block.match(/awk -v preserved="\$preserved"(?: -v root_agents_set="\$\{root_agents_set:-0\}")? '([\s\S]*)' "\$dest"/);
     assert.ok(match, "env merge awk program");
     return match[1];
   };
