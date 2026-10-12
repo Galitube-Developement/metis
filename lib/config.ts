@@ -69,7 +69,7 @@ export const config = {
   mcpAllowRemoteAdmin: booleanEnv("MCP_ALLOW_REMOTE_ADMIN"),
   docker,
   dockerWorkspace: "/workspace",
-  allowRootAgents: booleanEnv("AI_CHAT_ALLOW_ROOT_AGENTS"),
+  allowRootAgents: booleanEnv("AI_CHAT_ALLOW_ROOT_AGENTS", true),
   enableOptionalMcp: booleanEnv("MCP_ENABLE_OPTIONAL_SERVERS"),
   enableRemoteMcp: booleanEnv("MCP_ENABLE_REMOTE_SERVERS"),
 } as const;

@@ -75,14 +75,12 @@ may be supplied instead. Existing accounts do not need a new bootstrap token.
 If all accounts are deleted after bootstrap, the consumed token remains invalid;
 restore/recover accounts through operator access rather than reopening setup.
 
-Native Unix installers default to `AI_CHAT_ALLOW_ROOT_AGENTS=false`; the
-`--allow-root-agents` flag or the native root installer’s affirmative prompt
-is explicit consent for Host-Admins only. The first admin can then bind the
-root OS user to a workspace inside its home. `--allow-root-agents` and
-`--deny-root-agents` override the previous root setting during an upgrade;
-without either choice, the existing setting survives. Prefer an unprivileged
-installation/service
-account, and separate OS users with private workspaces for untrusted app users.
+Native Unix installers and the runtime default to `AI_CHAT_ALLOW_ROOT_AGENTS=true`.
+The first admin can bind the root OS user to a workspace inside its home without
+an additional installer prompt or flag. `--deny-root-agents` disables root
+execution; `--allow-root-agents` enables it again. Both flags override the previous
+setting during an upgrade; without either flag, the existing setting survives.
+Use separate OS users with private workspaces for untrusted app users.
 Review old mappings before upgrading: unsafe nonadmin mappings now reject
 creation/updates/execution; Windows nonadmin runs fail closed. An app role alone
 does not provide an OS sandbox.

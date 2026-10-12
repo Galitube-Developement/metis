@@ -187,20 +187,20 @@ Options:
   --docker                Install with Docker Compose
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
-  --allow-root-agents     Explicitly permit root agents (default: false; unsafe)
+  --allow-root-agents     Permit root agents (default: true)
   --deny-root-agents      Disable root agents, including on an existing install
   --dry-run               Collect configuration and print the plan, then exit
   -h, --help              Show this help
 
 Security: use a dedicated unprivileged service user. For multiuser deployments,
 use separate OS users for agent isolation; application accounts alone do not
-separate operating-system permissions. Root agents require explicit opt-in.
+separate operating-system permissions. Root agents are enabled by default for Host-Admins; use --deny-root-agents to disable them.
 EOF
 }
 
 non_interactive=0
 dry_run=0
-allow_root_agents=false
+allow_root_agents=true
 root_agents_set=0
 install_dir="$DEFAULT_DIR"
 data_dir=""
@@ -321,28 +321,15 @@ data_dir="${data_dir/#\~/$HOME}"
 
 
 configure_root_agents() {
-  local previous="" default_answer="N"
+  local previous=""
   (( root_agents_set )) && return 0
   if [[ -f "$install_dir/.env" ]]; then
     previous="$(awk -F= '/^AI_CHAT_ALLOW_ROOT_AGENTS=/{sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$install_dir/.env")"
     case "$previous" in true|1|yes) allow_root_agents=true ;; false|0|no) allow_root_agents=false ;; esac
   fi
-  (( non_interactive || force_docker )) && return 0
-  [[ "$(id -u)" == 0 ]] || return 0
-  [[ "$allow_root_agents" != true ]] || default_answer="Y"
-  read_tty_line "Allow the admin's agents to run as root? [$default_answer]: "
-  case "$REPLY" in
-    [Yy]|[Yy][Ee][Ss]) allow_root_agents=true; root_agents_set=1 ;;
-    [Nn]|[Nn][Oo]) allow_root_agents=false; root_agents_set=1 ;;
-    "") ;; # Keep the existing setting, or false on a fresh install.
-    *) die "Answer yes or no for root agent execution." ;;
-  esac
 }
 
 configure_root_agents
-if [[ "$allow_root_agents" == true ]]; then
-  printf 'Warning: --allow-root-agents permits agents with root privileges. Prefer a dedicated unprivileged service user; use separate OS users for multiuser isolation.\n' >&2
-fi
 
 default_public_host() {
   local host
