@@ -33,6 +33,13 @@ export function fileViewKind(mime: string, name: string) {
 export function isFileUrl(url: string) {
   return /^\/api\/(?:file-uploads\/[a-f0-9-]+\/file|uploads\/[^\s]+|share\/attachment\?[^\s]+|notes\/[^/]+\/attachments\/[^\s]+)$/.test(url);
 }
+/** Keep authenticated file downloads on the existing attachment endpoints. */
+export function fileDownloadUrl(url: string) {
+  if (!isFileUrl(url.split("#")[0])) return url;
+  const parsed = new URL(url, "http://localhost");
+  parsed.searchParams.set("download", "1");
+  return parsed.pathname + parsed.search + parsed.hash;
+}
 export type FileEmbedSpec = { url: string; name: string; mimeType: string; size?: number; text?: string; width?: number; height?: number };
 export function parseFileEmbed(source: string): FileEmbedSpec | null {
   try {
