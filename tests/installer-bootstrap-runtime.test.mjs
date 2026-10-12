@@ -69,6 +69,14 @@ test("explicit old tag and development commit use exactly that ref", () => {
   assert.deepEqual(commit.calls, ["https://raw.githubusercontent.com/f1shyondrugs/metis-ai/" + sha + "/install/linux.sh"]);
 });
 
+test("root execution flags pass through the downloaded bootstrap unchanged", () => {
+  for (const flag of ["--allow-root-agents", "--deny-root-agents"]) {
+    const result = run(["--non-interactive", flag]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.args, ["--non-interactive", flag, "--version", "v9.8.7"]);
+  }
+});
+
 test("API errors, missing downloads/checksums and checksum mismatches never execute a platform", () => {
   for (const mode of ["api404", "api403", "404", "403", "missing", "missing-sums", "corrupt"]) {
     const result = run([], mode);

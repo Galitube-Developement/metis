@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -52,6 +52,52 @@ for (const platform of ["linux", "macos"]) {
             assert.match(merged, new RegExp('AI_CHAT_ALLOW_ROOT_AGENTS="' + (previous ?? optIn) + '"'));
           }
         }
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test(`${platform}: root prompt enables only an affirmative native root choice`, () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "metis-root-choice-"));
+    const run = (answer: string, uid = "0", unattended = "0", docker = "0", previous?: string) => {
+      const envFile = path.join(dir, ".env");
+      if (previous !== undefined) writeFileSync(envFile, `AI_CHAT_ALLOW_ROOT_AGENTS="${previous}"\n`);
+      else if (existsSync(envFile)) rmSync(envFile);
+      return execFileSync("/bin/bash", ["-c", source.match(/^die\(\).*$/m)![0] + "\n" + body("configure_root_agents") + `
+        allow_root_agents=false; root_agents_set=0; prompted=0
+        install_dir="$1"; answer="$2"; fixture_uid="$3"; non_interactive="$4"; force_docker="$5"
+        id() { printf '%s' "$fixture_uid"; }
+        read_tty_line() { prompted=1; REPLY="$answer"; }
+        configure_root_agents
+        printf '%s:%s:%s' "$allow_root_agents" "$root_agents_set" "$prompted"
+      `, "fixture", dir, answer, uid, unattended, docker], { encoding: "utf8" });
+    };
+    try {
+      assert.equal(run("yes"), "true:1:1");
+      assert.equal(run("no"), "false:1:1");
+      assert.equal(run(""), "false:0:1");
+      assert.equal(run("yes", "1000"), "false:0:0");
+      assert.equal(run("yes", "0", "1"), "false:0:0");
+      assert.equal(run("yes", "0", "0", "1"), "false:0:0");
+      assert.equal(run("", "0", "0", "0", "true"), "true:0:1");
+      assert.equal(run("yes", "0", "0", "0", "false"), "true:1:1");
+      assert.equal(run("no", "0", "0", "0", "true"), "false:1:1");
+      assert.throws(() => run("maybe"));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test(`${platform}: explicit root flags override previous settings while unrelated values survive`, () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "metis-root-upgrade-"));
+    try {
+      for (const [flag, previous, expected] of [
+        ["--allow-root-agents", "false", "true"], ["--deny-root-agents", "true", "false"],
+      ]) {
+        const old = path.join(dir, "old.env"), dest = path.join(dir, "new.env");
+        writeFileSync(old, `AI_CHAT_ALLOW_ROOT_AGENTS="${previous}"\nCUSTOM=preserved\n`);
+        writeFileSync(dest, `AI_CHAT_ALLOW_ROOT_AGENTS="${expected}"\nCUSTOM=new\n`);
+        execFileSync("/bin/bash", ["-c", prefix + "\n" + body("merge_preserved_env") + `
+          REPLACE_ENV_STASH="$ROOT_TEST_OLD"; merge_preserved_env "$ROOT_TEST_DEST"
+        `, "fixture", "--non-interactive", flag], { encoding: "utf8", env: {...process.env, ROOT_TEST_OLD:old, ROOT_TEST_DEST:dest} });
+        const merged = readFileSync(dest, "utf8");
+        assert.match(merged, new RegExp('AI_CHAT_ALLOW_ROOT_AGENTS="'+expected+'"'));
+        assert.match(merged, /CUSTOM=preserved/);
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
