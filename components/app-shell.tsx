@@ -117,7 +117,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { FileEmbed } from "@/components/file-embed";
-import { isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
+import { ImageViewer } from "@/components/image-viewer";
+import { fileViewKind, isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
 import { useLiveMessageMotion } from "@/components/use-live-message-motion";
@@ -1639,6 +1640,8 @@ function AttachmentViewer({
 }) {
   const attachment = active?.attachment;
   const url = attachment?.storedName && active?.chatId ? `/api/uploads/${active.chatId}/${encodeURIComponent(attachment.storedName)}` : attachment?.previewUrl;
+  if (attachment && url && fileViewKind(attachment.mimeType,attachment.name) === "image")
+    return <ImageViewer image={{src:url,alt:attachment.name,name:attachment.name}} onOpenChange={onOpenChange}/>;
   return <Dialog open={Boolean(active)} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[90dvh] max-w-5xl overflow-auto p-4">
       <DialogHeader><DialogTitle className="truncate pr-8">{attachment?.name || "Attachment"}</DialogTitle></DialogHeader>
