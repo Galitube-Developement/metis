@@ -23,6 +23,7 @@ import { parseWorkspaceFileLink } from "@/lib/workspace-file-link";
 import { ChatIcon } from "@/components/chat-icon";
 import { remarkChatIcons } from "@/lib/markdown-icons";
 import { FileEmbed } from "@/components/file-embed";
+import { FileLink } from "@/components/file-link";
 import { parseFileEmbed, isFileUrl, mimeTypeFromFileName } from "@/lib/file-types";
 import { normalizeMath, splitStreamingMath } from "@/lib/math";
 import { LinkPreview } from "@/components/link-preview";
@@ -66,6 +67,7 @@ function MarkdownLink({
       window.removeEventListener("keyup", clearModifier);
     };
   }, [hovered]);
+  if (fileLocation || (href && isFileUrl(href))) return <FileLink {...props} href={href}>{children}</FileLink>;
   const isSubagentUrl = Boolean(href && /^subagent:\/\//i.test(href));
   const workspaceMatch = href?.match(/^workspace:\/\/(plan|canvas)\/([^/?#]+)(?:[?#].*)?$/i);
   const noteMatch = href?.match(/^note:\/\/([^/?#]+)(?:[?#].*)?$/i);
@@ -80,9 +82,7 @@ function MarkdownLink({
     <a
       {...props}
       href={
-        fileLocation
-          ? "#workspace-file"
-          : workspaceMatch
+        workspaceMatch
           ? `#workspace-${workspaceMatch[2]}`
           : noteMatch
             ? `#note-${noteMatch[1]}`
@@ -94,15 +94,8 @@ function MarkdownLink({
         props.className,
         sourceTitle && "inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/60 px-1.5 py-0.5 text-[11px] font-medium no-underline hover:bg-secondary",
       )}
-      title={fileLocation ? `Open ${fileLocation.path}${fileLocation.line ? ` at line ${fileLocation.line}` : ""} in workspace editor` : props.title}
-      data-workspace-file={fileLocation?.path}
+      title={props.title}
       onClick={(event) => {
-        if (fileLocation) {
-          event.preventDefault();
-          event.stopPropagation();
-          window.dispatchEvent(new CustomEvent("ai-chat:open-file", { detail: fileLocation }));
-          return;
-        }
         if (workspaceMatch) {
           event.preventDefault();
           event.stopPropagation();
@@ -253,6 +246,7 @@ function CodeBlock({
   }
   const declaredLanguage = className?.match(/language-([\w-]+)/)?.[1];
   const file = declaredLanguage === "file" ? parseFileEmbed(code) : null;
+  if (file && !editableFiles) return <FileLink href={file.url} file={file}>{file.name}</FileLink>;
   if (file) return <div ref={fileRoot} data-editor-control="file" onPointerDown={e=>e.stopPropagation()}>
     <FileEmbed file={file} className="my-2 min-h-40 rounded border border-border/40"
       onChange={editableFiles ? next => { fileRoot.current?.dispatchEvent(new CustomEvent("metis:markdown-embed-change", {bubbles:true,detail:{kind:"file",source:JSON.stringify(next)}})); } : undefined}
@@ -347,9 +341,8 @@ export const Markdown = memo(function Markdown({
     span: StreamingSpan,
     pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
     code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
-    a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => props.href && isFileUrl(props.href) ? <FileEmbed file={{url:props.href,name:String(props.children || "File"),mimeType:mimeTypeFromFileName(String(props.children || "File"))}} className="my-2 max-h-96"/> : <MarkdownLink {...props}/>,
     img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,
-    p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.href || child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
+    p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
     input: (props: InputHTMLAttributes<HTMLInputElement>) => (
       <TaskCheckbox {...props} interactive={interactiveTasks} />
     ),

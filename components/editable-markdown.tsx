@@ -7,7 +7,7 @@ import { syntaxTree } from "@codemirror/language";
 import { EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { Eye, Loader2, Paperclip, Pencil } from "lucide-react";
-import { fileEmbedMarkdown, embedFileLinks } from "@/lib/file-types";
+import { fileEmbedMarkdown } from "@/lib/file-types";
 import { Markdown } from "@/components/markdown";
 import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
 import { cn } from "@/lib/utils";
@@ -253,7 +253,7 @@ export function EditableMarkdown({
       ));
       const index = boards.indexOf(event.target as HTMLElement);
       if (index < 0) return;
-      const next = replaceEmbeddedSource(embedFileLinks(draftRef.current), kind, index, detail.source);
+      const next = replaceEmbeddedSource(draftRef.current, kind, index, detail.source);
       if(next.length > (noteId ? 50_000 : 100_000)) { setUploadError("Document is full. Remove some content before saving this embedding."); return; }
       commit(next);
     };
@@ -345,7 +345,7 @@ export function EditableMarkdown({
           aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
           className="editable-markdown-preview"
         >
-          {previewDraft ? <Markdown content={embedFileLinks(previewDraft)} interactiveTasks={interactiveTasks} editableFiles /> : (
+          {previewDraft ? <Markdown content={previewDraft} interactiveTasks={interactiveTasks} editableFiles /> : (
             <span className="text-muted-foreground/70">{placeholder || "Nothing to preview yet."}</span>
           )}
         </div>
