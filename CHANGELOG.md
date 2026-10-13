@@ -4,6 +4,16 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.14 — 2026-10-13
+
+- Keep Ask user forms connected beyond the default five-minute HTTP limit and preserve submitted answers for safe recovery after a provider disconnect, without starting duplicate runs.
+- Choose a default agent mode when creating an agent-oriented project or in Project Hub; enforce it across project chats, queued runs and tool permissions, with a disabled selector and explanatory tooltip.
+- Open the recipient agent chat from handoff cards, move prompt and reply details into a three-dot menu, and display the assigned prompt as a normal user message in the recipient chat.
+- Show the queued message count next to sidebar chat actions on hover or keyboard focus, including project agent chats, with immediate updates in the active chat.
+- Pick custom project colors with a color picker or HEX input and search all 2,007 Lucide icons while preserving existing icons and uploaded logos.
+- Require valid worker run leases for internal tools, forward job and lease credentials to remote devices, enforce remote approval policies and validate legacy file-operation fallbacks.
+- Keep the current Skill Library view after installations and imports, and bundle Word, PDF, PowerPoint and spreadsheet skills.
+
 ## v1.0.13 — 2026-10-11
 
 - Add Agent Hub for managing skills, connections, modes and rules, including a bundled Skill Creator, skills.sh discovery and share links for importing personal skill packages.

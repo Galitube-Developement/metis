@@ -33,6 +33,7 @@ export async function PATCH(req: Request, { params }: Params) {
     const body = (await req.json().catch(() => ({}))) as {
       name?: string;
       mode?: "chat" | "agents";
+      defaultModeId?: string;
       icon?: string;
       color?: string;
       instructions?: string;
@@ -52,6 +53,9 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!project) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json({ project });
   } catch (error) {
+    if (error instanceof Error && error.name === "InvalidProjectAgentMode") {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
     captureApiError("/api/projects/[id] PATCH", error, req);
     return Response.json({ error: "Could not update project" }, { status: 500 });
   }

@@ -13,7 +13,7 @@ const {
 } = await import("./lib/request-network.ts");
 initializeRequestNetwork();
 const { default: next } = await import("next");
-const { getAuthenticatedUser, passwordMatches } = await import("./lib/auth.ts");
+const { getAuthenticatedUser } = await import("./lib/auth.ts");
 const { updateChat } = await import("./lib/db-store.ts");
 const {
   captureBrowserFrame,
@@ -94,8 +94,7 @@ function internalEngineAuthorized(request) {
   if (configured) {
     return request.headers.authorization === `Bearer ${configured}`;
   }
-  return request.headers["x-ai-chat-internal"] === "1" &&
-    passwordMatches(request.headers["x-chat-password"]);
+  return false;
 }
 
 async function readRequestJson(request) {

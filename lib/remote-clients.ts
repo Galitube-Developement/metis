@@ -394,11 +394,12 @@ export function authorizeRemoteAction(client: RemoteClient, action: RemoteAction
   }
   const sensitive = ["write_file", "edit_file", "delete_file", "execute_command", "terminal"].includes(permission);
   if (action === "computer_use") return { allowed: true, requiresApproval: false };
-  const requiresApproval = client.policy.mode !== "full_access" && client.permissionMode === "admin" && sensitive;
+  const requiresApproval = sensitive && (client.policy.mode === "approval_required"
+    || (client.policy.mode === "restricted" && client.permissionMode === "admin"));
   return {
     allowed: true,
     requiresApproval,
-    ...(requiresApproval ? { reason: "Admin action requires confirmation" } : {}),
+    ...(requiresApproval ? { reason: "Remote action requires confirmation" } : {}),
   };
 }
 

@@ -1,6 +1,8 @@
 "use client";
 
 import { Book, Briefcase, Code2, FlaskConical, FolderKanban, Palette, Rocket, Sparkles, type LucideIcon } from "lucide-react";
+import { DynamicIcon, type IconName } from "lucide-react/dynamic.mjs";
+import { projectIconName, projectIconForeground } from "@/lib/project-appearance";
 import { projectLogoSrc } from "@/lib/project-constants";
 import { cn } from "@/lib/utils";
 
@@ -16,8 +18,12 @@ const ICONS: Record<string, LucideIcon> = {
 };
 
 export function ProjectIconGlyph({ icon, className }: { icon: string; className?: string }) {
- const Icon = ICONS[icon] || FolderKanban;
- return <Icon className={className} aria-hidden="true" />;
+ const name = projectIconName(icon);
+ const Icon = (Object.hasOwn(ICONS, icon) ? ICONS[icon] : undefined) || Object.entries(ICONS).find(([key]) => projectIconName(key) === name)?.[1];
+ if (Icon || !name) { const Glyph = Icon || FolderKanban; return <Glyph className={className} aria-hidden="true" />; }
+ return <DynamicIcon key={name} name={name as IconName} className={className} aria-hidden="true"
+   fallback={() => <span className={cn("inline-block shrink-0", className)} aria-hidden="true"/>}/>;
+
 }
 
 export function ProjectAvatar({
@@ -55,7 +61,7 @@ export function ProjectAvatar({
  return (
   <span
    className={cn(box, "inline-flex shrink-0 items-center justify-center rounded-lg text-white shadow-sm", className)}
-   style={{ backgroundColor: color }}
+   style={{ backgroundColor: color, color: projectIconForeground(color) }}
    {...(accessibleName
     ? { role: "img" as const, "aria-label": accessibleName }
     : { "aria-hidden": true })}

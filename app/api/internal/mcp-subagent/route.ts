@@ -43,6 +43,7 @@ export async function POST(req: Request) {
   const parentChatId = req.headers.get("x-ai-chat-id")?.trim() || "";
   const userId = req.headers.get("x-ai-chat-user-id")?.trim() || undefined;
   const parentJobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
+  if (!parentJobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const parentJob = parentJobId ? getJob(parentJobId) : null;
   const parentChat = parentChatId ? getChat(parentChatId, userId) : null;
   if (!parentJob || !parentChat || parentJob.chatId !== parentChatId) {

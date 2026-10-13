@@ -1,4 +1,3 @@
-import { passwordMatches } from "@/lib/auth";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { bearerTokenMatches } from "@/lib/security";
 import { performSharedBrowserAction } from "@/lib/shared-browser-client";
@@ -8,14 +7,14 @@ export const dynamic = "force-dynamic";
 
 function internalAuthorized(req: Request) {
   const configured = process.env.AI_CHAT_INTERNAL_TOKEN?.trim() || process.env.MCP_BEARER_TOKEN?.trim();
-  if (configured) return bearerTokenMatches(req, configured);
-  return req.headers.get("x-ai-chat-internal") === "1" && passwordMatches(req.headers.get("x-chat-password"));
+  return bearerTokenMatches(req, configured);
 }
 
 export async function POST(req: Request) {
   if (!internalAuthorized(req)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
-  if (jobId && !internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const chatId = req.headers.get("x-ai-chat-id")?.trim();
   const userId = req.headers.get("x-ai-chat-user-id")?.trim();
   if (!chatId || !userId) return Response.json({ error: "Chat and user context are required" }, { status: 400 });

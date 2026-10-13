@@ -6,9 +6,22 @@ export type HandoffActivity = {
   status: HandoffState;
   task: string;
   context?: string;
+  projectId?: string;
+  recipientAgentId?: string;
+  recipientChatId?: string;
+  prompt?: string;
   result?: string;
   error?: string;
 };
+/** Durable identity wins over display names; ambiguous legacy names cannot select a chat. */
+export function handoffRecipientAgent<T extends { id: string; projectId: string; name: string; chatId: string }>(activity: HandoffActivity, agents: T[]): T | undefined {
+  const scoped = activity.projectId ? agents.filter(agent => agent.projectId === activity.projectId) : agents;
+  if (activity.recipientAgentId) return scoped.find(agent => agent.id === activity.recipientAgentId);
+  if (activity.recipientChatId) return scoped.find(agent => agent.chatId === activity.recipientChatId);
+  const matches = scoped.filter(agent => agent.name === activity.recipient);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export type ChatProgramEvent =
   | { type: "handoff"; activity: HandoffActivity }
   | { type: "team-review"; status: string };
@@ -54,7 +67,7 @@ export function chatProgramEventsChanged(
 
 /** Project durable program messages into activity without changing the model's transcript. */
 export function projectChatTranscript<T extends ActivityMessage>(messages: T[]): ChatTranscriptItem<T>[] {
-  const candidates = messages.map(message => message.programEvent?.type === "handoff"
+  const candidates = messages.map(message => message.role === "assistant" && message.programEvent?.type === "handoff"
     ? message.programEvent.activity : legacyHandoffActivity(message));
   const latest = new Map<string, { index: number; activity: HandoffActivity }>();
   candidates.forEach((activity, index) => {

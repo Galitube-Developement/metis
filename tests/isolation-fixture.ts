@@ -20,7 +20,7 @@ export function isolationFixture(allowRoot = false) {
     "alias:x:12001:12001::/isolated/alias:/bin/bash", "bob:x:12002:12002::/isolated/bob:/bin/bash",
     "service:x:12003:12003::/service:/bin/bash"].join("\n");
   const originalExec = childProcess.execFileSync;
-  const state = { sudoAllowed: false, groupIds: "12001", script: "", mode: 0o40700, owner: 12001, groups: "alice", probe: "ISOLATED", alias: "", probes: [] as Array<{ paths: string[]; codeDirectories: string[] }> };
+  const state = { sudoAllowed: false, sudoPolicy: undefined as { status: number; output: string } | undefined, groupIds: "12001", script: "", mode: 0o40700, owner: 12001, groups: "alice", probe: "ISOLATED", alias: "", probes: [] as Array<{ paths: string[]; codeDirectories: string[] }> };
   const originalRead = fs.readFileSync;
   const originalRealpath = fs.realpathSync;
   const originalStat = fs.statSync;
@@ -36,6 +36,10 @@ export function isolationFixture(allowRoot = false) {
     mock.method(childProcess, "execFileSync", ((command: string, args: readonly string[]) => {
       if (command === "id") return args[0] === "-G" ? state.groupIds : state.groups;
       if (command === "sudo") {
+        if (state.sudoPolicy) {
+          if (state.sudoPolicy.status === 0) return state.sudoPolicy.output;
+          throw Object.assign(new Error("Virtual sudo policy result"), { status: state.sudoPolicy.status, stdout: state.sudoPolicy.output });
+        }
         if (state.sudoAllowed) return "User alice may run commands";
         throw Object.assign(new Error("No sudo in virtual host"), { code: "ENOENT" });
       }

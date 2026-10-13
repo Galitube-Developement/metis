@@ -189,6 +189,7 @@ export type Project = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
+  defaultModeId?: string;
   hideChatsFromAll?: boolean;
   icon: string;
   color: string;
@@ -494,6 +495,7 @@ export type Chat = {
 };
 
 export type ChatIndexEntry = {
+  queuedMessageCount?: number;
   id: string;
   ownerId?: string;
   title: string;
@@ -740,6 +742,7 @@ export function saveChat(chat: Chat): Chat {
     agentId: updated.agentId,
     modelId: updated.modelId,
     ...(updated.agentTitleLocked ? { agentTitleLocked: true } : {}),
+    queuedMessageCount: updated.queuedMessages?.length || 0,
   });
   return updated;
 }

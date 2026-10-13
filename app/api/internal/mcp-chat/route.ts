@@ -26,6 +26,7 @@ export async function POST(req: Request) {
   const chatId = req.headers.get("x-ai-chat-id")?.trim() || "";
   const userId = req.headers.get("x-ai-chat-user-id")?.trim() || undefined;
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const chat = chatId ? getChat(chatId, userId) : null;
   if (!chat || !jobId) return Response.json({ error: "Invalid chat context" }, { status: 400 });
   if (!internalRunLeaseAuthorized(req, jobId)) {

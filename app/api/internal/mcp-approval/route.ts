@@ -94,6 +94,7 @@ export async function POST(req: Request) {
   if (!authorized(req))
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { chatId, userId, jobId } = contextHeaders(req);
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!chatId || !jobId)
     return Response.json({ error: "Invalid chat context" }, { status: 400 });
   if (!internalRunLeaseAuthorized(req, jobId)) {

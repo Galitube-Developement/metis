@@ -87,7 +87,8 @@ export async function POST(req: Request) {
   const chatId = req.headers.get("x-ai-chat-id")?.trim() || "";
   const userId = req.headers.get("x-ai-chat-user-id")?.trim() || undefined;
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
-  if (jobId && !internalRunLeaseAuthorized(req, jobId)) {
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalRunLeaseAuthorized(req, jobId)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!chatId || !jobId || !getChat(chatId, userId)) {

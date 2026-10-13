@@ -1,3 +1,4 @@
+import { projectModeForChat, projectModeOverride } from "@/lib/project-agent-mode-server";
 import { isChatWaitingForUser } from "@/lib/user-input-resume";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
@@ -178,10 +179,10 @@ function syncChatList(chat: Chat) {
     .prepare(
       `INSERT INTO chat_list (
         id, owner_id, title, keywords, last_message_sent, created_at, updated_at,
-        agent_id, model_id, run_status, run_updated_at, queue_message,
+        agent_id, model_id, run_status, run_updated_at, queue_message, queued_message_count,
         pending_question, pending_approval, badge, pinned, archived, share,
         automation_run_id, incognito, project_id, agent_title_locked, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         owner_id=excluded.owner_id,
         title=excluded.title,
@@ -194,6 +195,7 @@ function syncChatList(chat: Chat) {
         run_status=excluded.run_status,
         run_updated_at=excluded.run_updated_at,
         queue_message=excluded.queue_message,
+        queued_message_count=excluded.queued_message_count,
         pending_question=excluded.pending_question,
         pending_approval=excluded.pending_approval,
         badge=excluded.badge,
@@ -219,6 +221,7 @@ function syncChatList(chat: Chat) {
       chat.runStatus ?? null,
       chat.runUpdatedAt ?? null,
       chat.queueMessage ?? null,
+      chat.queuedMessages?.length || 0,
       chat.pendingQuestion ? JSON.stringify(chat.pendingQuestion) : null,
       chat.pendingApproval ? JSON.stringify(chat.pendingApproval) : null,
       chat.badge ?? null,
@@ -297,7 +300,7 @@ export function listChatsForUser(
       `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
-                queue_message AS queueMessage, pending_question AS pendingQuestion,
+                queue_message AS queueMessage, queued_message_count AS queuedMessageCount, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
                 automation_run_id AS automationRunId, incognito, project_id AS projectId,
                 agent_title_locked AS agentTitleLocked
@@ -312,7 +315,7 @@ export function listChatsForUser(
       `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
-                queue_message AS queueMessage, pending_question AS pendingQuestion,
+                queue_message AS queueMessage, queued_message_count AS queuedMessageCount, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
                 automation_run_id AS automationRunId, incognito, project_id AS projectId,
                 agent_title_locked AS agentTitleLocked
@@ -335,6 +338,7 @@ export function listChatsForUser(
         id: String(item.id || ""),
         ownerId: typeof item.ownerId === "string" ? item.ownerId : undefined,
         title: typeof item.title === "string" ? item.title : "New chat",
+        queuedMessageCount: Number(item.queuedMessageCount) || 0,
         ...(item.agentTitleLocked === 1 || item.agentTitleLocked === true ? { agentTitleLocked: true } : {}),
         ...(keywords.length ? { keywords } : {}),
         updatedAt: String(item.updatedAt || ""),
@@ -812,6 +816,9 @@ export function updateChat(
         else delete merged.goalReferences;
       }
       next.sessionState = merged;
+    }
+    if (projectModeOverride(next.projectId, next.ownerId)) {
+      next.sessionState = { ...next.sessionState, modeId: projectModeForChat(next, next.sessionState?.modeId, getGlobalModelSettings(next.ownerId).customModes || []).id };
     }
     if (patch.runStatus) {
       const previousStatus = next.runStatus || "idle";

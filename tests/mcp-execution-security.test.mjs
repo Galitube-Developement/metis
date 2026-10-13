@@ -63,3 +63,29 @@ test("real nonadmin gateway execution drops UID/groups/secrets and cannot edit a
     assert.equal((await call("edit_file", { path: "/root/synthetic-unused", oldText: "a", newText: "b" }, blockedAdmin)).isError, true);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test("browser gateway forwards the job lease and never forwards a password", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "metis-browser-lease-"));
+  Object.assign(process.env, { AI_CHAT_ROOT: directory, AI_CHAT_MCP_STATE_DIR: path.join(directory, "mcp-state"),
+    AI_CHAT_INTERNAL_ORIGIN: "http://127.0.0.1:1", MCP_BEARER_TOKEN: "synthetic-browser-token" });
+  const { dispatchGatewayTool } = await import("../lib/mcp-core/gateway-core.mjs");
+  let requestHeaders;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (options.method === "GET") return Response.json({ waitingForUser: false });
+    assert.equal(new URL(url).pathname, "/api/internal/browser");
+    requestHeaders = new Headers(options.headers);
+    return Response.json({ tabs: [] });
+  });
+  try {
+    const result = await dispatchGatewayTool("browser_snapshot", {}, { auditCall: false, context: {
+      chatId: "synthetic-chat", userId: "synthetic-owner", jobId: "synthetic-job",
+      workerId: "synthetic-worker", leaseToken: "synthetic-lease",
+    } });
+    assert.ok(!result.isError, JSON.stringify(result));
+    assert.ok(requestHeaders);
+    assert.equal(requestHeaders.get("x-ai-chat-job-id"), "synthetic-job");
+    assert.equal(requestHeaders.get("x-ai-chat-worker-id"), "synthetic-worker");
+    assert.equal(requestHeaders.get("x-ai-chat-lease-token"), "synthetic-lease");
+    assert.equal(requestHeaders.get("x-chat-password"), null);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

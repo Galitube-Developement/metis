@@ -1,3 +1,4 @@
+import { listProjects } from "@/lib/projects";
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getGlobalModelSettings, saveGlobalModelSettings } from "@/lib/db-store";
 import { allModes, normalizeMode } from "@/lib/modes";
@@ -38,6 +39,9 @@ export async function DELETE(req: Request) {
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
   if (!userId) return Response.json({ error: "Account context is required" }, { status: 401 });
   const id = new URL(req.url).searchParams.get("id")?.trim() || "";
+  if (listProjects(userId).some(project => project.mode === "agents" && project.defaultModeId === id)) {
+    return Response.json({ error: "This agent is a project default. Choose another default in Project Hub before deleting it." }, { status: 409 });
+  }
   const settings = getGlobalModelSettings(userId);
   saveGlobalModelSettings({
     ...settings,

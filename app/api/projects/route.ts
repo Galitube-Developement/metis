@@ -27,6 +27,7 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as {
       name?: string;
       mode?: "chat" | "agents";
+      defaultModeId?: string;
       teamPreset?: boolean;
       teamDraft?: unknown;
       icon?: string;
@@ -37,6 +38,9 @@ export async function POST(req: Request) {
     const project = transaction(() => { const result = createProject({ ...body, ownerId }); if (result.mode === "agents") { if (body.teamDraft) importTeamDraft(result.id, body.teamDraft, ownerId); else if (body.teamPreset === true) createProjectTeamPreset(result.id, ownerId); } return result; });
     return Response.json({ project }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.name === "InvalidProjectAgentMode") {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
     captureApiError("/api/projects POST", error, req);
     return Response.json({ error: "Could not create project" }, { status: 500 });
   }

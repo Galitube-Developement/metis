@@ -127,6 +127,7 @@ import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
 import { latestPreparingTool } from "@/lib/tool-preparation";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
+import { SidebarQueuedCount } from "@/components/sidebar-queued-count";
 import { ChatTeamActivity, ChatTeamReview } from "@/components/chat-team-activity";
 import { chatProgramEventsChanged, projectChatTranscript, type ChatProgramEvent } from "@/lib/chat-program-events";
 import { projectQuestionTranscript, type QuestionAnswerReference } from "@/lib/question-transcript";
@@ -161,6 +162,8 @@ import { WorkspaceMemoryPanel } from "@/components/workspace-memory-panel";
 import type { ChatLogEntry, ChatLogCategory } from "@/lib/chat-logs";
 import { ApprovalPanel, type ApprovalDecisionValue, type PendingApprovalView } from "@/components/approval-panel";
 import { ProviderLogo } from "@/components/provider-logo";
+import { ProjectAgentModeLock } from "@/components/project-agent-mode-select";
+import { projectDefaultModeId, projectModeLockMessage } from "@/lib/project-agent-mode";
 import { ModelOptionsMenu } from "@/components/model-options-menu";
 import type {
   FinishSound,
@@ -603,6 +606,7 @@ function withSyncedFlat(parts: MsgPart[], extra: Partial<Msg> = {}): Partial<Msg
 }
 
 type ChatIndexEntry = {
+  queuedMessageCount?: number;
   id: string;
   title: string;
   agentTitleLocked?: boolean;
@@ -1809,6 +1813,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const draftProjectIdRef = useRef<string | null>(null);
   const [sidebarProjects, setSidebarProjects] = useState<Array<{
     mode?: "chat" | "agents";
+    defaultModeId?: string;
     id: string;
     name: string;
     icon?: string;
@@ -1816,6 +1821,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     logoStoredName?: string;
     updatedAt?: string;
   }>>([]);
+  const modeProjectId = chats.find(chat => chat.id === activeChatId)?.projectId || draftProjectId;
+  const modeProject = sidebarProjects.find(project => project.id === modeProjectId);
+  const projectModeId = projectDefaultModeId(modeProject);
   const projectChatAgents = useProjectChatAgents(sidebarProjects.filter(project => project.mode === "agents").map(project => project.id));
   const removedQueueIdsRef = useRef(new Map<string, Set<string>>());
   function removedIdsFor(chatId: string) {
@@ -3722,6 +3730,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, []);
 
   async function selectMode(nextModeId: string) {
+    if (projectModeId) return;
     if (!modes.some((mode) => mode.id === nextModeId)) return;
     setModeId(nextModeId);
     localStorage.setItem(MODE_STORAGE_KEY, nextModeId);
@@ -8238,7 +8247,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     selectedProvider?.label ||
     selectedKey.providerKey;
   const selectedAttrs = modelAttrSummary(selectedModel, modelParams);
-  const selectedMode = modes.find((mode) => mode.id === modeId) || modes[0];
+  const selectedMode = modes.find((mode) => mode.id === (projectModeId || modeId)) || modes.find(mode => mode.id === "agent") || modes[0];
+  const projectModeLock = projectModeId ? projectModeLockMessage(modeProject?.name || "this project", selectedMode?.name || "the project default") : undefined;
+  useEffect(() => {
+    if (projectModeId && selectedMode && modeId !== selectedMode.id) setModeId(selectedMode.id);
+  }, [projectModeId, selectedMode, modeId]);
   const providerQueryMatch = normalizedModelSearch.match(/^([a-z0-9_-]+):(.*)$/);
   const providerQuery = providerQueryMatch &&
     availableProviders.some((provider) => provider.value === providerQueryMatch[1])
@@ -9370,7 +9383,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </div>
         ) : (
           <div className="group/model flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
-            {selectedMode ? (
+            {selectedMode && projectModeLock ? (
+              <ProjectAgentModeLock name={selectedMode.name} message={projectModeLock} className="hidden shrink-0 md:inline-flex">
+                <Button type="button" variant="ghost" size="sm" disabled aria-label={`Agent mode: ${selectedMode.name}`}
+                  className="h-7 min-w-0 max-w-[11rem] gap-1.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground">
+                  <ModeIcon mode={selectedMode} className="size-3.5 shrink-0" />
+                  <span className="truncate">{selectedMode.name}</span>
+                  <ChevronDown className="size-3 shrink-0 opacity-55" />
+                </Button>
+              </ProjectAgentModeLock>
+            ) : selectedMode ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -9471,6 +9493,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 mobileComposerControls={{
                   modes,
                   selectedModeId: selectedMode?.id,
+                  modeLockReason: projectModeLock,
                   onModeChange: (nextModeId) => void selectMode(nextModeId),
                   runtimeMode,
                   runtimeOptions: RUNTIME_MODE_OPTIONS,
@@ -9539,8 +9562,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
  const sidebarProjectId = sidebarAllProjects ? null : projectHomeId || draftProjectId;
  const isAgentChat = !notesOpen && !automationsOpen && !projectHomeId && Boolean(activeChatId && sidebarProjects.find(project => project.id === activeProjectId)?.mode === "agents");
 
- function renderProjectAgentActions(agent: ProjectAgent, agents: ProjectAgent[]) {
-  return <ProjectAgentActions agent={agent} agents={agents} pinned={chats.find(chat => chat.id === agent.chatId)?.pinned} onTogglePin={() => void updateChatFlags(agent.chatId, { pinned: !chats.find(chat => chat.id === agent.chatId)?.pinned })} onViewLogs={() => void openChatLogs(agent.chatId)} onArchived={() => { chatCacheRef.current.delete(agent.chatId); if (activeChatIdRef.current === agent.chatId) openProjectHome(agent.projectId); void loadChats(); }}/>
+ function queuedCountForChat(chatId: string) {
+  return activeChatId === chatId && queuedState.chatId === chatId
+    ? queuedState.messages.length
+    : chats.find(chat => chat.id === chatId)?.queuedMessageCount || 0;
+ }
+
+ function renderProjectAgentActions(agent: ProjectAgent, agents: ProjectAgent[], showQueueCount = true) {
+  return <>{showQueueCount ? <SidebarQueuedCount count={queuedCountForChat(agent.chatId)}/> : null}<ProjectAgentActions agent={agent} agents={agents} pinned={chats.find(chat => chat.id === agent.chatId)?.pinned} onTogglePin={() => void updateChatFlags(agent.chatId, { pinned: !chats.find(chat => chat.id === agent.chatId)?.pinned })} onViewLogs={() => void openChatLogs(agent.chatId)} onArchived={() => { chatCacheRef.current.delete(agent.chatId); if (activeChatIdRef.current === agent.chatId) openProjectHome(agent.projectId); void loadChats(); }}/></>
  }
 
  async function moveChatToProject(chatId: string, projectId: string | null) {
@@ -9772,7 +9801,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   <span className="min-w-0 truncate">{c.title || "Untitled"}</span>
                 </span>
               </button>
-              {projectChatAgents[c.id] ? renderProjectAgentActions(projectChatAgents[c.id], Object.values(projectChatAgents).filter(agent => agent.projectId === c.projectId)) : <DropdownMenu>
+              <SidebarQueuedCount count={queuedCountForChat(c.id)}/>
+              {projectChatAgents[c.id] ? renderProjectAgentActions(projectChatAgents[c.id], Object.values(projectChatAgents).filter(agent => agent.projectId === c.projectId), false) : <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
@@ -10520,7 +10550,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   </div>
                 ) : null}
                 {transcriptMessages.map((item) => {
-                  if (item.kind === "team-activity") return <article key={item.id} data-message-id={item.id} className="chat-transcript-message w-full"><ChatTeamActivity activities={item.activities} agents={Object.values(projectChatAgents)}/></article>;
+                  if (item.kind === "team-activity") return <article key={item.id} data-message-id={item.id} className="chat-transcript-message w-full"><ChatTeamActivity activities={item.activities} agents={Object.values(projectChatAgents).filter(agent => agent.projectId === chats.find(chat => chat.id === activeChatId)?.projectId)} onOpenChat={chatId => void loadChat(chatId)}/></article>;
                   if (item.kind === "team-review") return <article key={item.id} data-message-id={item.id} className="chat-transcript-message w-full"><ChatTeamReview status={item.status}/></article>;
                   const m = item.message;
                   const canRevert = m.role === "user";

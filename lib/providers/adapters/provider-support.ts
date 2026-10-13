@@ -1,3 +1,4 @@
+import { projectModeForChat } from "@/lib/project-agent-mode-server";
 import { createAiUsageAccumulator } from "@/lib/providers/ai-usage-accumulator";
 import { FILE_EDIT_DESCRIPTION, FILE_EDIT_PROPERTIES } from "../../../remote-client/file-edit.mjs";
 import { createToolInputProgress } from "@/lib/tool-input-progress";
@@ -42,7 +43,6 @@ import { getProviderDefinition } from "@/lib/providers/registry";
 import type { ProviderResult } from "./contract";
 import { iterateUntilAborted } from "@/lib/providers/stream-guard";
 import type { AgentJob } from "@/lib/jobs";
-import { modeById } from "@/lib/modes";
 import {
   contextModeOf,
   CONTEXT_COMPACT_RATIO,
@@ -171,8 +171,10 @@ const remoteToolSchema = jsonSchema<Record<string, unknown>>({
 });
 
 export function providerRemoteTools(context: ProviderContext): ToolSet {
-  const mode = modeById(
+  const mode = projectModeForChat(
+    context.chat,
     context.job.modeId || context.chat.sessionState?.modeId,
+    getGlobalModelSettings(context.job.userId).customModes || [],
   );
   const canWrite = mode.allowedCategories.includes("write");
   const canRemote = mode.allowedCategories.includes("remote");
@@ -1411,7 +1413,8 @@ export async function consumeAiStream(
 }
 
 export function providerMcpContext(context: ProviderContext) {
-  const mode = modeById(
+  const mode = projectModeForChat(
+    context.chat,
     context.job.modeId || context.chat.sessionState?.modeId,
     getGlobalModelSettings(context.job.userId).customModes || [],
   );

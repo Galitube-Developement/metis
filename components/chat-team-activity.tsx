@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
+import { Activity, ChevronRight, MoreHorizontal, MessageSquare, FileText } from "lucide-react";
 import { RunStatus } from "@/components/run-status";
-
-import { Activity, ChevronRight } from "lucide-react";
 import { TeamAgentAvatar } from "@/components/team-agent-avatar";
 import { Markdown } from "@/components/markdown";
-import type { HandoffActivity } from "@/lib/chat-program-events";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { handoffRecipientAgent, type HandoffActivity } from "@/lib/chat-program-events";
 import type { ProjectAgent } from "@/lib/project-team-types";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +20,11 @@ const statuses = {
   cancelled: { label: "Cancelled" },
 };
 
-export function ChatTeamActivity({ activities, agents = [] }: { activities: HandoffActivity[]; agents?: ProjectAgent[] }) {
+export function ChatTeamActivity({ activities, agents = [], onOpenChat }: {
+  activities: HandoffActivity[]; agents?: ProjectAgent[]; onOpenChat: (chatId: string) => void;
+}) {
+  const [detail, setDetail] = useState<{ id: string; view: "prompt" | "reply" } | null>(null);
+  const selected = activities.find(activity => activity.id === detail?.id);
   const received = activities.filter(activity => activity.status === "completed").length;
   const working = activities.filter(activity => activity.status === "queued" || activity.status === "running").length;
   const failures = activities.filter(activity => activity.status === "error").length;
@@ -34,31 +41,49 @@ export function ChatTeamActivity({ activities, agents = [] }: { activities: Hand
     <div className="divide-y divide-border/40">
       {activities.map(activity => {
         const { label } = statuses[activity.status];
-        const agent = agents.find(item => item.name === activity.recipient);
-        return <details key={activity.id} data-handoff-activity={activity.id} className="group min-w-0">
-          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm hover:bg-muted/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden" aria-label={`${activity.sender} to ${activity.recipient}, ${label}. Show task and result`}>
+        const agent = handoffRecipientAgent(activity, agents);
+        const chatId = activity.recipientChatId || agent?.chatId;
+        return <div key={activity.id} data-handoff-activity={activity.id} className="flex min-w-0 items-center gap-1">
+          <button type="button" disabled={!chatId} onClick={() => { if (chatId) onOpenChat(chatId); }}
+            title={chatId ? `Open ${activity.recipient} chat` : "This agent’s chat is unavailable."}
+            className="flex min-h-12 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-2 text-left text-sm hover:bg-muted/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={`Open ${activity.recipient} chat. Assigned by ${activity.sender}, ${label}.`}>
             {agent ? <TeamAgentAvatar name={agent.name} color={agent.color} decorative animated={activity.status === "running"} className="size-6"/> : <Activity className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/>}
             <span className="min-w-0 flex-1">
               <span className="block break-words font-medium">{activity.recipient}</span>
               <span className="block truncate text-xs text-muted-foreground">Assigned by {activity.sender}</span>
             </span>
             <span className={cn("flex shrink-0 items-center gap-1.5 text-xs", activity.status === "error" ? "text-destructive" : "text-muted-foreground")}><RunStatus status={activity.status} label={label}/></span>
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true"/>
-          </summary>
-          <div className="space-y-3 pb-3 pl-1 pr-1 text-sm [overflow-wrap:anywhere] sm:pl-8">
-            {activity.result ? <div><p className="mb-1 text-xs font-medium text-muted-foreground">Reply</p><Markdown content={activity.result}/></div> : null}
-            {activity.error ? <p className="whitespace-pre-wrap text-destructive">{activity.error}</p> : null}
-            {activity.status === "completed" && !activity.result ? <p className="text-xs text-muted-foreground">The agent finished without a text reply.</p> : null}
-            <div><p className="mb-1 text-xs font-medium text-muted-foreground">Task</p><p className="whitespace-pre-wrap">{activity.task}</p></div>
-            {activity.context ? <div><p className="mb-1 text-xs font-medium text-muted-foreground">Context</p><p className="whitespace-pre-wrap">{activity.context}</p></div> : null}
-            <details className="text-xs text-muted-foreground">
-              <summary className="w-fit cursor-pointer rounded py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Technical details</summary>
-              <p className="mt-1 break-all">Task ID: <span translate="no">{activity.id}</span></p>
-            </details>
-          </div>
-        </details>;
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true"/>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" className="size-11 shrink-0 sm:size-8" aria-label={`Options for task assigned to ${activity.recipient}`}>
+                <MoreHorizontal className="size-4" aria-hidden="true"/>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setDetail({ id: activity.id, view: "prompt" })}><FileText/>View prompt</DropdownMenuItem>
+              {activity.result || activity.error || activity.status === "completed" ? <DropdownMenuItem onSelect={() => setDetail({ id: activity.id, view: "reply" })}><MessageSquare/>View reply</DropdownMenuItem> : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>;
       })}
     </div>
+    <Dialog open={!!selected} onOpenChange={open => { if (!open) setDetail(null); }}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="pr-8">{detail?.view === "reply" ? "Reply from" : "Prompt for"} {selected?.recipient}</DialogTitle>
+          <DialogDescription>Assigned by {selected?.sender} · {selected ? statuses[selected.status].label : ""}</DialogDescription>
+        </DialogHeader>
+        {selected && detail?.view === "prompt" ? <div className="space-y-4 text-sm [overflow-wrap:anywhere]">
+          <p className="whitespace-pre-wrap">{selected.prompt || selected.task}</p>
+          {!selected.prompt && selected.context ? <div><p className="mb-1 text-xs font-medium text-muted-foreground">Context</p><p className="whitespace-pre-wrap">{selected.context}</p></div> : null}
+        </div> : selected ? <div className="text-sm [overflow-wrap:anywhere]">
+          {selected.error ? <p className="whitespace-pre-wrap text-destructive">{selected.error}</p> : selected.result ? <Markdown content={selected.result}/> : <p className="text-muted-foreground">The agent finished without a text reply.</p>}
+        </div> : null}
+      </DialogContent>
+    </Dialog>
   </section>;
 }
 

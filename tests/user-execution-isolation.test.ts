@@ -50,7 +50,18 @@ test("legacy mappings are guarded without changing root admin access or DB rows"
     assert.throws(() => requireUserExecutionIdentity("alice"), /supplementary groups/);
     fixture.state.groupIds = "12001"; fixture.state.sudoAllowed = true;
     assert.throws(() => requireUserExecutionIdentity("alice"), /sudo policy/);
-    fixture.state.sudoAllowed = false; fixture.state.probe = "UNSAFE";
+    fixture.state.sudoAllowed = false;
+    for (const status of [0, 1]) {
+      fixture.state.sudoPolicy = { status, output: "User alice is not allowed to run sudo on virtual-host.\n" };
+      assert.equal(requireUserExecutionIdentity("alice").uid, 12001, `explicit denial with exit ${status} is accepted`);
+    }
+    for (const output of ["", "User bob is not allowed to run sudo on virtual-host.\n", "User alice may run the following commands: (ALL) ALL\n", "User alice is not allowed to run sudo on virtual-host.\n(ALL) ALL\n"]) {
+      fixture.state.sudoPolicy = { status: 0, output };
+      assert.throws(() => requireUserExecutionIdentity("alice"), /sudo policy/, "ambiguous, foreign or privileged output is rejected");
+    }
+    fixture.state.sudoPolicy = { status: 2, output: "User alice is not allowed to run sudo on virtual-host.\n" };
+    assert.throws(() => requireUserExecutionIdentity("alice"), /sudo policy/, "unexpected failure is rejected");
+    fixture.state.sudoPolicy = undefined; fixture.state.probe = "UNSAFE";
     assert.throws(() => requireUserExecutionIdentity("alice"), /shared DB/);
     fixture.state.probe = "ISOLATED";
     db.prepare("UPDATE user_workspace_access SET uid=0 WHERE user_id='alice'").run();

@@ -1,3 +1,5 @@
+import { projectDefaultModeId } from "@/lib/project-agent-mode";
+import { modeById } from "@/lib/modes";
 import { providerRateLimit, type ProviderRateLimit } from "@/lib/provider-rate-limit";
 import { getProviderLimitResumeEnabled } from "@/lib/provider-rate-limit-settings";
 import { randomUUID } from "node:crypto";
@@ -189,7 +191,7 @@ function enqueueJobInTransaction(
       const agent = team.agentData ? JSON.parse(team.agentData) : null;
       if (!input.userId || team.ownerId !== input.userId || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
-      input = { ...input, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
+      input = { ...input, modeId: modeById(projectDefaultModeId(JSON.parse(team.projectData)) || undefined, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
     if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: resolveAgentRuntimeMs(input.maxRuntimeMs, getGlobalModelSettings(input.userId).agentRuntimeMs) };
     const now = iso();
@@ -621,6 +623,7 @@ export function updateJob(
       | "error"
       | "agentId"
       | "claimedAt"
+      | "modeId"
       | "resumePrompt"
       | "resumeRequestedAt"
       | "runId"
@@ -706,12 +709,20 @@ export function queueUserInputResume(input: {
 }) {
   return transaction(() => {
     const job = getJob(input.jobId);
-    if (!job || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) return null;
+    if (!job || ["completed", "cancelled", "queued", "switching"].includes(job.status)) return null;
     const now = iso();
     const activeLease = getDatabase().prepare(
       "SELECT 1 FROM job_leases WHERE job_id = ? AND expires_at > ?",
     ).get(job.id, now);
-    if (activeLease) return null;
+    if (activeLease || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) {
+      // The existing writer may consume the answer normally. Retain it for
+      // recovery if its transport died before the still-valid lease expires.
+      updateJob(job.id, {
+        resumePrompt: input.resumePrompt,
+        resumeRequestedAt: now,
+      }, { expectedRevision: jobRevision(job) });
+      return null;
+    }
     return updateJob(job.id, {
       status: "queued",
       error: undefined,
@@ -834,7 +845,7 @@ export function reapExpiredJobLeases(now = iso()) {
         ...job,
         status: "queued" as const,
         error: undefined,
-        resumePrompt:
+        resumePrompt: job.resumePrompt ||
           "The worker lease expired. Resume from the last saved agent state without repeating completed tool calls.",
         resumeRequestedAt: now,
         revision: jobRevision(job) + 1,

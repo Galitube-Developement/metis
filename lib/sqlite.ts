@@ -652,6 +652,7 @@ export function getDatabase(): DatabaseSync {
     "ALTER TABLE remote_audit ADD COLUMN duration_ms INTEGER",
     "ALTER TABLE automation_runs ADD COLUMN manual INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE chat_list ADD COLUMN agent_title_locked INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE chat_list ADD COLUMN queued_message_count INTEGER NOT NULL DEFAULT 0",
   ]) {
     try {
       database.exec(statement);
@@ -688,6 +689,7 @@ export function getDatabase(): DatabaseSync {
       run_status TEXT,
       run_updated_at TEXT,
       queue_message TEXT,
+      queued_message_count INTEGER NOT NULL DEFAULT 0,
       pending_question TEXT,
       pending_approval TEXT,
       badge TEXT,
@@ -716,7 +718,7 @@ export function getDatabase(): DatabaseSync {
   database.exec(`
     INSERT OR REPLACE INTO chat_list (
       id, owner_id, title, keywords, last_message_sent, created_at, updated_at,
-      agent_id, model_id, run_status, run_updated_at, queue_message,
+      agent_id, model_id, run_status, run_updated_at, queue_message, queued_message_count,
       pending_question, pending_approval, badge, pinned, archived, share,
       automation_run_id, incognito, project_id, agent_title_locked, expires_at
     )
@@ -733,6 +735,8 @@ export function getDatabase(): DatabaseSync {
       json_extract(chats.data, '$.runStatus'),
       json_extract(chats.data, '$.runUpdatedAt'),
       json_extract(chats.data, '$.queueMessage'),
+      CASE WHEN json_type(chats.data, '$.queuedMessages') = 'array'
+        THEN json_array_length(json_extract(chats.data, '$.queuedMessages')) ELSE 0 END,
       json_extract(chats.data, '$.pendingQuestion'),
       json_extract(chats.data, '$.pendingApproval'),
       json_extract(chats.data, '$.badge'),
@@ -752,6 +756,27 @@ export function getDatabase(): DatabaseSync {
     FROM chats
     WHERE NOT EXISTS (SELECT 1 FROM chat_list WHERE chat_list.id = chats.id);
   `);
+  // Existing queues are backfilled once; sidebar reads never parse full transcripts.
+  const queueCountMigration = "chat_list_queued_message_count_v1";
+  if (!database.prepare("SELECT 1 FROM meta WHERE key = ?").get(queueCountMigration)) {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!database.prepare("SELECT 1 FROM meta WHERE key = ?").get(queueCountMigration)) {
+        database.exec(`
+          UPDATE chat_list SET queued_message_count = COALESCE((
+            SELECT CASE WHEN json_type(chats.data, '$.queuedMessages') = 'array'
+              THEN json_array_length(json_extract(chats.data, '$.queuedMessages')) ELSE 0 END
+            FROM chats WHERE chats.id = chat_list.id
+          ), 0);
+        `);
+        database.prepare("INSERT INTO meta(key, value) VALUES (?, '1')").run(queueCountMigration);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  }
   // This is a legacy backfill, not a per-worker startup reconciliation.
   // New/missing rows are already populated above; ordinary writes use syncChatList.
   const titleLockMigration = "chat_list_agent_title_lock_v1";

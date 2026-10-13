@@ -1,3 +1,4 @@
+import { isProjectIcon } from "@/lib/project-appearance";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -10,7 +11,9 @@ import {
  PROJECT_ICONS,
 } from "@/lib/project-constants";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
-import { listChatsForUser, updateChat } from "@/lib/db-store";
+import { allModes } from "@/lib/modes";
+import { projectDefaultModeId } from "@/lib/project-agent-mode";
+import { getGlobalModelSettings, listChatsForUser, updateChat } from "@/lib/db-store";
 import { requestJobCancel } from "@/lib/db-jobs";
 import type { ChatIndexEntry, Memory, Project, ProjectFile, SharedNote } from "@/lib/store";
 import { decodeBase64Size, isTextAttachment, sanitizeFileName } from "@/lib/uploads";
@@ -78,6 +81,16 @@ function removeAsset(projectId: string, storedName: string | undefined, ownerId?
  if (full && existsSync(full)) unlinkSync(full);
 }
 
+function validateProjectModeId(value: unknown, ownerId?: string): string {
+ if (value === undefined) return "agent";
+ if (typeof value !== "string" || !allModes(getGlobalModelSettings(ownerId).customModes || []).some(mode => mode.id === value)) {
+  const error = new Error("Choose an available default agent.");
+  error.name = "InvalidProjectAgentMode";
+  throw error;
+ }
+ return value;
+}
+
 function rowToProject(row: unknown): Project | null {
  const parsed = parseData<Project>(row);
  if (!parsed || typeof parsed.id !== "string") return null;
@@ -87,8 +100,9 @@ function rowToProject(row: unknown): Project | null {
   name: clip(parsed.name, 80) || "Untitled project",
   mode: parsed.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: parsed.mode === "agents" && parsed.allowAgentManagement === true,
+  ...(parsed.mode === "agents" ? { defaultModeId: projectDefaultModeId(parsed)! } : {}),
   hideChatsFromAll: parsed.hideChatsFromAll === true,
-  icon: PROJECT_ICONS.includes(parsed.icon as (typeof PROJECT_ICONS)[number]) ? parsed.icon : "folder",
+  icon: isProjectIcon(parsed.icon) ? parsed.icon : "folder",
   color: /^#[0-9a-f]{6}$/i.test(parsed.color || "") ? String(parsed.color) : PROJECT_COLORS[0],
   instructions: clip(parsed.instructions, 20_000),
   memoryMode: parsed.memoryMode === "project_only" ? "project_only" : "default",
@@ -141,6 +155,7 @@ export function getProject(id: string, ownerId?: string): Project | null {
 export function createProject(input: {
  name?: string;
  mode?: "chat" | "agents";
+ defaultModeId?: string;
  icon?: string;
  color?: string;
  instructions?: string;
@@ -156,8 +171,9 @@ export function createProject(input: {
   name: clip(input.name, 80) || "New project",
   mode: input.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: false,
+  ...(input.mode === "agents" ? { defaultModeId: validateProjectModeId(input.defaultModeId, input.ownerId) } : {}),
   hideChatsFromAll: false,
-  icon: PROJECT_ICONS.includes((input.icon || "") as (typeof PROJECT_ICONS)[number]) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
+  icon: isProjectIcon(input.icon) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
   color: /^#[0-9a-f]{6}$/i.test(input.color || "") ? String(input.color) : PROJECT_COLORS[count % PROJECT_COLORS.length],
   instructions: clip(input.instructions, 20_000),
   memoryMode: input.memoryMode === "project_only" ? "project_only" : "default",
@@ -174,26 +190,38 @@ export function createProject(input: {
 
 export function updateProject(
  id: string,
- patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement" | "hideChatsFromAll">>,
+ patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement" | "hideChatsFromAll" | "defaultModeId">>,
  ownerId?: string,
 ): Project | null {
  return transaction(() => {
   const current = getProject(id, ownerId);
   if (!current) return null;
+  if (patch.defaultModeId !== undefined && current.mode !== "agents") {
+   const error = new Error("Default agents are only available for agent-oriented projects.");
+   error.name = "InvalidProjectAgentMode";
+   throw error;
+  }
   const timestamp = iso();
   const next: Project = {
    ...current,
    ...(patch.name !== undefined ? { name: clip(patch.name, 80) || current.name } : {}),
-   ...(patch.icon && PROJECT_ICONS.includes(patch.icon as (typeof PROJECT_ICONS)[number]) ? { icon: patch.icon } : {}),
+   ...(isProjectIcon(patch.icon) ? { icon: patch.icon } : {}),
    ...(patch.color && /^#[0-9a-f]{6}$/i.test(patch.color) ? { color: patch.color } : {}),
    ...(patch.instructions !== undefined ? { instructions: clip(patch.instructions, 20_000) } : {}),
    ...(patch.memoryMode === "project_only" || patch.memoryMode === "default" ? { memoryMode: patch.memoryMode } : {}),
    ...(patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
+   ...(patch.defaultModeId !== undefined ? { defaultModeId: validateProjectModeId(patch.defaultModeId, ownerId) } : {}),
    ...(typeof patch.allowAgentManagement === "boolean" ? { allowAgentManagement: current.mode === "agents" && patch.allowAgentManagement } : {}),
    ...(typeof patch.hideChatsFromAll === "boolean" ? { hideChatsFromAll: patch.hideChatsFromAll } : {}),
    updatedAt: timestamp,
   };
-  return writeProject(next);
+  writeProject(next);
+  if (patch.defaultModeId !== undefined) {
+   for (const chat of listChatsForUser(ownerId).filter(chat => chat.projectId === id)) {
+    updateChat(chat.id, { sessionState: { modeId: next.defaultModeId }, touchUpdatedAt: false }, ownerId);
+   }
+  }
+  return next;
  });
 }
 

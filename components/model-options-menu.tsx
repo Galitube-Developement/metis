@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectAgentModeLock } from "@/components/project-agent-mode-select";
 import { Check, ChevronDown, MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ function labelFor(param: ModelParameter, value: string) {
 type MobileComposerControls = {
   modes: Array<{ id: string; name: string; description?: string }>;
   selectedModeId?: string;
+  modeLockReason?: string;
   onModeChange: (modeId: string) => void;
   runtimeMode: string;
   runtimeOptions: Array<{ value: string; label: string }>;
@@ -102,7 +104,14 @@ export function ModelOptionsMenu({
           <div className="space-y-1 md:hidden">
             {mobileComposerControls.modes.length ? (
               <div className="rounded-xl bg-muted/15 p-1">
-                <button
+                {mobileComposerControls.modeLockReason ? <ProjectAgentModeLock name={selectedMobileMode?.name || "Agent"} message={mobileComposerControls.modeLockReason} className="block">
+                  <button type="button" disabled aria-label={`Agent mode: ${selectedMobileMode?.name || "Agent"}`}
+                    className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-left opacity-50">
+                    <span className="text-xs text-muted-foreground">Mode</span>
+                    <span className="ml-auto min-w-0 truncate text-xs font-medium">{selectedMobileMode?.name}</span>
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                </ProjectAgentModeLock> : <button
                   type="button"
                   aria-expanded={mobileModeOpen}
                   aria-label={`Agent mode: ${selectedMobileMode?.name || "Agent"}`}
@@ -125,9 +134,9 @@ export function ModelOptionsMenu({
                       mobileModeOpen && "rotate-180",
                     )}
                   />
-                </button>
+                </button>}
 
-                {mobileModeOpen ? (
+                {mobileModeOpen && !mobileComposerControls.modeLockReason ? (
                   <div className="mt-1 overflow-hidden rounded-lg border border-border/50 bg-background/45 p-1">
                     {mobileComposerControls.modes.map((mode) => {
                       const active = mode.id === (selectedMobileMode?.id || mobileComposerControls.selectedModeId);
