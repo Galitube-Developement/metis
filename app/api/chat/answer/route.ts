@@ -1,6 +1,6 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getPendingQuestion, resolveQuestion } from "@/lib/db-questions";
-import { queueUserInputResume } from "@/lib/db-jobs";
+import { queueUserInputResume, releaseUserInputWait } from "@/lib/db-jobs";
 import { appendMessage, getChat, updateChat } from "@/lib/db-store";
 
 import { normalizeQuestionAnswers, QuestionValidationError } from "@/lib/question-contract";
@@ -51,6 +51,7 @@ export async function POST(req: Request) {
       heartbeatAt: resolved.heartbeatAt,
       resumePrompt: `The user answered the pending question with: ${JSON.stringify({ values: resolved.values, answers: resolved.answers, summary: resolved.summary })}`,
     });
+    releaseUserInputWait(resolved.jobId);
   }
   // Release the durable UI state immediately. The MCP request will observe
   // the answer independently and continue the agent run.

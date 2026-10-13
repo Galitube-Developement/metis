@@ -145,10 +145,11 @@ test("a stale question response also keeps a live provider run instead of starti
       body: JSON.stringify({ questionId: question.questionId, answers: ["Yes"] }),
     }));
     assert.equal(response.status, 200);
-    assert.equal(jobs.getJob(f.job.id)?.status, "waiting_input");
+    assert.equal(jobs.getJob(f.job.id)?.status, "running");
     assert.equal(jobs.isJobLeaseActive(f.job.id, f.claimed.leaseOwner!, f.claimed.leaseToken!), true);
     assert.equal(jobs.claimNextJob(), null);
-    assert.equal(jobs.releaseUserInputWait(f.job.id)?.status, "running");
+    assert.equal(jobs.releaseUserInputWait(f.job.id), null);
+    assert.match(jobs.getJob(f.job.id)?.resumePrompt || "", /Yes/);
   } finally { jobs.updateJob(f.job.id, { status: "cancelled" }); }
 });
 
@@ -208,5 +209,46 @@ test("restart recovery preserves old unanswered approvals", async () => {
     assert.equal(jobs.getJob(f.job.id)?.status, "waiting_input");
     assert.equal((await f.decide("allow")).status, 200);
     assert.equal(approvals.getApproval(f.approvalId, f.owner.id)?.decision, "allow");
+  } finally { jobs.updateJob(f.job.id, { status: "cancelled" }); }
+});
+
+
+test("a submitted answer survives provider disconnect and lease expiry without a second writer", async () => {
+  const f = fixture();
+  let pending: ReturnType<typeof questions.createPendingQuestion> | undefined;
+  try {
+    approvals.expireApproval(f.approvalId, f.owner.id);
+    pending = questions.createPendingQuestion([{ question: "Value", key: "value" }], f.chat.id, f.owner.id, { jobId: f.job.id, runId: f.job.id });
+    store.updateChat(f.chat.id, { pendingApproval: null, pendingQuestion: { ...pending, status: "waiting_for_user" } }, f.owner.id);
+    // The provider has returned after a transport failure, but its last writer lease is still valid.
+    pending.stop();
+    sqlite.getDatabase().prepare("UPDATE pending_questions SET heartbeat_at = ? WHERE question_id = ?").run(f.stale, pending.questionId);
+    const response = await answerRoute.POST(new Request("http://localhost/api/chat/answer", {
+      method: "POST", headers: { cookie: "ai_chat_auth=" + f.session.token, "content-type": "application/json" },
+      body: JSON.stringify({ questionId: pending.questionId, values: { value: "synthetic submitted answer" } }),
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(jobs.getJob(f.job.id)?.status, "running");
+    assert.match(jobs.getJob(f.job.id)?.resumePrompt || "", /synthetic submitted answer/);
+    assert.equal(jobs.claimNextJob({ workerId: "premature-writer" }), null);
+    sqlite.getDatabase().prepare("UPDATE job_leases SET expires_at = ? WHERE job_id = ?").run(new Date(Date.now() - 1000).toISOString(), f.job.id);
+    const recovered = jobs.reapExpiredJobLeases();
+    assert.equal(recovered.length, 1);
+    assert.match(recovered[0].resumePrompt || "", /synthetic submitted answer/);
+    const resumed = jobs.claimNextJob({ workerId: "resumed-writer" })!;
+    assert.equal(resumed.id, f.job.id);
+    assert.equal(resumed.attempts, 2);
+    assert.match(resumed.resumePrompt || "", /synthetic submitted answer/);
+    assert.equal(jobs.claimNextJob({ workerId: "duplicate-writer" }), null);
+  } finally { pending?.stop(); jobs.updateJob(f.job.id, { status: "cancelled" }); }
+});
+
+test("a fresh answer also remains available if the live provider dies before consuming it", async () => {
+  const f = fixture();
+  try {
+    assert.equal(jobs.queueUserInputResume({ jobId: f.job.id, heartbeatAt: new Date().toISOString(), resumePrompt: "synthetic fresh answer" }), null);
+    assert.equal(jobs.getJob(f.job.id)?.status, "waiting_input");
+    assert.equal(jobs.getJob(f.job.id)?.resumePrompt, "synthetic fresh answer");
+    assert.equal(jobs.isJobLeaseActive(f.job.id, f.claimed.leaseOwner!, f.claimed.leaseToken!), true);
   } finally { jobs.updateJob(f.job.id, { status: "cancelled" }); }
 });

@@ -709,12 +709,20 @@ export function queueUserInputResume(input: {
 }) {
   return transaction(() => {
     const job = getJob(input.jobId);
-    if (!job || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) return null;
+    if (!job || ["completed", "cancelled", "queued", "switching"].includes(job.status)) return null;
     const now = iso();
     const activeLease = getDatabase().prepare(
       "SELECT 1 FROM job_leases WHERE job_id = ? AND expires_at > ?",
     ).get(job.id, now);
-    if (activeLease) return null;
+    if (activeLease || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) {
+      // The existing writer may consume the answer normally. Retain it for
+      // recovery if its transport died before the still-valid lease expires.
+      updateJob(job.id, {
+        resumePrompt: input.resumePrompt,
+        resumeRequestedAt: now,
+      }, { expectedRevision: jobRevision(job) });
+      return null;
+    }
     return updateJob(job.id, {
       status: "queued",
       error: undefined,
@@ -837,7 +845,7 @@ export function reapExpiredJobLeases(now = iso()) {
         ...job,
         status: "queued" as const,
         error: undefined,
-        resumePrompt:
+        resumePrompt: job.resumePrompt ||
           "The worker lease expired. Resume from the last saved agent state without repeating completed tool calls.",
         resumeRequestedAt: now,
         revision: jobRevision(job) + 1,
