@@ -12,6 +12,7 @@ process.env.CHAT_DB_PATH = path.join(dataDir, "chat.sqlite");
 process.env.AGENT_CWD = dataDir;
 process.env.AI_CHAT_ROOT = dataDir;
 process.env.MCP_BEARER_TOKEN = "approval-flow-test-only";
+Object.assign(process.env, { NODE_ENV: "test", AI_CHAT_TEST_BYPASS_LEASE: "1" });
 delete process.env.AI_CHAT_JOB_ID;
 delete process.env.AI_CHAT_WORKER_ID;
 delete process.env.AI_CHAT_JOB_LEASE_TOKEN;
@@ -27,14 +28,14 @@ let modules!: Awaited<typeof loaded>;
 before(async () => { modules = await loaded; });
 after(() => { rmSync(dataDir, { recursive: true, force: true }); });
 
-function fixture(fullAccess = false, automation = false) {
+function fixture(fullAccess = false, automation = false, permissionMode: "user" | "admin" = "admin") {
   const [auth, clients, gateway, store, jobs] = modules;
   const name = "approval-" + randomUUID();
   const owner = auth.createUser(name, "test-password");
   const session = auth.authenticateUser(name, "test-password")!;
   const client = clients.registerRemoteClient(
-    clients.createEnrollmentToken(owner.id, undefined, "admin").token,
-    { name: "Fixture PC", permissionMode: "admin" },
+    clients.createEnrollmentToken(owner.id, undefined, permissionMode).token,
+    { name: "Fixture PC", permissionMode },
   )!.client!;
   clients.updateRemoteClient(client.id, owner.id, { policy: {
     mode: fullAccess ? "full_access" : "approval_required",
@@ -68,7 +69,7 @@ function fixture(fullAccess = false, automation = false) {
   const controller = new AbortController();
   const request = () => new Request("http://localhost/api/internal/remote-client", {
     method: "POST", signal: controller.signal,
-    headers: { authorization: "Bearer approval-flow-test-only", "x-ai-chat-user-id": owner.id, "content-type": "application/json" },
+    headers: { authorization: "Bearer approval-flow-test-only", "x-ai-chat-user-id": owner.id, "x-ai-chat-job-id": job.id, "content-type": "application/json" },
     body: JSON.stringify(input),
   });
   const decide = (id: string, decision = "allow", token = session.token) =>
@@ -220,7 +221,7 @@ test("parallel approval requests remain visible one after another", async () => 
     const firstId = await pendingId(f);
     second = modules[6].POST(new Request("http://localhost/api/internal/remote-client", {
       method: "POST", signal: f.controller.signal,
-      headers: { authorization: "Bearer approval-flow-test-only", "x-ai-chat-user-id": f.owner.id, "content-type": "application/json" },
+      headers: { authorization: "Bearer approval-flow-test-only", "x-ai-chat-user-id": f.owner.id, "x-ai-chat-job-id": f.job.id, "content-type": "application/json" },
       body: JSON.stringify({ ...f.input, params: { command: "echo second" } }),
     }));
     let secondId = firstId;
@@ -258,3 +259,23 @@ test("an overdue remote prompt stays open and issues a fresh single-use grant af
     assert.equal(modules[1].consumeRemoteApproval({ ...f.input, id }), false);
   } finally { f.controller.abort(); await waiting; f.socket.close(); }
 });
+
+
+for (const action of ["write_file", "edit_file", "delete_file"] as const) {
+  test(`user-mode ${action} waits for Allow and consumes the matching approval once`, async () => {
+    const f = fixture(false, false, "user");
+    const input = { ...f.input, action, params: { path: "notes.txt", content: "new", oldText: "old", newText: "new" } };
+    const waiting = modules[6].POST(new Request(f.request(), { body: JSON.stringify(input) }));
+    try {
+      const id = await pendingId(f);
+      assert.equal(f.sent.length, 0);
+      assert.equal(modules[1].getRemoteApproval(id, f.owner.id)?.action, action);
+      assert.equal((await f.decide(id)).status, 200);
+      assert.equal((await waiting).status, 200);
+      assert.equal(f.sent.length, 1);
+      assert.equal(f.sent[0].action, action);
+      assert.throws(() => modules[2].requestRemoteClient({ ...input, approvalId: id }), /already used/);
+      assert.equal(f.sent.length, 1);
+    } finally { f.controller.abort(); await waiting; f.socket.close(); }
+  });
+}

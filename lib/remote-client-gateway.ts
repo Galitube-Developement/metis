@@ -15,6 +15,7 @@ import {
   updateRemoteAudit,
   type RemoteAction,
 } from "@/lib/remote-clients";
+import { validateUserRemoteRequest } from "@/lib/remote-security";
 import { redactSensitiveData } from "@/lib/agent-trace";
 import { approvedRemoteActionId, publishRemoteApproval, waitForRemoteApproval } from "@/lib/remote-approval-flow";
 
@@ -127,6 +128,9 @@ export function requestRemoteClient(input: {
   /** Trusted chat context supplied by the internal run lease, never by device input. */
   chatId?: string;
 }) {
+  // Keep the wire operation and any approval bound to the same arguments, even
+  // if the caller changes its object while the native request is in flight.
+  input = { ...input, params: structuredClone(input.params || {}) };
   const client = getRemoteClient(input.clientId, input.ownerId);
   if (!client) throw new Error("Remote client not found");
   if (input.action === "edit_file") normalizeFileEdit(input.params);
@@ -231,9 +235,28 @@ export function requestRemoteClient(input: {
     if (advancedEdit && getRemoteClient(input.clientId, input.ownerId)?.policy.mode !== "full_access") {
       throw new Error("Batch edits under this remote policy require an updated remote client; no command fallback was executed.");
     }
-    return send("execute_command", {
-      command: legacyFileCommand(client, input.action, input.params || {}),
-    }).then(result => {
+    const currentClient = getRemoteClient(input.clientId, input.ownerId);
+    if (!currentClient) throw new Error("Remote client not found");
+    const params = input.params || {};
+    const safety = validateUserRemoteRequest(input.action, params);
+    if (currentClient.permissionMode === "user" && !safety.allowed) {
+      throw new Error(safety.reason || "Remote file operation denied");
+    }
+    const fileAuthorization = authorizeRemoteAction(currentClient, input.action, params);
+    if (!fileAuthorization.allowed) throw new Error(fileAuthorization.reason || "Remote file operation denied");
+    if (fileAuthorization.requiresApproval && !authorization.requiresApproval) {
+      throw new Error("Remote file operation now requires confirmation");
+    }
+    const command = legacyFileCommand(currentClient, input.action, params);
+    const commandAuthorization = authorizeRemoteAction(currentClient, "execute_command", { command });
+    if (!commandAuthorization.allowed) throw new Error(commandAuthorization.reason || "Legacy file command denied");
+    // This is only the exact file operation authorized above. Its one-time file
+    // approval covers the transport fallback, never a caller-supplied command.
+    // Command permission and the exact allowlist still apply independently.
+    if (commandAuthorization.requiresApproval && !authorization.requiresApproval) {
+      throw new Error("Legacy file command requires confirmation");
+    }
+    return send("execute_command", { command }).then(result => {
       if (input.action === "edit_file" && result && typeof result === "object" && "stdout" in result) {
         try { return JSON.parse(String(result.stdout).trim()); }
         catch { throw new Error("Legacy file edit returned no valid result; check the file before retrying"); }

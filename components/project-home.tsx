@@ -2,10 +2,11 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Brain, FileText, Folder, ImagePlus, Layers, Paperclip, Plus, StickyNote, Trash2, Upload, X, type LucideIcon } from "lucide-react";
-import { ProjectAvatar, ProjectIconGlyph } from "@/components/project-avatar";
+import { ProjectAvatar } from "@/components/project-avatar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ProjectMemoryManager, type ProjectMemoryItem } from "@/components/project-memory-manager";
 import { ProjectSkillsManager, type ProjectSkillItem } from "@/components/project-skills-manager";
+import { ProjectAgentModeSelect } from "@/components/project-agent-mode-select";
 import { ProjectAgentsPanel } from "@/components/project-agents-panel";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +19,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS, PROJECT_ICONS } from "@/lib/project-constants";
+import { ProjectColorPicker, ProjectIconPicker } from "@/components/project-appearance-picker";
+import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS } from "@/lib/project-constants";
 import { cn } from "@/lib/utils";
 
 type ProjectHomeData = {
@@ -27,6 +29,7 @@ type ProjectHomeData = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
+  defaultModeId?: string;
   hideChatsFromAll?: boolean;
   icon: string;
   color: string;
@@ -170,13 +173,15 @@ export function ProjectHome({
  const [instructions, setInstructions] = useState("");
  const [memoryMode, setMemoryMode] = useState<"default" | "project_only">("default");
  const [color, setColor] = useState(PROJECT_COLORS[0]);
- const [icon, setIcon] = useState<string>(PROJECT_ICONS[0]);
+ const [appearanceSaving, setAppearanceSaving] = useState(false);
+ const [icon, setIcon] = useState<string>("folder");
  const [error, setError] = useState("");
  const [busy, setBusy] = useState(false);
  const [deleteOpen, setDeleteOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
  const [memorySaving, setMemorySaving] = useState(false);
  const [chatVisibilitySaving, setChatVisibilitySaving] = useState(false);
+ const [defaultAgentSaving, setDefaultAgentSaving] = useState(false);
  const [agentManagementSaving, setAgentManagementSaving] = useState(false);
  const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
  const togglePanel = (id: ProjectHomePanel) => {
@@ -218,6 +223,7 @@ export function ProjectHome({
  setInstructions("");
  setActivePanel(null);
  setError("");
+ setAppearanceSaving(false);
  load(controller.signal);
  return () => controller.abort();
  }, [load]);
@@ -232,6 +238,31 @@ export function ProjectHome({
    window.dispatchEvent(new Event("metis:projects-changed"));
    load();
   }
+ }
+
+ async function saveAppearance(patch: { color?: string; icon?: string }) {
+  if (!data || appearanceSaving) return;
+  const previous = data.project;
+  const generation = loadGenerationRef.current;
+  setAppearanceSaving(true); setError("");
+  if (patch.color) setColor(patch.color);
+  if (patch.icon) setIcon(patch.icon);
+  try {
+   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+   });
+   const body = await response.json() as { project?: ProjectHomeData["project"]; error?: string };
+   if (!response.ok || !body.project) throw new Error(body.error || "Could not save project appearance.");
+   if (generation !== loadGenerationRef.current) return;
+   setData(current => current?.project.id === body.project!.id ? { ...current, project: body.project! } : current);
+   setColor(body.project.color); setIcon(body.project.icon);
+   window.dispatchEvent(new Event("metis:projects-changed"));
+  } catch (cause) {
+   if (generation === loadGenerationRef.current) {
+    setColor(previous.color); setIcon(previous.icon);
+    setError(cause instanceof Error ? cause.message : "Could not save project appearance.");
+   }
+  } finally { if (generation === loadGenerationRef.current) setAppearanceSaving(false); }
  }
 
  async function saveChatVisibility(hidden: boolean) {
@@ -255,6 +286,24 @@ export function ProjectHome({
   } finally {
    setChatVisibilitySaving(false);
   }
+ }
+
+ async function saveDefaultAgent(defaultModeId: string) {
+  if (defaultAgentSaving) return;
+  setDefaultAgentSaving(true); setError("");
+  const generation = loadGenerationRef.current;
+  try {
+   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ defaultModeId }),
+   });
+   const body = await response.json() as { project?: ProjectHomeData["project"]; error?: string };
+   if (!response.ok || !body.project) throw new Error(body.error || "Could not save the default agent.");
+   if (generation !== loadGenerationRef.current) return;
+   setData(current => current?.project.id === body.project!.id ? { ...current, project: body.project! } : current);
+   window.dispatchEvent(new Event("metis:projects-changed"));
+  } catch (cause) {
+   if (generation === loadGenerationRef.current) setError(cause instanceof Error ? cause.message : "Could not save the default agent.");
+  } finally { setDefaultAgentSaving(false); }
  }
 
  async function saveAgentManagement(allowed: boolean) {
@@ -453,6 +502,10 @@ export function ProjectHome({
    </section>
    {data.project.mode === "agents" ? (
     <>
+     <section aria-label="Agent settings" className="grid gap-3">
+      <h3 className="text-sm font-medium">Agent settings</h3>
+      <ProjectAgentModeSelect id="project-default-agent" value={data.project.defaultModeId || "agent"} onChange={value => { void saveDefaultAgent(value); }} disabled={defaultAgentSaving} />
+     </section>
      <section aria-labelledby="agent-permissions-heading" className="grid gap-3">
       <h3 id="agent-permissions-heading" className="text-sm font-medium">Agent permissions</h3>
       <div className="flex items-start justify-between gap-4">
@@ -495,40 +548,10 @@ export function ProjectHome({
       </Button>
      ) : null}
     </div>
-    <div className="flex flex-wrap gap-1.5">
-     {PROJECT_COLORS.map((value) => (
-      <button
-       key={value}
-       type="button"
-       className={cn("size-7 rounded-full border-2", color === value ? "border-foreground" : "border-transparent")}
-       style={{ backgroundColor: value }}
-       onClick={() => {
-        setColor(value);
-        void save({ color: value });
-       }}
-      />
-     ))}
-    </div>
-    <div className="flex flex-wrap gap-1.5">
-     {PROJECT_ICONS.map((value) => (
-      <button
-       key={value}
-       type="button"
-       className={cn(
-        "inline-flex size-9 items-center justify-center rounded-xl text-white",
-        icon === value ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : "opacity-80 hover:opacity-100",
-       )}
-       style={{ backgroundColor: color }}
-       aria-label={value}
-       onClick={() => {
-        setIcon(value);
-        void save({ icon: value });
-       }}
-      >
-       <ProjectIconGlyph icon={value} className="size-4" />
-      </button>
-     ))}
-    </div>
+    <ProjectColorPicker value={color} onChange={value => void saveAppearance({ color: value })} disabled={appearanceSaving}/>
+    <ProjectIconPicker value={icon} color={color} onChange={value => void saveAppearance({ icon: value })} disabled={appearanceSaving}/>
+    {data.project.logoStoredName ? <p className="text-xs text-muted-foreground">Remove the custom logo to show this icon.</p> : null}
+
    </section>
 
    <div className="grid grid-cols-2 gap-2" data-slot="project-home-tiles">

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { FolderPlus, Plus, Sparkles } from "lucide-react";
-import { ProjectAvatar, ProjectIconGlyph } from "@/components/project-avatar";
+import { ProjectColorPicker, ProjectIconPicker } from "@/components/project-appearance-picker";
+import { ProjectAgentModeSelect } from "@/components/project-agent-mode-select";
+import { ProjectAvatar } from "@/components/project-avatar";
 import { TeamPresetDialog } from "@/components/team-preset-dialog";
 import type { TeamDraft, TeamPreset } from "@/lib/team-preset-types";
 import { ProjectAgentNav } from "@/components/project-agents-panel";
@@ -24,6 +26,7 @@ export type SidebarProject = {
  id: string;
  name: string;
  mode?: "chat" | "agents";
+ defaultModeId?: string;
  hideChatsFromAll?: boolean;
  icon: string;
  color: string;
@@ -100,6 +103,7 @@ export function ProjectNav({
  const [icon, setIcon] = useState<string>(PROJECT_ICONS[0]);
  const [color, setColor] = useState(PROJECT_COLORS[0]);
  const [agentMode, setAgentMode] = useState<"chat" | "agents">("chat");
+ const [defaultModeId, setDefaultModeId] = useState("agent");
  const [teamPreset, setTeamPreset] = useState("none");
  const [teamDraft, setTeamDraft] = useState<TeamDraft | null>(null);
  const [savedPresets, setSavedPresets] = useState<TeamPreset[]>([]);
@@ -144,10 +148,10 @@ export function ProjectNav({
  async function create() {
   setCreating(true); setCreateError("");
   try {
-   const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() || "New project", icon, color, mode: agentMode, teamPreset: agentMode === "agents" && teamPreset === "starter", ...(agentMode === "agents" && teamDraft ? { teamDraft } : {}) }) });
+   const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() || "New project", icon, color, mode: agentMode, ...(agentMode === "agents" ? { defaultModeId } : {}), teamPreset: agentMode === "agents" && teamPreset === "starter", ...(agentMode === "agents" && teamDraft ? { teamDraft } : {}) }) });
    const body = (await response.json()) as { project?: SidebarProject; error?: string };
    if (!response.ok || !body.project) throw new Error(body.error || "Could not create project.");
-   setCreateOpen(false); setName(""); setAgentMode("chat"); setTeamPreset("none"); setTeamDraft(null); load(true);
+   setCreateOpen(false); setName(""); setAgentMode("chat"); setDefaultModeId("agent"); setTeamPreset("none"); setTeamDraft(null); load(true);
    window.dispatchEvent(new Event("metis:projects-changed")); onOpenProject(body.project.id); onCollapseNav?.();
   } catch (cause) { setCreateError(cause instanceof Error ? cause.message : "Could not create project."); }
   finally { setCreating(false); }
@@ -299,6 +303,7 @@ export function ProjectNav({
         {([["chat", "No"], ["agents", "Yes"]] as const).map(([value, label]) => <button key={value} type="button" className={cn("rounded-lg border px-3 py-2 text-left text-xs transition-colors", agentMode === value ? "border-foreground bg-muted" : "border-border hover:bg-muted/50")} aria-pressed={agentMode === value} onClick={() => setAgentMode(value)}><span className="block font-medium">{label}</span><span className="mt-0.5 block text-muted-foreground">{value === "agents" ? "Team of agents" : "Regular project chats"}</span></button>)}
        </div>
       </div>
+      {agentMode === "agents" ? <ProjectAgentModeSelect id="new-project-default-agent" value={defaultModeId} onChange={setDefaultModeId} disabled={creating} /> : null}
       {agentMode === "agents" ? <div className="grid gap-2"><label className="grid gap-2 text-xs text-muted-foreground">Team preset <select aria-label="Team preset" value={teamPreset} onChange={(event) => {
         const value = event.target.value;
         if (value === "ai") { setPresetPurpose("ai"); setPresetOpen(true); return; }
@@ -306,41 +311,8 @@ export function ProjectNav({
         const saved = savedPresets.find(p => p.id === value);
         setTeamDraft(saved ? { name: saved.name, description: saved.description, agents: saved.agents.map(a => ({ ...a })) } : null);
        }} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="none">Start with an empty team</option><option value="starter">Coordinator, Planner, Software Engineer, Tester</option>{savedPresets.filter(p => !p.builtIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}{teamPreset === "draft" ? <option value="draft">Reviewed team: {teamDraft?.name || "Untitled"}</option> : null}<option value="ai">Make a preset with AI…</option></select></label><Button variant="outline" size="sm" onClick={() => { setPresetPurpose("select"); setPresetOpen(true); }}><Sparkles className="size-3.5"/>{teamDraft ? `Review ${teamDraft.agents.length} agents` : "Browse or create presets"}</Button></div> : null}
-      <div className="grid gap-1.5">
-       <p className="text-xs text-muted-foreground">Color</p>
-       <div className="flex flex-wrap gap-1.5">
-        {PROJECT_COLORS.map((value) => (
-         <button
-          key={value}
-          type="button"
-          className={cn("size-7 rounded-full border-2", color === value ? "border-foreground" : "border-transparent")}
-          style={{ backgroundColor: value }}
-          aria-label={`Color ${value}`}
-          onClick={() => setColor(value)}
-         />
-        ))}
-       </div>
-      </div>
-      <div className="grid gap-1.5">
-       <p className="text-xs text-muted-foreground">Icon</p>
-       <div className="flex flex-wrap gap-1.5">
-        {PROJECT_ICONS.map((value) => (
-         <button
-          key={value}
-          type="button"
-          className={cn(
-           "inline-flex size-8 items-center justify-center rounded-lg text-white",
-           icon === value ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : "opacity-80 hover:opacity-100",
-          )}
-          style={{ backgroundColor: color }}
-          aria-label={value}
-          onClick={() => setIcon(value)}
-         >
-          <ProjectIconGlyph icon={value} className="size-3.5" />
-         </button>
-        ))}
-       </div>
-      </div>
+      <ProjectColorPicker value={color} onChange={setColor} disabled={creating}/>
+      <ProjectIconPicker value={icon} color={color} onChange={setIcon} disabled={creating}/>
      </div>
      {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
      <DialogFooter>

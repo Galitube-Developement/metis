@@ -225,3 +225,108 @@ test("job-scoped internal gateway fetches forward the active run lease", () => {
   }
   assert.deepEqual(missing, []);
 });
+
+test("mutating internal routes reject missing job IDs before processing the request", async () => {
+  const previousToken = process.env.MCP_BEARER_TOKEN;
+  process.env.MCP_BEARER_TOKEN = "lease-route-test-token";
+  try {
+    const routes = ["browser", "remote-client", "mcp-memory", "mcp-automation", "mcp-agent-state", "mcp-mode",
+      "mcp-file", "mcp-chat", "mcp-workspace", "mcp-question", "mcp-notes", "mcp-wait", "mcp-subagent", "project-handoff", "mcp-approval"];
+    for (const route of routes) {
+      const { POST } = await import(`../app/api/internal/${route}/route`);
+      for (const jobId of [undefined, "   "]) {
+        const headers = new Headers({ authorization: "Bearer lease-route-test-token", "content-type": "application/json" });
+        if (jobId !== undefined) headers.set("x-ai-chat-job-id", jobId);
+        const response = await POST(new Request(`http://localhost/api/internal/${route}`, { method: "POST", headers, body: "{}" }));
+        assert.equal(response.status, 401, `${route}, jobId=${JSON.stringify(jobId)}`);
+      }
+    }
+  } finally {
+    if (previousToken === undefined) delete process.env.MCP_BEARER_TOKEN;
+    else process.env.MCP_BEARER_TOKEN = previousToken;
+  }
+});
+
+test("lease enforcement is independent of NODE_ENV and permits a valid leased mutation", async () => {
+  const env = process.env as Record<string, string | undefined>;
+  const previous = { NODE_ENV: env.NODE_ENV, MCP_BEARER_TOKEN: env.MCP_BEARER_TOKEN, AI_CHAT_TEST_BYPASS_LEASE: env.AI_CHAT_TEST_BYPASS_LEASE };
+  const { internalRunLeaseAuthorized } = await import("../lib/internal-run-lease");
+  const { POST } = await import("../app/api/internal/mcp-memory/route");
+  const jobs = await import("../lib/db-jobs");
+  const { createUser } = await import("../lib/auth");
+  const owner = createUser("lease-audit-" + randomUUID(), "test-password");
+  const chat = modules[0].createChat("Leased mutation", undefined, owner.id);
+  const job = jobs.enqueueJob({ chatId: chat.id, userId: owner.id, message: "Test lease" });
+  const lease = jobs.claimNextJob({ workerId: "audit-worker" })!;
+  assert.equal(lease.id, job.id);
+  const request = (extra: Record<string, string> = {}) => new Request("http://localhost/api/internal/mcp-memory", {
+    method: "POST", headers: { authorization: "Bearer lease-audit-token", "content-type": "application/json",
+      "x-ai-chat-id": chat.id, "x-ai-chat-user-id": owner.id, "x-ai-chat-job-id": job.id, ...extra },
+    body: JSON.stringify({ action: "add", content: "synthetic leased memory" }),
+  });
+  const validHeaders = { "x-ai-chat-worker-id": lease.leaseOwner!, "x-ai-chat-lease-token": lease.leaseToken! };
+  env.MCP_BEARER_TOKEN = "lease-audit-token";
+  delete env.AI_CHAT_TEST_BYPASS_LEASE;
+  try {
+    for (const nodeEnv of ["development", "test", "production"]) {
+      env.NODE_ENV = nodeEnv;
+      assert.equal((await POST(request())).status, 401, nodeEnv);
+      assert.equal((await POST(request({ "x-ai-chat-worker-id": lease.leaseOwner! }))).status, 401);
+      assert.equal((await POST(request({ ...validHeaders, "x-ai-chat-lease-token": "wrong-token" }))).status, 401);
+      assert.equal(internalRunLeaseAuthorized(request(validHeaders), "other-job"), false);
+      const response = await POST(request(validHeaders));
+      assert.equal(response.status, 200, nodeEnv);
+      assert.equal((await response.json()).memory.content, "synthetic leased memory");
+    }
+    modules[1].getDatabase().prepare("UPDATE job_leases SET expires_at = ? WHERE job_id = ?")
+      .run(new Date(Date.now() - 1_000).toISOString(), job.id);
+    assert.equal((await POST(request(validHeaders))).status, 401);
+    env.NODE_ENV = "test";
+    env.AI_CHAT_TEST_BYPASS_LEASE = "true";
+    assert.equal(internalRunLeaseAuthorized(request(), job.id), false);
+    env.AI_CHAT_TEST_BYPASS_LEASE = "1";
+    assert.equal(internalRunLeaseAuthorized(request(), job.id), true);
+    assert.equal(internalRunLeaseAuthorized(request(), ""), false);
+    const missingJob = request(); missingJob.headers.delete("x-ai-chat-job-id");
+    assert.equal((await POST(missingJob)).status, 401);
+    env.NODE_ENV = "production";
+    assert.equal(internalRunLeaseAuthorized(request(), job.id), false, "test bypass must be dead in production");
+  } finally {
+    jobs.updateJob(job.id, { status: "cancelled" });
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete env[key]; else env[key] = value;
+    }
+  }
+});
+
+test("internal browser and engine reject the password-header fallback", async () => {
+  const env = process.env as Record<string, string | undefined>;
+  const previous = { NODE_ENV: env.NODE_ENV, AI_CHAT_INTERNAL_TOKEN: env.AI_CHAT_INTERNAL_TOKEN, MCP_BEARER_TOKEN: env.MCP_BEARER_TOKEN };
+  const { POST } = await import("../app/api/internal/browser/route");
+  const { runInNewContext } = await import("node:vm");
+  // Evaluate only the pure authorization function; importing server.mjs would start the server.
+  const server = readFileSync(path.join(import.meta.dirname, "../server.mjs"), "utf8");
+  const start = server.indexOf("function internalEngineAuthorized(request)");
+  const end = server.indexOf("\nasync function readRequestJson", start);
+  assert.ok(start >= 0 && end > start);
+  const engineAuthorized = runInNewContext(`(${server.slice(start, end)})`, {
+    process: { env }, passwordMatches: () => true,
+  }) as (req: { headers: Record<string, string> }) => boolean;
+  try {
+    env.NODE_ENV = "production";
+    delete env.AI_CHAT_INTERNAL_TOKEN; delete env.MCP_BEARER_TOKEN;
+    const headers = { "x-ai-chat-internal": "1", "x-chat-password": "synthetic-password" };
+    assert.equal(engineAuthorized({ headers }), false);
+    assert.equal((await POST(new Request("http://localhost/api/internal/browser", { method: "POST", headers, body: "{}" }))).status, 401);
+    env.MCP_BEARER_TOKEN = "synthetic-internal-token";
+    assert.equal(engineAuthorized({ headers: { authorization: "Bearer synthetic-internal-token" } }), true);
+    assert.equal(engineAuthorized({ headers: { authorization: "Bearer wrong-token" } }), false);
+    env.AI_CHAT_INTERNAL_TOKEN = "synthetic-engine-token";
+    assert.equal(engineAuthorized({ headers: { authorization: "Bearer synthetic-engine-token" } }), true);
+    assert.equal(engineAuthorized({ headers: { authorization: "Bearer synthetic-internal-token" } }), false);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete env[key]; else env[key] = value;
+    }
+  }
+});

@@ -12,7 +12,8 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
-  if (jobId && !internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const ownerId = req.headers.get("x-ai-chat-user-id")?.trim() || "";
   if (!ownerId) return Response.json({ error: "Account context is required" }, { status: 400 });
   const body = (await req.json().catch(() => ({}))) as {

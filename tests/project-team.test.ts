@@ -25,7 +25,7 @@ const model = modelKey("openai", "discovered-test-model", connectionId);
 getDatabase().prepare("INSERT INTO provider_connections(id,owner_id,provider_key,slug,label,auth_type,config,enabled,created_at,updated_at) VALUES (?,?, 'openai','test-provider','Test provider','api_key','{}',1,datetime('now'),datetime('now'))").run(connectionId, owner);
 getDatabase().prepare("INSERT INTO provider_models(connection_id,canonical_id,display_name,capabilities,discovered_at) VALUES (?, 'discovered-test-model','Discovered test model','{}',datetime('now'))").run(connectionId);
 function fixture(modeId = "agent") {
- const project = projects.createProject({ ownerId: owner, name: "Team", mode: "agents", instructions: "Preserve existing architecture." });
+ const project = projects.createProject({ ownerId: owner, name: "Team", mode: "agents", defaultModeId: modeId, instructions: "Preserve existing architecture." });
  const agents = team.createProjectTeamPreset(project.id, owner);
  for (const a of agents) team.updateProjectAgent(project.id, a.id, { modelId: model }, owner);
  const sender = agents[0];

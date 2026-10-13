@@ -1,3 +1,4 @@
+import { projectModeForChat } from "@/lib/project-agent-mode-server";
 import { agentRulesPrompt } from "@/lib/agent-rules";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { projectTeamContextBlock } from "@/lib/project-team";
@@ -13,7 +14,6 @@ import { METIS_SHARED_AGENT_CONTROL, toolContractPrompt } from "@/lib/agent-cont
 import { metisAgentIdentity } from "@/lib/agent-identity";
 import { formatChatGoal } from "@/lib/chat-goal";
 import { chatMetadataPrompt } from "@/lib/chat-metadata-prompt";
-import { modeById } from "@/lib/modes";
 import { retrieveRelevantFacts, selectChatContinuityFacts } from "@/lib/context-layers";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import type { AgentJob } from "@/lib/jobs";
@@ -101,7 +101,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   const project = !incognito ? scope?.project : undefined;
   const globalSettings = getGlobalModelSettings(ownerId);
   const skillSettings = projectSkillSettings(globalSettings, project);
-  const activeMode = modeById(job.modeId || chat.sessionState?.modeId, globalSettings.customModes || []);
+  const activeMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, globalSettings.customModes || []);
   const globalFacts = incognito
     ? []
     : globalFactsForScope({

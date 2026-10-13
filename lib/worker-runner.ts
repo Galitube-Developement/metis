@@ -1,3 +1,4 @@
+import { projectModeForChat } from "@/lib/project-agent-mode-server";
 import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
@@ -46,7 +47,7 @@ import { appendAgentTrace } from "@/lib/agent-trace";
 import { parseAgentTranscript, stripTranscriptDump } from "@/lib/agent-transcript";
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { createSnapshot } from "@/lib/shared-context";
-import { allModes, modeById } from "@/lib/modes";
+import { allModes } from "@/lib/modes";
 import { runtimeModeForChat } from "@/lib/runtime-mode";
 import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, MessagePart } from "@/lib/store";
@@ -540,6 +541,11 @@ export async function runQueuedJob(job: AgentJob) {
     markJobError(job, "Chat not found or access denied.");
     return;
   }
+  const effectiveMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, getGlobalModelSettings(job.userId).customModes || []);
+  if (chat.projectId && job.modeId !== effectiveMode.id) {
+    job = { ...job, modeId: effectiveMode.id };
+    updateJob(job.id, { modeId: effectiveMode.id });
+  }
   const teamAgent = getProjectAgentForChat(chat.id, job.userId);
   if (teamAgent?.archivedAt) { markJobError(job, "This project agent is archived."); return; }
   if (job.projectWaitingForHandoffId) updateJob(job.id, { projectWaitingForHandoffId: null });
@@ -644,7 +650,7 @@ export async function runQueuedJob(job: AgentJob) {
   const compressContext = (value: string, enabled: boolean) =>
     compressionEnabled && enabled ? compress(value, compressionMode).text : value;
   const flags = featureFlags(globalModelSettings);
-  const activeMode = modeById(job.modeId || chat.sessionState?.modeId, globalModelSettings.customModes || []);
+  const activeMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, globalModelSettings.customModes || []);
   const modeCategories = flags.browser
     ? activeMode.allowedCategories
     : activeMode.allowedCategories.filter((category) => category !== "browser");

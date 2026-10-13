@@ -22,15 +22,17 @@ export function SkillLibrary({ onTry, isHostAdmin }: { onTry: (skill: SkillSetti
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  const load = useCallback(async (refresh = false) => {
+    if (!refresh) setLoading(true);
+    setError("");
     try {
-      const responses = await Promise.all([fetch("/api/skills", { cache: "no-store" }), fetch("/api/skills/catalog", { cache: "no-store" })]);
+      const responses = await Promise.all([fetch("/api/skills", { cache: "no-store" }), ...(!refresh ? [fetch("/api/skills/catalog", { cache: "no-store" })] : [])]);
       const bodies = await Promise.all(responses.map(response => response.json()));
       for (let i = 0; i < responses.length; i++) if (!responses[i].ok) throw new Error(bodies[i].error || "Could not load skill library.");
-      setSkills(bodies[0].skills || []); setCatalog(bodies[1].skills || []);
+      setSkills(bodies[0].skills || []);
+      if (!refresh) setCatalog(bodies[1].skills || []);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load skills."); }
-    finally { setLoading(false); }
+    finally { if (!refresh) setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -54,13 +56,12 @@ export function SkillLibrary({ onTry, isHostAdmin }: { onTry: (skill: SkillSetti
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Could not update skill."); }
   }
   async function install(skill: DirectorySkill) {
-    const id = skill.id;
     setInstalling(skill.catalogId);
     try {
       const response = await fetch("/api/skills/catalog", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ catalogId: skill.catalogId }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not install skill.");
-      await load(); setView("installed"); setSelected(id); toast.success("Skill installed");
+      await load(true); toast.success("Skill installed");
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Could not install skill."); }
     finally { setInstalling(null); }
   }
@@ -83,7 +84,7 @@ export function SkillLibrary({ onTry, isHostAdmin }: { onTry: (skill: SkillSetti
     </div>
     {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">Loading skill library…</p> : null}
     {error ? <div role="alert" className="py-6 text-sm"><p className="text-destructive">{error}</p><Button className="mt-3" variant="outline" onClick={() => void load()}>Try again</Button></div> : null}
-    {view === "import" ? <div className="space-y-8"><SharedSkillImport onImported={id=>{void load();setView("installed");setSelected(id);}}/><SkillsSettings hideHeading importOnly onAdded={() => void load()} /></div> : !loading && !error ? <>
+    {view === "import" ? <div className="space-y-8"><SharedSkillImport onImported={() => { void load(true); }}/><SkillsSettings hideHeading importOnly onAdded={() => void load(true)} /></div> : !loading && !error ? <>
       {view === "discover" ? <p role="status" className="mb-4 text-xs text-muted-foreground">{directoryLoading ? "Searching skills.sh…" : directoryNotice}</p> : null}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {view === "installed" ? installed.map(skill => <button type="button" key={skill.id} onClick={() => setSelected(skill.id)} className="group flex min-h-44 min-w-0 flex-col rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

@@ -1,3 +1,5 @@
+import { projectDefaultModeId } from "@/lib/project-agent-mode";
+import { modeById } from "@/lib/modes";
 import { providerRateLimit, type ProviderRateLimit } from "@/lib/provider-rate-limit";
 import { getProviderLimitResumeEnabled } from "@/lib/provider-rate-limit-settings";
 import { randomUUID } from "node:crypto";
@@ -189,7 +191,7 @@ function enqueueJobInTransaction(
       const agent = team.agentData ? JSON.parse(team.agentData) : null;
       if (!input.userId || team.ownerId !== input.userId || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
-      input = { ...input, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
+      input = { ...input, modeId: modeById(projectDefaultModeId(JSON.parse(team.projectData)) || undefined, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
     if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: resolveAgentRuntimeMs(input.maxRuntimeMs, getGlobalModelSettings(input.userId).agentRuntimeMs) };
     const now = iso();
@@ -621,6 +623,7 @@ export function updateJob(
       | "error"
       | "agentId"
       | "claimedAt"
+      | "modeId"
       | "resumePrompt"
       | "resumeRequestedAt"
       | "runId"

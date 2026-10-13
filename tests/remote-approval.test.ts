@@ -148,7 +148,7 @@ test("device hub audit records results, redacts output, and marks disconnects as
   const owner = createUser("remote-hub-owner", "password");
   const registered = registerRemoteClient(createEnrollmentToken(owner.id).token, { name: "hub-device" });
   assert.ok(registered?.client);
-  updateRemoteClient(registered.client.id, owner.id, { policy: { mode: "approval_required", allowlist: ["echo fail", "echo maybe"] } });
+  updateRemoteClient(registered.client.id, owner.id, { policy: { mode: "full_access", allowlist: ["echo fail", "echo maybe"] } });
 
   function mockSocket(onRequest: (socket: EventEmitter, request: Record<string, unknown>) => void) {
     const socket = new EventEmitter() as EventEmitter & { readyState: number; send: (data: string) => void; close: () => void };
@@ -212,4 +212,120 @@ test("device hub returns only the authenticated PC and its logs", async () => {
   assert.equal(body.audit.length, 1);
   assert.equal(body.audit[0].clientId, first.client.id);
   assert.equal(body.clients, undefined);
+});
+
+for (const permissionMode of ["user", "admin"] as const) {
+  for (const mode of ["restricted", "approval_required", "full_access"] as const) {
+    for (const action of ["write_file", "edit_file", "delete_file", "execute_command", "pty_open"] as const) {
+      test(`approval matrix: ${permissionMode}/${mode}/${action}`, async () => {
+        const { createUser } = await import("../lib/auth");
+        const clients = await import("../lib/remote-clients");
+        const owner = createUser("matrix-" + randomUUID(), "test-password");
+        const client = clients.registerRemoteClient(
+          clients.createEnrollmentToken(owner.id, undefined, permissionMode).token,
+          { permissionMode },
+        )!.client!;
+        client.policy = { mode, permissions: [...clients.REMOTE_PERMISSIONS], allowlist: ["whoami"] };
+        const result = clients.authorizeRemoteAction(client, action, { path: "notes.txt", command: "whoami" });
+        const allowed = action !== "pty_open" || permissionMode === "admin";
+        assert.equal(result.allowed, allowed);
+        assert.equal(result.requiresApproval, allowed && (mode === "approval_required" || (mode === "restricted" && permissionMode === "admin")));
+        if (action === "execute_command" && mode !== "full_access") {
+          assert.equal(clients.authorizeRemoteAction(client, action, { command: "echo unlisted" }).allowed, false);
+        }
+      });
+    }
+  }
+}
+
+test("legacy file fallback preserves the approved operation and command policy", async (t) => {
+  const { createUser } = await import("../lib/auth");
+  const clients = await import("../lib/remote-clients");
+  const gateway = await import("../lib/remote-client-gateway");
+  const owner = createUser("legacy-" + randomUUID(), "test-password");
+  const client = clients.registerRemoteClient(clients.createEnrollmentToken(owner.id).token, { name: "legacy-client" })!.client!;
+  const sent: Array<{ action: string; params: Record<string, unknown> }> = [];
+  let onNative: (() => void) | undefined;
+  let nativeAction = "";
+  const editResult = { path: "notes.txt", replacements: 1, changed: true };
+  const socket = new EventEmitter() as EventEmitter & { readyState: number; send: (data: string) => void; close: () => void };
+  socket.readyState = 1;
+  socket.close = () => { socket.readyState = 3; socket.emit("close"); };
+  socket.send = (data) => {
+    const request = JSON.parse(data);
+    if (request.type !== "request") return;
+    sent.push(request);
+    queueMicrotask(() => {
+      if (request.action !== "execute_command") {
+        nativeAction = request.action;
+        onNative?.();
+      }
+      socket.emit("message", JSON.stringify({ type: "response", requestId: request.requestId,
+        ok: request.action === "execute_command", error: "unsupported remote action", result: { stdout: nativeAction === "edit_file" ? JSON.stringify(editResult) : "legacy-ok" } }));
+    });
+  };
+  gateway.attachRemoteClient(socket, client.id, owner.id);
+  try {
+    for (const action of ["write_file", "edit_file", "delete_file"] as const) {
+      const params = { path: "notes.txt", content: "hello", oldText: "hello", newText: "world" };
+      const input = { clientId: client.id, ownerId: owner.id, action, params };
+      let command = "";
+      await t.test(`${action}: full access fallback`, async () => {
+        clients.updateRemoteClient(client.id, owner.id, { policy: { mode: "full_access" } });
+        sent.length = 0;
+        assert.deepEqual(await gateway.requestRemoteClient(input), action === "edit_file" ? editResult : { stdout: "legacy-ok" });
+        assert.deepEqual(sent.map((r) => r.action), [action, "execute_command"]);
+        command = String(sent[1].params.command);
+      });
+      const approvedRequest = () => {
+        const approval = clients.createRemoteApproval(input);
+        assert.equal(clients.approveRemoteApproval(approval.id, owner.id), true);
+        return gateway.requestRemoteClient({ ...input, approvalId: approval.id });
+      };
+      await t.test(`${action}: non-allowlisted command is denied after file approval`, async () => {
+        clients.updateRemoteClient(client.id, owner.id, { policy: { mode: "approval_required", allowlist: [] } });
+        sent.length = 0;
+        await assert.rejects(approvedRequest(), /allowlist/);
+        assert.deepEqual(sent.map((r) => r.action), [action]);
+      });
+      await t.test(`${action}: exact allowlisted command uses the file approval once`, async () => {
+        clients.updateRemoteClient(client.id, owner.id, { policy: { allowlist: [command] } });
+        sent.length = 0;
+        assert.deepEqual(await approvedRequest(), action === "edit_file" ? editResult : { stdout: "legacy-ok" });
+        assert.deepEqual(sent.map((r) => r.action), [action, "execute_command"]);
+        assert.equal(sent[1].params.command, command);
+      });
+      await t.test(`${action}: execute permission is required`, async () => {
+        clients.updateRemoteClient(client.id, owner.id, { policy: { permissions: clients.REMOTE_PERMISSIONS.filter((p) => p !== "execute_command") } });
+        sent.length = 0;
+        await assert.rejects(approvedRequest(), /Permission execute_command/);
+        assert.equal(sent.length, 1);
+        clients.updateRemoteClient(client.id, owner.id, { policy: { permissions: [...clients.REMOTE_PERMISSIONS] } });
+      });
+    }
+    await t.test("system paths never reach the legacy socket", async () => {
+      clients.updateRemoteClient(client.id, owner.id, { policy: { mode: "full_access" } });
+      for (const file of ["Windows/system.ini", "/root/other-owner.txt", "/etc/passwd"]) {
+        sent.length = 0;
+        assert.throws(() => gateway.requestRemoteClient({ clientId: client.id, ownerId: owner.id, action: "write_file", params: { path: file } }), /User access/);
+        assert.equal(sent.length, 0);
+      }
+    });
+    await t.test("caller mutation cannot retarget an in-flight fallback", async () => {
+      const params = { path: "approved.txt", content: "safe" };
+      sent.length = 0;
+      onNative = () => { params.path = "/root/other-owner.txt"; params.content = "changed"; };
+      await gateway.requestRemoteClient({ clientId: client.id, ownerId: owner.id, action: "write_file", params });
+      const decoded = [...String(sent[1].params.command).matchAll(/Buffer.from\('([^']*)','base64'\)/g)]
+        .map((match) => Buffer.from(match[1], "base64").toString("utf8"));
+      assert.deepEqual(decoded, ["approved.txt", "safe"]);
+      onNative = undefined;
+    });
+    await t.test("revocation between native action and fallback is enforced", async () => {
+      sent.length = 0;
+      onNative = () => { clients.revokeRemoteClient(client.id, owner.id); };
+      await assert.rejects(gateway.requestRemoteClient({ clientId: client.id, ownerId: owner.id, action: "delete_file", params: { path: "notes.txt" } }), /not found|revoked/i);
+      assert.equal(sent.length, 1);
+    });
+  } finally { socket.close(); }
 });

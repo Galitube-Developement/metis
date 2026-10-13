@@ -234,14 +234,18 @@ export function assertSafeUserAccess(userId: string, workspaceRoot: string, iden
   }
   // Per-user sudoers grants can exist without membership in sudo/wheel.
   // Missing sudo is harmless; unavailable/ambiguous policy checks fail closed.
+  const denialPrefix = `User ${identity.username} is not allowed to run sudo on `;
+  const policyDeniesSudo = (output: string) => output.trim().startsWith(denialPrefix)
+    && /^[^\r\n]+\.$/.test(output.trim());
   try {
-    execFileSync("sudo", ["-n", "-l", "-U", identity.username], { encoding: "utf8",
+    const output = execFileSync("sudo", ["-n", "-l", "-U", identity.username], { encoding: "utf8",
       env: { NODE_ENV: "production", PATH: process.env.PATH, LC_ALL: "C" },
       stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 10_000 });
-    throw new Error("OS identity has sudo privileges.");
+    // sudo 1.9 may exit 0 when listing an explicitly denied user's policy.
+    if (!policyDeniesSudo(output)) throw new Error("OS identity has sudo privileges.");
   } catch (error) {
     const failure = error as { code?: string; status?: number; stdout?: string | Buffer; stderr?: string | Buffer };
-    const denied = failure.status === 1 && `${failure.stdout || ""}${failure.stderr || ""}`.includes("not allowed to run sudo");
+    const denied = failure.status === 1 && policyDeniesSudo(`${failure.stdout || ""}${failure.stderr || ""}`);
     if (failure.code !== "ENOENT" && !denied) throw new Error("Cannot verify an unprivileged OS identity: sudo policy permits access or is unavailable.");
   }
   // Verify effective access, including POSIX ACLs, rather than assuming chmod

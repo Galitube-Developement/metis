@@ -89,3 +89,55 @@ test("event queries seek the run index, preserve owner isolation and replay ever
   const result=await pending;
   assert.equal(result.done,true);
 });
+
+
+test("sidebar queue counts track writes, deletes and drains without exposing queued text", async () => {
+  const [{getDatabase},store] = await modules;
+  const db=getDatabase(), now=new Date().toISOString();
+  for (const id of ["queue-owner","queue-other"]) db.prepare("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)").run(id,id,"unused",now);
+  const chat=store.createChat("Queue count",undefined,"queue-owner");
+  const foreign=store.createChat("Foreign",undefined,"queue-other");
+  const snapshot=()=>store.listChatsForUser("queue-owner").find(item=>item.id===chat.id)!;
+  assert.equal(snapshot().queuedMessageCount,0);
+  store.updateChat(chat.id,{queuedMessages:[{id:"q1",text:"PRIVATE_QUEUE_ONE"},{id:"q2",text:"PRIVATE_QUEUE_TWO"}]},"queue-owner");
+  store.updateChat(foreign.id,{queuedMessages:[{id:"foreign-q",text:"OTHER_QUEUE"}]},"queue-other");
+  assert.equal(snapshot().queuedMessageCount,2);
+  assert.equal(db.prepare("SELECT queued_message_count AS n FROM chat_list WHERE id=?").get(chat.id)!.n,2);
+  assert.equal("queuedMessages" in snapshot(),false);
+  assert.doesNotMatch(JSON.stringify(store.listChatsForUser("queue-owner")),/PRIVATE_QUEUE|OTHER_QUEUE|Foreign/);
+  store.removeQueuedMessage(chat.id,"q1","queue-owner");
+  assert.equal(snapshot().queuedMessageCount,1);
+  const consumed=store.claimQueuedMessageInTransaction(chat.id,"queue-owner");
+  assert.equal(consumed?.message.id,"q2");
+  assert.equal(snapshot().queuedMessageCount,0);
+  store.updateChat(chat.id,{queuedMessages:[{id:"q3",text:"Later"}]},"queue-owner");
+  store.updateChat(chat.id,{queuedMessages:null},"queue-owner");
+  assert.equal(snapshot().queuedMessageCount,0);
+  assert.equal(store.listChatsForUser("queue-other").find(item=>item.id===foreign.id)?.queuedMessageCount,1);
+});
+
+test("legacy sidebar queue-count backfill runs once and preserves chat activity order", async () => {
+  const [{getDatabase},store] = await modules;
+  const db=getDatabase();
+  const chat=store.createChat("Legacy queue");
+  store.updateChat(chat.id,{queuedMessages:[{id:"legacy-q1",text:"First"},{id:"legacy-q2",text:"Second"}]});
+  const before=store.getChat(chat.id)!;
+  db.prepare("DELETE FROM meta WHERE key='chat_list_queued_message_count_v1'").run();
+  db.exec("ALTER TABLE chat_list DROP COLUMN queued_message_count");
+  const startup=()=>{
+    const result=spawnSync(process.execPath,["--import","tsx","-e","require('./lib/sqlite.ts').getDatabase().close()"],{
+      cwd:path.resolve(import.meta.dirname,".."),encoding:"utf8",timeout:30_000,
+      env:{NODE_ENV:"test",PATH:process.env.PATH,CHAT_DATA_DIR:root,CHAT_DB_PATH:path.join(root,"fixture.sqlite"),AGENT_CWD:root,AI_CHAT_ROOT:root},
+    });
+    assert.equal(result.status,0,result.stderr);
+  };
+  startup();
+  assert.equal(db.prepare("SELECT queued_message_count AS n FROM chat_list WHERE id=?").get(chat.id)!.n,2);
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='chat_list_queued_message_count_v1'").get()!.value,"1");
+  db.prepare("UPDATE chat_list SET queued_message_count=1 WHERE id=?").run(chat.id);
+  startup();
+  assert.equal(db.prepare("SELECT queued_message_count AS n FROM chat_list WHERE id=?").get(chat.id)!.n,1);
+  assert.equal(store.getChat(chat.id)!.updatedAt,before.updatedAt);
+  assert.deepEqual(store.getChat(chat.id)!.queuedMessages,before.queuedMessages);
+  assert.equal(db.prepare("PRAGMA integrity_check").get()!.integrity_check,"ok");
+});

@@ -12,6 +12,7 @@ export async function POST(req: Request) {
  if (!bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN)) return Response.json({ error: "Unauthorized" }, { status: 401 });
  const chatId = req.headers.get("x-ai-chat-id")?.trim() || "";
  const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
+ if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
  const ownerId = req.headers.get("x-ai-chat-user-id")?.trim() || "";
  const chat = getChat(chatId, ownerId);
  const parent = getJob(jobId);

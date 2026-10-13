@@ -22,7 +22,8 @@ function authorized(req: Request) {
 export async function POST(req: Request) {
   if (!authorized(req)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
-  if (jobId && !internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalRunLeaseAuthorized(req, jobId)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const userId = req.headers.get("x-ai-chat-user-id")?.trim() || undefined;
   if (req.headers.get("x-ai-chat-incognito") === "1") {
     return Response.json({ error: "Memory tools are unavailable in Incognito." }, { status: 403 });

@@ -53,17 +53,14 @@ export async function performSharedBrowserAction(
   const configuredToken =
     process.env.AI_CHAT_INTERNAL_TOKEN?.trim() ||
     process.env.MCP_BEARER_TOKEN?.trim();
+  if (!configuredToken) throw new Error("An internal browser bearer token is required");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-AI-Chat-Internal": "1",
     "X-AI-Chat-Id": chatId,
     "X-AI-Chat-User-Id": userId,
   };
-  if (configuredToken) {
-    headers.Authorization = `Bearer ${configuredToken}`;
-  } else {
-    headers["X-Chat-Password"] = process.env.CHAT_PASSWORD?.trim() || "";
-  }
+  headers.Authorization = `Bearer ${configuredToken}`;
 
   let response: Response;
   try {

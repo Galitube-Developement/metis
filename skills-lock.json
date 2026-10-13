@@ -13,6 +13,12 @@
       "skillPath": "skills/manual/build-discipline/SKILL.md",
       "computedHash": "03b7a3053fcfeedf1e81e0ac3587ceed82709dd4425790f70ae1212704c32edd"
     },
+    "computer-use": {
+      "source": "./manual",
+      "sourceType": "local",
+      "skillPath": "skills/manual/computer-use/SKILL.md",
+      "computedHash": "5252ecc1583083378d101630e9428cccf4b0cf8263a0540c61a1f27c2b07884e"
+    },
     "design-system": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",
@@ -24,6 +30,12 @@
       "sourceType": "github",
       "skillPath": "skills/taste-skill/SKILL.md",
       "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
+    },
+    "docx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/docx/SKILL.md",
+      "computedHash": "59c70107f8eae818bdfca7da685a6e4111aa519638b667775b794cb74987ec47"
     },
     "find-skills": {
       "source": "vercel-labs/skills",
@@ -37,11 +49,47 @@
       "skillPath": "skills/frontend-design/SKILL.md",
       "computedHash": "4eabc66183767153e404b39d1b839b1c37f2d82d86f0a0d7e880a579d8d62336"
     },
+    "i-have-adhd": {
+      "source": "ayghri/i-have-adhd",
+      "sourceType": "github",
+      "skillPath": "skills/i-have-adhd/SKILL.md",
+      "computedHash": "938d0e350a0c2b0e2e6c3a9032542e062846d108e0f89dd27c798ba5b436397e"
+    },
+    "metis-design-director": {
+      "source": "manual",
+      "sourceType": "local",
+      "skillPath": "skills/manual/metis-design-director/SKILL.md",
+      "computedHash": "c3bddcfde555ad0b656efd609aef874a90bdbf053103b52561de1b3a6334806f"
+    },
+    "metis-development": {
+      "source": "custom",
+      "sourceType": "local",
+      "skillPath": "skills/manual/metis-development/SKILL.md",
+      "computedHash": "25f4c7c9c4d1941ea9df1dfeeceafe8e820fd9f762952671e2546767b56df11f"
+    },
+    "pdf": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/pdf/SKILL.md",
+      "computedHash": "cfbc539377088ca7e44a813b30c306327385bbd973cd7a721e1743f60837dd62"
+    },
     "playwright": {
       "source": "bobmatnyc/claude-mpm-skills",
       "sourceType": "github",
       "skillPath": "toolchains/javascript/testing/playwright/SKILL.md",
       "computedHash": "003fc7f5ee2ba795786f4f5689900be32fcdf53a834777512091ac1192274c07"
+    },
+    "pptx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/pptx/SKILL.md",
+      "computedHash": "82eaf5daede5a1779aa17ccf06597cb209a0c2bd41d3a2f18bd45e0301a387fb"
+    },
+    "skill-creator": {
+      "source": "openai/skills (Metis adaptation)",
+      "sourceType": "bundled",
+      "skillPath": "skills/bundled/skill-creator/SKILL.md",
+      "computedHash": "4ee426f1c45139912942835882d8cc212cc873a6cfaeaf71da335abc8f3af3a9"
     },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
@@ -55,35 +103,11 @@
       "skillPath": "skills/web-design-reviewer/SKILL.md",
       "computedHash": "4a05e32553a1dc916ee4f68f709d478c17de6b8ce184932f56f2b8646f3d4986"
     },
-    "metis-design-director": {
-      "source": "manual",
-      "sourceType": "local",
-      "skillPath": "skills/manual/metis-design-director/SKILL.md",
-      "computedHash": "c3bddcfde555ad0b656efd609aef874a90bdbf053103b52561de1b3a6334806f"
-    },
-    "i-have-adhd": {
-      "source": "ayghri/i-have-adhd",
+    "xlsx": {
+      "source": "anthropics/skills",
       "sourceType": "github",
-      "skillPath": "skills/i-have-adhd/SKILL.md",
-      "computedHash": "938d0e350a0c2b0e2e6c3a9032542e062846d108e0f89dd27c798ba5b436397e"
-    },
-    "computer-use": {
-      "source": "./manual",
-      "sourceType": "local",
-      "skillPath": "skills/manual/computer-use/SKILL.md",
-      "computedHash": "5252ecc1583083378d101630e9428cccf4b0cf8263a0540c61a1f27c2b07884e"
-    },
-    "skill-creator": {
-      "source": "openai/skills (Metis adaptation)",
-      "sourceType": "bundled",
-      "skillPath": "skills/bundled/skill-creator/SKILL.md",
-      "computedHash": "4ee426f1c45139912942835882d8cc212cc873a6cfaeaf71da335abc8f3af3a9"
-    },
-    "metis-development": {
-      "source": "custom",
-      "sourceType": "local",
-      "skillPath": "skills/manual/metis-development/SKILL.md",
-      "computedHash": "25f4c7c9c4d1941ea9df1dfeeceafe8e820fd9f762952671e2546767b56df11f"
+      "skillPath": "skills/xlsx/SKILL.md",
+      "computedHash": "f5945e6e76dc7c178375e5cdf3140959b30cbcd4570ec3dc62296812259fc38d"
     }
   }
 }
