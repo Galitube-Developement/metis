@@ -246,8 +246,6 @@ test("legacy file fallback preserves the approved operation and command policy",
   const client = clients.registerRemoteClient(clients.createEnrollmentToken(owner.id).token, { name: "legacy-client" })!.client!;
   const sent: Array<{ action: string; params: Record<string, unknown> }> = [];
   let onNative: (() => void) | undefined;
-  let nativeAction = "";
-  const editResult = { path: "notes.txt", replacements: 1, changed: true };
   const socket = new EventEmitter() as EventEmitter & { readyState: number; send: (data: string) => void; close: () => void };
   socket.readyState = 1;
   socket.close = () => { socket.readyState = 3; socket.emit("close"); };
@@ -255,13 +253,12 @@ test("legacy file fallback preserves the approved operation and command policy",
     const request = JSON.parse(data);
     if (request.type !== "request") return;
     sent.push(request);
+    const fallbackEdit = request.action === "execute_command" && sent.at(-2)?.action === "edit_file";
     queueMicrotask(() => {
-      if (request.action !== "execute_command") {
-        nativeAction = request.action;
-        onNative?.();
-      }
+      if (request.action !== "execute_command") onNative?.();
       socket.emit("message", JSON.stringify({ type: "response", requestId: request.requestId,
-        ok: request.action === "execute_command", error: "unsupported remote action", result: { stdout: nativeAction === "edit_file" ? JSON.stringify(editResult) : "legacy-ok" } }));
+        ok: request.action === "execute_command", error: "unsupported remote action",
+        result: { stdout: fallbackEdit ? JSON.stringify({ stdout: "legacy-ok" }) : "legacy-ok" } }));
     });
   };
   gateway.attachRemoteClient(socket, client.id, owner.id);
@@ -273,7 +270,7 @@ test("legacy file fallback preserves the approved operation and command policy",
       await t.test(`${action}: full access fallback`, async () => {
         clients.updateRemoteClient(client.id, owner.id, { policy: { mode: "full_access" } });
         sent.length = 0;
-        assert.deepEqual(await gateway.requestRemoteClient(input), action === "edit_file" ? editResult : { stdout: "legacy-ok" });
+        assert.deepEqual(await gateway.requestRemoteClient(input), { stdout: "legacy-ok" });
         assert.deepEqual(sent.map((r) => r.action), [action, "execute_command"]);
         command = String(sent[1].params.command);
       });
@@ -291,7 +288,7 @@ test("legacy file fallback preserves the approved operation and command policy",
       await t.test(`${action}: exact allowlisted command uses the file approval once`, async () => {
         clients.updateRemoteClient(client.id, owner.id, { policy: { allowlist: [command] } });
         sent.length = 0;
-        assert.deepEqual(await approvedRequest(), action === "edit_file" ? editResult : { stdout: "legacy-ok" });
+        assert.deepEqual(await approvedRequest(), { stdout: "legacy-ok" });
         assert.deepEqual(sent.map((r) => r.action), [action, "execute_command"]);
         assert.equal(sent[1].params.command, command);
       });

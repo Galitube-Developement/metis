@@ -1,6 +1,18 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { editedFileFromTool } from "@/lib/edited-files";
 import { resolveAgentPath } from "@/lib/revert";
 import type { ToolPart } from "@/lib/store";
+
+/** Resolve relative edits against the actual per-run workspace before persistence/SSE. */
+export function withEditedFileTracking(tool: ToolPart, agentCwd: string, previous?: ToolPart): ToolPart {
+  if (tool.status !== "completed") return tool;
+  const editedFile = editedFileFromTool({ ...previous, ...tool, input: tool.input ?? previous?.input, path: tool.path ?? previous?.path });
+  return { ...tool, editedFile: editedFile ? {
+    ...editedFile,
+    path: editedFile.target === "server" ? path.resolve(agentCwd, editedFile.path) : editedFile.path,
+  } : null };
+}
 
 function parseToolInput(value: string | undefined) {
   if (!value) return undefined;

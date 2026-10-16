@@ -1,4 +1,4 @@
-import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
+import { getAuthenticatedUser, getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
 import { getProject } from "@/lib/projects";
 import { createProjectAgent, createProjectTeamPreset, listProjectAgents, syncProjectHandoffStatuses } from "@/lib/project-team";
@@ -10,11 +10,16 @@ export const dynamic = "force-dynamic";
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, { params }: Params) {
-  if (!(await isAuthenticated(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
-  const { id } = await params;
-  if (!getProject(id, ownerId)) return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json({ agents: listProjectAgents(id, ownerId), handoffs: syncProjectHandoffStatuses(id, ownerId) });
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const { id } = await params;
+    if (!getProject(id, user.id)) return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json({ agents: listProjectAgents(id, user.id), handoffs: syncProjectHandoffStatuses(id, user.id) });
+  } catch (error) {
+    captureApiError("/api/projects/[id]/agents GET", error, req);
+    return Response.json({ error: "Could not load your team. Try again." }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request, { params }: Params) {

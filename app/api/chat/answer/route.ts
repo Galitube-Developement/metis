@@ -5,6 +5,8 @@ import { appendMessage, getChat, updateChat } from "@/lib/db-store";
 
 import { normalizeQuestionAnswers, QuestionValidationError } from "@/lib/question-contract";
 import { questionAnswerAnchor } from "@/lib/question-transcript";
+import { userInputProgress } from "@/lib/user-input-progress";
+import { transaction } from "@/lib/sqlite";
 
 export const runtime = "nodejs";
 
@@ -34,44 +36,51 @@ export async function POST(req: Request) {
       return Response.json({ error: error instanceof Error ? error.message : "Invalid answers", fieldErrors: error instanceof QuestionValidationError ? error.fieldErrors : {} }, { status: 400 });
     }
   }
-  const resolved = resolveQuestion(questionId, input, userId, version);
-  if (!resolved) return Response.json({ error: "This form is no longer available. Refresh the chat." }, { status: 409 });
-  const answerId = `question-answer-${questionId}`;
-  const chat = getChat(resolved.chatId, userId);
-  if (resolved.summary && !chat?.messages.some(message => message.id === answerId)) {
-    appendMessage(resolved.chatId, {
-      id: answerId, role: "user", content: resolved.summary,
-      questionAnswer: { questionId, ...questionAnswerAnchor(chat?.messages ?? [], questionId) },
-    }, userId);
-  }
-  const answerMessage = getChat(resolved.chatId, userId)?.messages.find(message => message.id === answerId);
-  if (resolved.jobId) {
-    queueUserInputResume({
+  return transaction(() => {
+    const firstAnswer = getPendingQuestion(questionId, userId)?.status === "waiting_for_user";
+    const beforeChat = getChat(pending.chatId, userId);
+    const progress = userInputProgress(beforeChat?.messages ?? []);
+    const resolved = resolveQuestion(questionId, input, userId, version);
+    if (!resolved) return Response.json({ error: "This form is no longer available. Refresh the chat." }, { status: 409 });
+    const answerId = `question-answer-${questionId}`;
+    const chat = getChat(resolved.chatId, userId);
+    if (resolved.summary && !chat?.messages.some(message => message.id === answerId)) {
+      appendMessage(resolved.chatId, {
+        id: answerId, role: "user", content: resolved.summary,
+        questionAnswer: { questionId, ...questionAnswerAnchor(chat?.messages ?? [], questionId) },
+      }, userId);
+    }
+    const answerMessage = getChat(resolved.chatId, userId)?.messages.find(message => message.id === answerId);
+    if (resolved.jobId && firstAnswer) {
+      queueUserInputResume({
+        jobId: resolved.jobId,
+        heartbeatAt: resolved.heartbeatAt,
+        questionId,
+        progress,
+        resumePrompt: `The user answered the pending question with: ${JSON.stringify({ values: resolved.values, answers: resolved.answers, summary: resolved.summary })}`,
+      });
+      releaseUserInputWait(resolved.jobId);
+    }
+    // Release the durable UI state immediately. The MCP request will observe
+    // the answer independently and continue the agent run.
+    const currentChat = getChat(resolved.chatId, userId);
+    if (currentChat?.pendingQuestion?.questionId === questionId) {
+      updateChat(
+        resolved.chatId,
+        { runStatus: "running", pendingQuestion: null, badge: null },
+        userId,
+      );
+    }
+    return Response.json({
+      ok: true,
+      questionId,
       jobId: resolved.jobId,
-      heartbeatAt: resolved.heartbeatAt,
-      resumePrompt: `The user answered the pending question with: ${JSON.stringify({ values: resolved.values, answers: resolved.answers, summary: resolved.summary })}`,
+      runId: resolved.runId,
+      version: resolved.version,
+      status: resolved.status,
+      values: resolved.values,
+      summary: resolved.summary,
+      message: answerMessage,
     });
-    releaseUserInputWait(resolved.jobId);
-  }
-  // Release the durable UI state immediately. The MCP request will observe
-  // the answer independently and continue the agent run.
-  const currentChat = getChat(resolved.chatId, userId);
-  if (currentChat?.pendingQuestion?.questionId === questionId) {
-    updateChat(
-      resolved.chatId,
-      { runStatus: "running", pendingQuestion: null, badge: null },
-      userId,
-    );
-  }
-  return Response.json({
-    ok: true,
-    questionId,
-    jobId: resolved.jobId,
-    runId: resolved.runId,
-    version: resolved.version,
-    status: resolved.status,
-    values: resolved.values,
-    summary: resolved.summary,
-    message: answerMessage,
   });
 }

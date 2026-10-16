@@ -1,4 +1,5 @@
 "use client";
+import { StreamingText } from "@/components/streaming-text";
 
 import { useEffect, useState } from "react";
 import { Brain } from "lucide-react";
@@ -50,7 +51,7 @@ export function ThinkingBlock({
       </div>
       {expanded ? (
         <div className="mt-0.5 max-h-48 overflow-y-auto whitespace-pre-wrap pl-4 text-[11px] font-light italic leading-relaxed text-muted-foreground/70">
-          {text}
+          <StreamingText text={text}/>
         </div>
       ) : null}
     </div>

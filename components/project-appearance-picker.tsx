@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, MoreHorizontal, Pipette, Search } from "lucide-react";
 import { ProjectIconGlyph } from "@/components/project-avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,14 +24,16 @@ export function ProjectColorPicker({ value, onChange, disabled = false }: {
   }
   return <div className="grid gap-2">
     <p className="text-xs font-medium text-muted-foreground">Color</p>
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="Project color presets">
+    <div className="flex flex-wrap items-center gap-1 sm:gap-1.5" aria-label="Project color presets">
       {PROJECT_COLORS.map(color => <button key={color} type="button" disabled={disabled}
         aria-label={`Color ${color}`} aria-pressed={value.toLowerCase() === color}
         onClick={() => onChange(color)}
         className={cn("size-8 rounded-full border-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
           value.toLowerCase() === color ? "border-foreground" : "border-transparent")}
         style={{backgroundColor: color}}/>)}
-    </div>
+    <Popover>
+      <PopoverTrigger asChild><button type="button" disabled={disabled} aria-label="Choose custom project color" title="Custom color" className="inline-flex size-8 items-center justify-center rounded-full border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={!PROJECT_COLORS.includes(value.toLowerCase()) ? { backgroundColor: value, color: projectIconForeground(value) } : undefined}><Pipette className="size-4"/></button></PopoverTrigger>
+      <PopoverContent align="end" className="w-64 max-w-[calc(100vw-2rem)] p-3" aria-label="Custom project color picker">
     <div className="flex items-center gap-2">
       <input type="color" value={normalizeProjectColor(value) || PROJECT_COLORS[0]}
         disabled={disabled} aria-label="Custom project color" title="Choose a custom color"
@@ -48,6 +50,9 @@ export function ProjectColorPicker({ value, onChange, disabled = false }: {
         }}/>
     </div>
     {error ? <p role="alert" className="text-xs text-destructive">Enter a HEX color such as #6366f1.</p> : null}
+      </PopoverContent>
+    </Popover>
+    </div>
   </div>;
 }
 
@@ -69,13 +74,16 @@ export function ProjectIconPicker({ value, color, onChange, disabled = false }: 
   function choose(name: string) { onChange("lucide:" + name); setOpen(false); }
   return <div className="grid gap-2">
     <p className="text-xs font-medium text-muted-foreground">Icon</p>
+    <div className="flex flex-wrap items-center gap-1 sm:gap-1.5" aria-label="Project icon presets">
+    {PROJECT_ICONS.map(icon => <button key={icon} type="button" disabled={disabled} aria-label={`Icon ${projectIconLabel(icon)}`} aria-pressed={selected === projectIconName(icon)} title={projectIconLabel(icon)} onClick={() => onChange(icon)}
+      className={cn("inline-flex size-8 items-center justify-center rounded-md border border-transparent hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50", selected === projectIconName(icon) && "border-foreground/30 bg-muted")}>
+      <ProjectIconGlyph icon={icon} className="size-4"/>
+    </button>)}
     <Popover open={open} onOpenChange={next => { setOpen(next); if (next) { setQuery(""); setLimit(60); } }}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" disabled={disabled} aria-label="Choose project icon" aria-haspopup="dialog"
-          className="h-10 w-full justify-start gap-2">
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md" style={color ? { backgroundColor: color, color: projectIconForeground(color) } : undefined}><ProjectIconGlyph icon={value} className="size-4"/></span>
-          <span className="min-w-0 flex-1 truncate text-left">{projectIconLabel(value)}</span>
-          <ChevronDown className="size-3.5 text-muted-foreground"/>
+        <Button type="button" variant="outline" disabled={disabled} aria-label="Choose project icon" title={`Custom icon · ${projectIconLabel(value)}`} aria-haspopup="dialog" aria-pressed={!PROJECT_ICONS.some(icon => projectIconName(icon) === selected)}
+          className="relative size-8 shrink-0 p-0 aria-pressed:border-foreground/30 aria-pressed:bg-muted">
+          <MoreHorizontal className="size-4"/>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] overflow-hidden p-3"
@@ -105,5 +113,6 @@ export function ProjectIconPicker({ value, color, onChange, disabled = false }: 
         </div>
       </PopoverContent>
     </Popover>
+    </div>
   </div>;
 }

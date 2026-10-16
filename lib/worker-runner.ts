@@ -1,4 +1,5 @@
-import { projectModeForChat } from "@/lib/project-agent-mode-server";
+import { modeById } from "@/lib/modes";
+import { projectModelOverride, validateProjectModelSelection } from "@/lib/project-model-server";
 import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
@@ -20,6 +21,7 @@ import { projectSkillSettings } from "@/lib/skills";
 import { buildSkillContext } from "@/lib/skill-context";
 import { getUserAgentCwd, getMcpServers } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
+import { withEditedFileTracking } from "@/lib/file-edit-snapshot";
 import { appendRunEvent, enqueueJob, getJob, touchJob, updateJob } from "@/lib/db-jobs";
 import { canonicalizeToolPart } from "@/lib/providers/tool-events";
 import { logError } from "@/lib/error-logs";
@@ -64,6 +66,7 @@ import { metisAgentIdentity } from "@/lib/agent-identity";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { captureKnowledgeFromUserTurn } from "@/lib/knowledge-lifecycle";
 import { isJobWaitingForUser } from "@/lib/user-input-resume";
+import { parkEndedUserInputWriter, commitWithUserInputContinuation } from "@/lib/db-jobs";
 import { armAgentRuntime } from "@/lib/agent-runtime";
 
 const asRecord = (value: unknown) => payloadRecord(value);
@@ -541,7 +544,16 @@ export async function runQueuedJob(job: AgentJob) {
     markJobError(job, "Chat not found or access denied.");
     return;
   }
-  const effectiveMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, getGlobalModelSettings(job.userId).customModes || []);
+  const projectModel = projectModelOverride(chat.projectId, job.userId);
+  if (projectModel) {
+    try { validateProjectModelSelection(job.userId!, projectModel.modelId, projectModel.modelParams); }
+    catch (error) { markJobError(job, error instanceof Error ? error.message : "Project model is unavailable."); return; }
+    job = { ...job, ...projectModel };
+    Object.assign(chat, projectModel);
+    updateJob(job.id, projectModel);
+    updateChat(chat.id, { ...projectModel, touchUpdatedAt: false }, job.userId);
+  }
+  const effectiveMode = modeById(job.modeId || chat.sessionState?.modeId, getGlobalModelSettings(job.userId).customModes || []);
   if (chat.projectId && job.modeId !== effectiveMode.id) {
     job = { ...job, modeId: effectiveMode.id };
     updateJob(job.id, { modeId: effectiveMode.id });
@@ -650,7 +662,7 @@ export async function runQueuedJob(job: AgentJob) {
   const compressContext = (value: string, enabled: boolean) =>
     compressionEnabled && enabled ? compress(value, compressionMode).text : value;
   const flags = featureFlags(globalModelSettings);
-  const activeMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, globalModelSettings.customModes || []);
+  const activeMode = modeById(job.modeId || chat.sessionState?.modeId, globalModelSettings.customModes || []);
   const modeCategories = flags.browser
     ? activeMode.allowedCategories
     : activeMode.allowedCategories.filter((category) => category !== "browser");
@@ -1178,7 +1190,7 @@ export async function runQueuedJob(job: AgentJob) {
       const todos = todosFromToolPayload(inputText, resultText);
       const kind = classifyToolKind(displayName || resolvedName, editArgs, toolResult);
       const stableId = kind === "todo" ? `todo-${job.id}` : toolId;
-      const nextTool: ToolPart = canonicalizeToolPart({
+      const nextTool: ToolPart = withEditedFileTracking(canonicalizeToolPart({
         id: stableId,
         name: displayName || resolvedName,
         status: toolStatus,
@@ -1192,7 +1204,7 @@ export async function runQueuedJob(job: AgentJob) {
         ...(resultText ? { result: resultText } : {}),
         ...(todos?.length ? { todos } : {}),
         ...(subagent ? { subagent } : {}),
-      });
+      }), agentCwd);
       const existingToolIndex = tools.findIndex((tool) => tool.id === stableId);
       if (existingToolIndex >= 0) {
         tools[existingToolIndex] = { ...tools[existingToolIndex], ...nextTool };
@@ -1560,11 +1572,7 @@ export async function runQueuedJob(job: AgentJob) {
     const pausedStatus = getJob(job.id)?.status;
     if (isJobWaitingForUser(pausedStatus)) {
       checkpoint(true);
-      emit("status", {
-        status: "waiting_for_user",
-        message: "Waiting for the user's response before resuming the agent.",
-      });
-      return;
+      if (parkEndedUserInputWriter(job.id)) return;
     }
     const wasCancelled =
       cancellationRequested ||
@@ -1797,21 +1805,26 @@ export async function runQueuedJob(job: AgentJob) {
       ...(typeof usage?.inputTokens === "number" ? { lastContextTokens: usage.inputTokens } : {}),
       ...(contextWindow ? { lastContextWindow: contextWindow } : {}),
     });
-    updateChat(job.chatId, {
-      agentId: agent.agentId,
-      runStatus: resultError ? "error" : "completed",
-      runUpdatedAt: new Date().toISOString(),
-      queueMessage: null,
-      pendingQuestion: null,
-      ...(resultError ? { badge: "red" as const } : {}),
-    }, job.userId);
-    if (resultError) emit("error", { message: resultError });
-    else emit("done", { status: result.status, agentId: agent.agentId });
-    updateJob(job.id, {
-      status: resultError ? "error" : "completed",
-      agentId: agent.agentId,
-      ...(resultError ? { error: resultError } : {}),
-    });
+    const completionAgentId = agent.agentId;
+    const commitCompletion = () => {
+      updateChat(job.chatId, {
+        agentId: completionAgentId,
+        runStatus: resultError ? "error" : "completed",
+        runUpdatedAt: new Date().toISOString(),
+        queueMessage: null,
+        pendingQuestion: null,
+        ...(resultError ? { badge: "red" as const } : {}),
+      }, job.userId);
+      if (resultError) emit("error", { message: resultError });
+      else emit("done", { status: result.status, agentId: completionAgentId });
+      updateJob(job.id, {
+        status: resultError ? "error" : "completed",
+        agentId: completionAgentId,
+        ...(resultError ? { error: resultError } : {}),
+      });
+    };
+    if (resultError) commitCompletion();
+    else if (commitWithUserInputContinuation(job.id, commitCompletion, completionAgentId, assistantMessageId) !== "completed") return;
   if (!job.incognito && !chat.incognito) createSnapshot({
       chatId: job.chatId,
       ...(job.userId ? { ownerId: job.userId } : {}),

@@ -5,10 +5,10 @@ import { cancelQuestion } from "@/lib/db-questions";
 import type { AgentJob } from "@/lib/jobs";
 import type { ProjectHandoff } from "@/lib/project-team-types";
 
-/** Runs inside the job's write transaction, including failures and cancellation. */
-export function syncHandoffForJob(job: AgentJob) {
+/** Job writes update the live chat; history reconciliation updates handoffs and result mirrors only. */
+export function syncHandoffForJob(job: AgentJob, options: { updateChatState?: boolean } = {}) {
  const db = getDatabase();
- if (job.projectTeamId && ["cancelled", "error", "interrupted"].includes(job.status)) {
+ if (options.updateChatState !== false && job.projectTeamId && ["cancelled", "error", "interrupted"].includes(job.status)) {
   for (const row of db.prepare("SELECT id FROM pending_approvals WHERE job_id = ? AND owner_id = ? AND status = 'waiting_for_user'").all(job.id, job.userId ?? "") as { id: string }[]) resolveApproval(row.id, "deny", job.userId);
   for (const row of db.prepare("SELECT question_id AS id FROM pending_questions WHERE json_extract(data, '$.jobId') = ? AND user_id = ? AND status = 'waiting_for_user'").all(job.id, job.userId ?? "") as { id: string }[]) cancelQuestion(row.id, job.userId);
   updateChat(job.chatId, { runStatus: job.status === "cancelled" ? "cancelled" : job.status === "error" ? "error" : "interrupted", runUpdatedAt: job.updatedAt, pendingApproval: null, pendingQuestion: null }, job.userId);

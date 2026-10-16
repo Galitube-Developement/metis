@@ -69,6 +69,8 @@ import { MicrophoneSettings } from "@/components/microphone-settings";
 import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
 import { ProviderLimitSettings } from "@/components/provider-limit-settings";
 import { NotificationDeliverySettings } from "@/components/notification-delivery-settings";
+import { RemoteNotificationSettings, RemoteDeviceNotificationSwitch } from "@/components/remote-notification-settings";
+import { useNotificationSettings } from "@/hooks/use-notification-settings";
 import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
@@ -271,8 +273,6 @@ type Props = {
   settingsTab: string;
   onSettingsTabChange: (tab: string) => void;
   memories: MemoryItem[];
-  notificationsEnabled: boolean;
-  onNotificationsEnabledChange: (enabled: boolean) => void;
   soundCuesEnabled: boolean;
   onSoundCuesEnabledChange: (enabled: boolean) => void;
   voiceInputEnabled: boolean;
@@ -694,6 +694,7 @@ export function SettingsPanel({
     savingsPercent: number;
   } | null>(null);
   const [compressionPreviewBusy, setCompressionPreviewBusy] = useState(false);
+  const notificationSettings = useNotificationSettings(open);
   const [remoteClients, setRemoteClients] = useState<RemoteClient[]>([]);
   const [desktopStatusById, setDesktopStatusById] = useState<Record<string, DesktopPermissionStatus>>({});
   const [desktopStatusBusyId, setDesktopStatusBusyId] = useState("");
@@ -2140,7 +2141,7 @@ export function SettingsPanel({
                     response.
                   </p>
                 </div>
-                <NotificationDeliverySettings />
+                <NotificationDeliverySettings settings={notificationSettings} onOpenDevices={() => { onSettingsTabChange("devices"); setSettingsPane("tab"); setSettingsSearchTarget("settings-remote-clients"); }} />
                 <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
                   <div>
                     <p className="text-xs text-muted-foreground">Sound cues</p>
@@ -2440,6 +2441,7 @@ export function SettingsPanel({
                     Add client
                   </Button>
                 </div>
+                <RemoteNotificationSettings settings={notificationSettings} />
                 <div className="rounded-lg border bg-card/40 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -2512,6 +2514,7 @@ export function SettingsPanel({
                         {client.version ? <span>v{client.version}</span> : null}
                         {client.lastSeenAt ? <span>seen {new Date(client.lastSeenAt).toLocaleString()}</span> : null}
                       </div>
+                      <RemoteDeviceNotificationSwitch settings={notificationSettings} clientId={client.id} clientName={client.name} />
                     </div>
                   )) : (
                     <p className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">No remote clients enrolled yet.</p>

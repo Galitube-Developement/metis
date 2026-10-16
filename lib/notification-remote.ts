@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getRemoteClient } from "@/lib/remote-clients";
-import type { NotificationRecord } from "@/lib/notification-store";
+import { getNotificationPrefs, type NotificationRecord } from "@/lib/notification-store";
+import { remoteNotificationAllowed } from "@/lib/notification-preferences";
 type Socket = { readyState: number; send(data: string): void; on(event: "message" | "close", callback: (raw?: unknown) => void): void };
 type Session = { socket: Socket; ownerId: string; native: boolean; pending: Map<string, { id: string; resolve(value: boolean): void; timer: ReturnType<typeof setTimeout> }> };
 const globals = globalThis as typeof globalThis & { __metisNotificationSessions?: Map<string, Session> };
@@ -33,7 +34,7 @@ export function notificationCapability(clientId: string, ownerId: string) {
   return Boolean(client && client.status !== "revoked" && session?.ownerId === ownerId && session.native && session.socket.readyState === 1);
 }
 export async function sendRemoteNotification(clientId: string, ownerId: string, notification: NotificationRecord, timeoutMs = 10000) {
-  if (!notificationCapability(clientId, ownerId)) return false;
+  if (!notificationCapability(clientId, ownerId) || !remoteNotificationAllowed(getNotificationPrefs(ownerId),false,clientId)) return false;
   const session = sessions.get(clientId)!;
   const requestId = randomUUID();
   return new Promise<boolean>(resolve => {

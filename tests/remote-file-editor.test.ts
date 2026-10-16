@@ -37,6 +37,6 @@ test("remote file editor inserts tab characters instead of spaces", () => {
 test("remote file editor uses app dialogs for folder creation and renaming", () => {
   assert.doesNotMatch(editor, /window\.prompt/);
   assert.match(editor, /entryDialogMode/);
-  assert.match(editor, /<DialogTitle>\{entryDialogMode === "rename" \? "Rename entry" : "Create folder"\}<\/DialogTitle>/);
+  assert.match(editor, /<DialogTitle>\{entryDialogTitle\}<\/DialogTitle>/);
   assert.match(editor, /<form onSubmit=\{submitEntryDialog\}/);
 });

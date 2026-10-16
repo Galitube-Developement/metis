@@ -11,10 +11,10 @@ import {
  PROJECT_ICONS,
 } from "@/lib/project-constants";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
-import { allModes } from "@/lib/modes";
-import { projectDefaultModeId } from "@/lib/project-agent-mode";
-import { getGlobalModelSettings, listChatsForUser, updateChat } from "@/lib/db-store";
-import { requestJobCancel } from "@/lib/db-jobs";
+import { validateProjectModelSettings } from "@/lib/project-model-server";
+import { projectDefaultModel } from "@/lib/project-model";
+import { listChatsForUser, updateChat } from "@/lib/db-store";
+import { requestJobCancel, requestJobModelSwitch } from "@/lib/db-jobs";
 import type { ChatIndexEntry, Memory, Project, ProjectFile, SharedNote } from "@/lib/store";
 import { decodeBase64Size, isTextAttachment, sanitizeFileName } from "@/lib/uploads";
 
@@ -81,16 +81,6 @@ function removeAsset(projectId: string, storedName: string | undefined, ownerId?
  if (full && existsSync(full)) unlinkSync(full);
 }
 
-function validateProjectModeId(value: unknown, ownerId?: string): string {
- if (value === undefined) return "agent";
- if (typeof value !== "string" || !allModes(getGlobalModelSettings(ownerId).customModes || []).some(mode => mode.id === value)) {
-  const error = new Error("Choose an available default agent.");
-  error.name = "InvalidProjectAgentMode";
-  throw error;
- }
- return value;
-}
-
 function rowToProject(row: unknown): Project | null {
  const parsed = parseData<Project>(row);
  if (!parsed || typeof parsed.id !== "string") return null;
@@ -100,7 +90,7 @@ function rowToProject(row: unknown): Project | null {
   name: clip(parsed.name, 80) || "Untitled project",
   mode: parsed.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: parsed.mode === "agents" && parsed.allowAgentManagement === true,
-  ...(parsed.mode === "agents" ? { defaultModeId: projectDefaultModeId(parsed)! } : {}),
+  ...(parsed.mode === "agents" ? { defaultModelEnabled: parsed.defaultModelEnabled === true, ...(typeof parsed.defaultModelId === "string" ? { defaultModelId: parsed.defaultModelId } : {}), defaultModelParams: Array.isArray(parsed.defaultModelParams) ? parsed.defaultModelParams : [] } : {}),
   hideChatsFromAll: parsed.hideChatsFromAll === true,
   icon: isProjectIcon(parsed.icon) ? parsed.icon : "folder",
   color: /^#[0-9a-f]{6}$/i.test(parsed.color || "") ? String(parsed.color) : PROJECT_COLORS[0],
@@ -155,7 +145,10 @@ export function getProject(id: string, ownerId?: string): Project | null {
 export function createProject(input: {
  name?: string;
  mode?: "chat" | "agents";
- defaultModeId?: string;
+ defaultModeId?: string; // Ignored legacy request field.
+ defaultModelEnabled?: boolean;
+  defaultModelId?: string;
+  defaultModelParams?: Array<{ id: string; value: string }>;
  icon?: string;
  color?: string;
  instructions?: string;
@@ -171,7 +164,7 @@ export function createProject(input: {
   name: clip(input.name, 80) || "New project",
   mode: input.mode === "agents" ? "agents" : "chat",
   allowAgentManagement: false,
-  ...(input.mode === "agents" ? { defaultModeId: validateProjectModeId(input.defaultModeId, input.ownerId) } : {}),
+  ...(input.mode === "agents" ? validateProjectModelSettings(input, input.ownerId) : {}),
   hideChatsFromAll: false,
   icon: isProjectIcon(input.icon) ? String(input.icon) : PROJECT_ICONS[count % PROJECT_ICONS.length],
   color: /^#[0-9a-f]{6}$/i.test(input.color || "") ? String(input.color) : PROJECT_COLORS[count % PROJECT_COLORS.length],
@@ -190,17 +183,21 @@ export function createProject(input: {
 
 export function updateProject(
  id: string,
- patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement" | "hideChatsFromAll" | "defaultModeId">>,
+ patch: Partial<Pick<Project, "name" | "icon" | "color" | "instructions" | "memoryMode" | "disabledSkillIds" | "allowAgentManagement" | "hideChatsFromAll" | "defaultModelEnabled" | "defaultModelId" | "defaultModelParams">>,
  ownerId?: string,
 ): Project | null {
  return transaction(() => {
   const current = getProject(id, ownerId);
   if (!current) return null;
-  if (patch.defaultModeId !== undefined && current.mode !== "agents") {
-   const error = new Error("Default agents are only available for agent-oriented projects.");
-   error.name = "InvalidProjectAgentMode";
+  const modelChanged = ["defaultModelEnabled", "defaultModelId", "defaultModelParams"].some(key => Object.prototype.hasOwnProperty.call(patch, key));
+  if (modelChanged && current.mode !== "agents") {
+   const error = new Error("Default models are only available for agent-oriented projects.");
+   error.name = "InvalidProjectModel";
    throw error;
   }
+  const modelSettings = !modelChanged ? {} : patch.defaultModelEnabled === false && patch.defaultModelId === undefined && patch.defaultModelParams === undefined
+   ? { defaultModelEnabled: false }
+   : validateProjectModelSettings({ ...current, ...patch, ...(patch.defaultModelId !== undefined && patch.defaultModelId !== current.defaultModelId && patch.defaultModelParams === undefined ? { defaultModelParams: undefined } : {}) }, ownerId);
   const timestamp = iso();
   const next: Project = {
    ...current,
@@ -210,15 +207,17 @@ export function updateProject(
    ...(patch.instructions !== undefined ? { instructions: clip(patch.instructions, 20_000) } : {}),
    ...(patch.memoryMode === "project_only" || patch.memoryMode === "default" ? { memoryMode: patch.memoryMode } : {}),
    ...(patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
-   ...(patch.defaultModeId !== undefined ? { defaultModeId: validateProjectModeId(patch.defaultModeId, ownerId) } : {}),
+   ...modelSettings,
    ...(typeof patch.allowAgentManagement === "boolean" ? { allowAgentManagement: current.mode === "agents" && patch.allowAgentManagement } : {}),
    ...(typeof patch.hideChatsFromAll === "boolean" ? { hideChatsFromAll: patch.hideChatsFromAll } : {}),
    updatedAt: timestamp,
   };
   writeProject(next);
-  if (patch.defaultModeId !== undefined) {
+  const selection = projectDefaultModel(next);
+  if (modelChanged && selection) {
    for (const chat of listChatsForUser(ownerId).filter(chat => chat.projectId === id)) {
-    updateChat(chat.id, { sessionState: { modeId: next.defaultModeId }, touchUpdatedAt: false }, ownerId);
+    updateChat(chat.id, { ...selection, touchUpdatedAt: false }, ownerId);
+    requestJobModelSwitch(chat.id, ownerId, selection.modelId, selection.modelParams);
    }
   }
   return next;

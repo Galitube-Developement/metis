@@ -91,7 +91,7 @@ export function QuestionForm({
                 }} className="h-11 w-full appearance-none rounded-lg border border-input bg-background pl-3 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
                   <option value="">{question.placeholder || "Choose an option…"}</option>
                   {options.map((option, oi) => <option key={oi} value={String(optionValue(option))}>{option.label}</option>)}
-                  {question.allowCustom ? <option value="__metis_custom__">Custom…</option> : null}
+                  {isChoice ? <option value="__metis_custom__">Custom…</option> : null}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-3.5 size-4 text-muted-foreground" aria-hidden="true" />
               </div> : null}
@@ -111,8 +111,8 @@ export function QuestionForm({
                     <span className="min-w-0 text-sm leading-5"><span>{option.label}</span>{option.description ? <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{option.description}</span> : null}</span>
                   </label>;
                 })}
-                {question.allowCustom ? <label className="flex min-h-11 cursor-pointer items-center gap-3 px-2 py-2">
-                  <input type="radio" name={`${id}-custom`} checked={useCustom} disabled={disabled} onChange={() => { const active = [...customActive]; active[index] = true; onCustomActiveChange(active); }} className="size-4 accent-primary" />
+                {isChoice ? <label className="flex min-h-11 cursor-pointer items-center gap-3 px-2 py-2">
+                  <input type="radio" name={type === "radio" ? id : `${id}-custom`} checked={useCustom} disabled={disabled} onChange={() => { const active = [...customActive]; active[index] = true; onCustomActiveChange(active); }} className="size-4 accent-primary" />
                   <span className="text-sm">Custom…</span>
                 </label> : null}
               </div> : null}
@@ -136,7 +136,7 @@ export function QuestionForm({
                 <Input {...common} type={type === "text" ? "text" : type} value={value} onChange={event => update(index, event.target.value)} placeholder={question.placeholder} min={question.min} max={question.max} step={question.step ?? (type === "number" ? "any" : undefined)} maxLength={question.maxLength ?? 4000} className="min-h-11 text-sm" />
                 {question.unit ? <span className="shrink-0 text-xs text-muted-foreground">{question.unit}</span> : null}
               </div> : null}
-              {isChoice && useCustom && question.allowCustom ? <Input aria-label={`Custom answer: ${question.question}`} disabled={disabled} value={type === "multiselect" ? String(selections(custom[index] ?? "")[0] ?? "") : custom[index] ?? ""} placeholder="Type your answer…" onChange={event => {
+              {isChoice && useCustom ? <Input aria-label={`Custom answer: ${question.question}`} disabled={disabled} maxLength={question.maxLength ?? 4000} aria-invalid={Boolean(message)} aria-describedby={common["aria-describedby"]} value={type === "multiselect" ? String(selections(custom[index] ?? "")[0] ?? "") : custom[index] ?? ""} placeholder="Type your answer…" onChange={event => {
                 const next = [...custom]; next[index] = type === "multiselect" ? JSON.stringify([event.target.value]) : event.target.value; onCustomChange(next);
               }} className="min-h-11" /> : null}
               {message ? <p id={`${id}-error`} role="alert" className="text-xs text-destructive">{message}</p> : null}

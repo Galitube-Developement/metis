@@ -97,7 +97,8 @@ test("project hub uses clickable tiles that open bulky sections in a modal and k
 });
 
 test("project hub notes list shows a notes icon in the note color", () => {
-  assert.match(homeSource, /notes: Array<\{ id: string; title: string; color\?: string \}>/);
+  const homeClientSource = readFileSync(new URL("../lib/project-home-client.ts", import.meta.url), "utf8");
+  assert.match(homeClientSource, /notes: Array<\{ id: string; title: string; color\?: string \}>/);
   assert.match(homeSource, /<StickyNote className="size-3\.5 shrink-0" style=\{\{ color: note\.color \|\| "#fef08a" \}\} \/>/);
 });
 

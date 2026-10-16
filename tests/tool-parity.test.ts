@@ -279,7 +279,7 @@ test("tool transports wait through the advertised delegation deadline with a res
  assert.equal(bridgeToolTimeoutMs({}, schema), 300_000);
  assert.equal(bridgeToolTimeoutMs({}, {properties:{timeoutMs:{default:1_800_000,maximum:21_600_000}}}),1_860_000);
  assert.equal(bridgeToolTimeoutMs({timeoutMs:43_200_000},{properties:{timeoutMs:{maximum:21_600_000}}}),21_660_000);
- assert.deepEqual(selectBridgeTools(["customnotify"]),["customnotify"]);
+ assert.deepEqual(selectBridgeTools(["notify", "customnotify"]),["notify"]);
  assert.equal(bridgeToolTimeoutMs({ timeoutMs: 3_600_000, wait: false }, schema), 300_000);
  assert.equal(bridgeToolTimeoutMs({}, {}), 300_000);
  assert.equal(bridgeToolTimeoutMs({ timeoutMs: NaN }, schema), 300_000);

@@ -1,6 +1,5 @@
 "use client";
 
-import { ProjectAgentModeLock } from "@/components/project-agent-mode-select";
 import { Check, ChevronDown, MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -32,7 +31,6 @@ function labelFor(param: ModelParameter, value: string) {
 type MobileComposerControls = {
   modes: Array<{ id: string; name: string; description?: string }>;
   selectedModeId?: string;
-  modeLockReason?: string;
   onModeChange: (modeId: string) => void;
   runtimeMode: string;
   runtimeOptions: Array<{ value: string; label: string }>;
@@ -45,6 +43,8 @@ type Props = {
   onModelParamsChange: (params: ModelParamSelection[]) => void;
   mobileComposerControls?: MobileComposerControls;
   className?: string;
+  disabled?: boolean;
+  modelLockReason?: string;
 };
 
 export function ModelOptionsMenu({
@@ -53,6 +53,8 @@ export function ModelOptionsMenu({
   onModelParamsChange,
   mobileComposerControls,
   className,
+  disabled = false,
+  modelLockReason,
 }: Props) {
   const parameters = modelParametersForModel(model);
   const defaults = defaultParamsForModel({ ...model, parameters });
@@ -69,6 +71,7 @@ export function ModelOptionsMenu({
   }
 
   function setParam(id: string, value: string) {
+    if (modelLockReason) return;
     const allowed = new Set(parameters.map((p) => p.id));
     const next = [
       ...modelParams.filter((p) => p.id !== id && allowed.has(p.id)),
@@ -84,6 +87,7 @@ export function ModelOptionsMenu({
           type="button"
           variant="ghost"
           size="icon-sm"
+          disabled={disabled}
           aria-label={mobileComposerControls ? "Chat controls" : "Model options"}
           className={cn(
             "size-7 rounded-full text-muted-foreground opacity-100",
@@ -104,14 +108,7 @@ export function ModelOptionsMenu({
           <div className="space-y-1 md:hidden">
             {mobileComposerControls.modes.length ? (
               <div className="rounded-xl bg-muted/15 p-1">
-                {mobileComposerControls.modeLockReason ? <ProjectAgentModeLock name={selectedMobileMode?.name || "Agent"} message={mobileComposerControls.modeLockReason} className="block">
-                  <button type="button" disabled aria-label={`Agent mode: ${selectedMobileMode?.name || "Agent"}`}
-                    className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-left opacity-50">
-                    <span className="text-xs text-muted-foreground">Mode</span>
-                    <span className="ml-auto min-w-0 truncate text-xs font-medium">{selectedMobileMode?.name}</span>
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  </button>
-                </ProjectAgentModeLock> : <button
+                {<button
                   type="button"
                   aria-expanded={mobileModeOpen}
                   aria-label={`Agent mode: ${selectedMobileMode?.name || "Agent"}`}
@@ -136,7 +133,7 @@ export function ModelOptionsMenu({
                   />
                 </button>}
 
-                {mobileModeOpen && !mobileComposerControls.modeLockReason ? (
+                {mobileModeOpen ? (
                   <div className="mt-1 overflow-hidden rounded-lg border border-border/50 bg-background/45 p-1">
                     {mobileComposerControls.modes.map((mode) => {
                       const active = mode.id === (selectedMobileMode?.id || mobileComposerControls.selectedModeId);
@@ -244,6 +241,7 @@ export function ModelOptionsMenu({
                 variant="ghost"
                 size="sm"
                 className="h-7 shrink-0 rounded-md px-2 text-[11px] font-normal text-muted-foreground hover:bg-muted/35"
+                disabled={Boolean(modelLockReason)}
                 onClick={() => onModelParamsChange(defaults)}
               >
                 Reset
@@ -252,7 +250,8 @@ export function ModelOptionsMenu({
           </div>
         ) : null}
 
-        <div className="space-y-2.5 md:space-y-4">
+        {modelLockReason ? <p className="text-xs text-muted-foreground">{modelLockReason}</p> : null}
+        <fieldset disabled={Boolean(modelLockReason)} className="min-w-0 space-y-2.5 disabled:opacity-50 md:space-y-4">
           {parameters.length === 0 ? (
             <p className="px-1 text-xs text-muted-foreground md:px-0">
               This model has no extra options.
@@ -317,7 +316,7 @@ export function ModelOptionsMenu({
               </div>
             );
           })}
-        </div>
+        </fieldset>
 
         {defaults.length > 0 ? (
           <Button
@@ -325,7 +324,8 @@ export function ModelOptionsMenu({
             variant="ghost"
             size="sm"
             className="hidden h-7 px-0 text-xs text-muted-foreground md:inline-flex"
-            onClick={() => onModelParamsChange(defaults)}
+            disabled={Boolean(modelLockReason)}
+                onClick={() => onModelParamsChange(defaults)}
           >
             Reset defaults
           </Button>

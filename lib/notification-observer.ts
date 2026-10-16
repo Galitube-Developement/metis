@@ -1,6 +1,7 @@
-import { notificationDatabase, createNotification, getNotificationPrefs, type NotificationRecord } from "@/lib/notification-store";
+import { notificationDatabase, createNotification, getNotificationPrefs, isAgentFinishedNotification, type NotificationRecord } from "@/lib/notification-store";
 import { sendRemoteNotification } from "@/lib/notification-remote";
 import { transaction } from "@/lib/sqlite";
+import { remoteNotificationAllowed } from "@/lib/notification-preferences";
 
 // A durable cursor and source keys make replay/restart idempotent across processes.
 export function observeNotificationEvents() {
@@ -49,11 +50,11 @@ export function observeNotificationEvents() {
 }
 export async function deliverPendingNotifications(send = sendRemoteNotification) {
   const db = notificationDatabase();
-  const rows = db.prepare(`SELECT n.id,n.sequence,n.owner_id AS ownerId,n.title,n.body,n.chat_id AS chatId,n.created_at AS createdAt,d.client_id AS clientId
+  const rows = db.prepare(`SELECT n.id,n.sequence,n.owner_id AS ownerId,n.title,n.body,n.chat_id AS chatId,n.created_at AS createdAt,d.client_id AS clientId,n.source_key AS sourceKey
     FROM notification_deliveries d JOIN notification_records n ON n.id=d.notification_id
-    WHERE d.acknowledged_at IS NULL AND d.retry_at<=? ORDER BY n.sequence LIMIT 32`).all(Date.now()) as Array<NotificationRecord & {ownerId:string;clientId:string}>;
+    WHERE d.acknowledged_at IS NULL AND d.retry_at<=? ORDER BY n.sequence LIMIT 32`).all(Date.now()) as Array<NotificationRecord & {ownerId:string;clientId:string;sourceKey:string|null}>;
   await Promise.all(rows.map(async row => {
-    if (!getNotificationPrefs(row.ownerId).remoteClientIds.includes(row.clientId) || Date.now() - Date.parse(row.createdAt) > 86400000) {
+    if (!remoteNotificationAllowed(getNotificationPrefs(row.ownerId),isAgentFinishedNotification(row.ownerId,row.sourceKey),row.clientId) || Date.now() - Date.parse(row.createdAt) > 86400000) {
       db.prepare("DELETE FROM notification_deliveries WHERE notification_id=? AND client_id=?").run(row.id,row.clientId);
       return;
     }
@@ -61,7 +62,7 @@ export async function deliverPendingNotifications(send = sendRemoteNotification)
     const claimed = db.prepare("UPDATE notification_deliveries SET retry_at=?,attempts=attempts+1 WHERE notification_id=? AND client_id=? AND retry_at<=? AND acknowledged_at IS NULL")
       .run(Date.now()+30000,row.id,row.clientId,Date.now());
     if (!claimed.changes) return;
-    const { ownerId, clientId, ...notification } = row;
+    const { ownerId, clientId, sourceKey: _sourceKey, ...notification } = row;
     const acknowledged = await send(clientId, ownerId, notification).catch(() => false);
     if (acknowledged) db.prepare("UPDATE notification_deliveries SET acknowledged_at=? WHERE notification_id=? AND client_id=?")
       .run(new Date().toISOString(),row.id,row.clientId);

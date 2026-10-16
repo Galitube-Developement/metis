@@ -1,7 +1,10 @@
 import { compactChatPageMessages } from "@/lib/chat-page-payload";
 import { withChatProgramEvents } from "@/lib/chat-program-events-server";
 import { archiveProjectAgent, getProjectAgentForChat } from "@/lib/project-team";
+import { materializeQueuedUploads, type QueuedUploadMessage } from "@/lib/queued-uploads";
+import { getChat } from "@/lib/db-store";
 import { getProject } from "@/lib/projects";
+import { projectModelOverride } from "@/lib/project-model-server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import {
   deleteChat,
@@ -57,7 +60,7 @@ export async function PATCH(req: Request, { params }: Params) {
     agentId?: string | null;
     modelId?: string | null;
     modelParams?: Array<{ id: string; value: string }> | null;
-    queuedMessages?: Array<{ id: string; text: string }> | null;
+    queuedMessages?: QueuedUploadMessage[] | null;
     pinned?: boolean;
     archived?: boolean;
     canvas?: string | null;
@@ -67,6 +70,7 @@ export async function PATCH(req: Request, { params }: Params) {
     pendingQuestion?: PendingChatQuestion | null;
     runtimeMode?: string | null;
     badge?: ChatBadge | null;
+    readRevision?: number;
     touchUpdatedAt?: boolean;
     projectId?: string | null;
   };
@@ -79,7 +83,7 @@ export async function PATCH(req: Request, { params }: Params) {
       agentId?: string | null;
       modelId?: string | null;
       modelParams?: Array<{ id: string; value: string }> | null;
-      queuedMessages?: Array<{ id: string; text: string }> | null;
+      queuedMessages?: QueuedUploadMessage[] | null;
       pinned?: boolean;
       archived?: boolean;
       canvas?: string | null;
@@ -89,6 +93,7 @@ export async function PATCH(req: Request, { params }: Params) {
       pendingQuestion?: PendingChatQuestion | null;
       runtimeMode?: string | null;
       badge?: ChatBadge | null;
+    readRevision?: number;
       touchUpdatedAt?: boolean;
       projectId?: string | null;
     };
@@ -96,9 +101,17 @@ export async function PATCH(req: Request, { params }: Params) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  if (!getChat(id, ownerId)) return Response.json({ error: "Not found" }, { status: 404 });
+  try {
+    body.queuedMessages = materializeQueuedUploads(id, body.queuedMessages, ownerId);
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Could not save queued attachments" }, { status: 400 });
+  }
+
   const teamAgent = getProjectAgentForChat(id, ownerId);
   if (teamAgent && body.projectId !== undefined && body.projectId !== teamAgent.projectId) return Response.json({ error: "Agent chats remain in their project." }, { status: 400 });
   if (!teamAgent && body.projectId && getProject(body.projectId, ownerId)?.mode === "agents") return Response.json({ error: "Create an agent to join an agent-oriented project." }, { status: 400 });
+  if (body.readRevision !== undefined && (!Number.isSafeInteger(body.readRevision) || body.readRevision < 0)) return Response.json({ error: "Invalid read revision" }, { status: 400 });
   const requestedModelId =
     typeof body.modelId === "string" ? body.modelId.trim() : "";
   if (requestedModelId && !isModelAllowed(ownerId, requestedModelId)) {
@@ -108,6 +121,8 @@ export async function PATCH(req: Request, { params }: Params) {
     );
   }
 
+  const projectModel = projectModelOverride(teamAgent?.projectId, ownerId);
+  if (projectModel) { body.modelId = projectModel.modelId; body.modelParams = projectModel.modelParams; }
   const sessionState = body.sessionState ? { ...body.sessionState } : body.sessionState;
   // Only the internal subagent route may widen a child's goal reference scope.
   if (sessionState) delete sessionState.goalOriginChatId;
@@ -142,7 +157,7 @@ export async function PATCH(req: Request, { params }: Params) {
     ? requestJobModelSwitch(
         id,
         ownerId,
-        requestedModelId,
+        projectModel?.modelId || requestedModelId,
         body.modelParams || undefined,
       )
     : null;

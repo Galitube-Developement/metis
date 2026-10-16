@@ -23,6 +23,10 @@ export const getUploadSnapshot = () => snapshot;
 export const getServerUploadSnapshot = () => empty;
 // Completed tasks remain usable after their tray row has been dismissed.
 export const getUploadStatus = (id: string) => tasks.get(id)?.state.status;
+export const getCompletedUploadResult = (id: string) => {
+  const task = tasks.get(id);
+  return task?.state.status === "completed" ? task.result : undefined;
+};
 async function json(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
   const body = await response.json();

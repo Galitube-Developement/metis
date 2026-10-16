@@ -1,6 +1,10 @@
 "use client";
 
+import { WorkspaceSearchResults } from "@/components/workspace-search-results";
+import { workspaceSearchResult, workspaceSearchCount } from "@/lib/workspace-search-result";
 import { RunStatus } from "@/components/run-status";
+import { ArrivalFade } from "@/components/arrival-fade";
+import { toolMotionKey } from "@/lib/live-message-motion";
 import { ToolInputStatus, ToolPreparationDetails } from "@/components/tool-input-status";
 import { latestPreparingTool } from "@/lib/tool-preparation";
 import { AnimatedNumber } from "@/components/animated-number";
@@ -234,7 +238,7 @@ function noteInfo(input?: string, result?: string, detail?: string) {
 
 function toolReactKey(tool: ToolCallData, index: number): string {
   const id = tool.id?.trim();
-  if (id) return `tool-${tool.kind || "other"}-${id}`;
+  if (id) return `tool-${id}`;
   const fingerprint = [tool.kind, tool.name, tool.path, tool.input, tool.result]
     .filter(Boolean)
     .join(":")
@@ -377,7 +381,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   const isCommand = resolvedKind === "shell";
   const expanded = userOpen;
   useEffect(() => {
-    if (!expanded || !payloadUrl || loadedOutput?.url === payloadUrl) return;
+    if ((!expanded && resolvedKind !== "memory") || !payloadUrl || loadedOutput?.url === payloadUrl) return;
     const controller = new AbortController();
     setOutputError("");
     void loadToolPayload(payloadUrl, controller.signal).then(full => {
@@ -386,13 +390,14 @@ export const ToolCallChip = memo(function ToolCallChip({
       if (!controller.signal.aborted) setOutputError("Could not load full tool details");
     });
     return () => controller.abort();
-  }, [expanded, payloadUrl, loadedOutput, outputRetry]);
+  }, [expanded, resolvedKind, payloadUrl, loadedOutput, outputRetry]);
   const outputStatus = payloadUrl && loadedOutput?.url !== payloadUrl ? (
     <p role="status" className="text-muted-foreground">
       {outputError ? <button type="button" onClick={() => setOutputRetry(value => value + 1)}>{outputError} · Retry</button> : "Loading tool details…"}
     </p>
   ) : null;
   const resolvedName = display.name || name;
+  const searchResult = useMemo(() => /(?:^|__|[.:])(?:grep_search|file_search)$/.test(resolvedName) ? workspaceSearchResult(result) : undefined, [resolvedName, result]);
   const deleteTool = /(^|[._:/-])(delete|remove|unlink)(?=[._:/-]|$)/i.test(resolvedName);
   const headline = useMemo(() => toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames }), [resolvedName, resolvedKind, input, detail, path, hostnames]);
  const sourceLabel = source === "mcp" && resolvedKind !== "mcp" ? "Metis" : source === "native" ? "CLI" : null;
@@ -437,13 +442,13 @@ export const ToolCallChip = memo(function ToolCallChip({
     );
   }
   if (resolvedKind === "memory") {
-    const memoryCard = memoryCardFromPayload(name, input || detail, result || detail);
+    const memoryCard = memoryCardFromPayload(name, input || detail, result, running ? "running" : status);
     return (
       <div className="my-2 flex w-full items-start gap-2.5 rounded-xl border border-violet-400/15 bg-violet-400/[0.035] px-3 py-2.5 text-xs">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-400/10 text-violet-300"><Brain className="size-3.5" /></span>
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-300/75">Memory</p>
-          <p className="mt-0.5 font-medium text-foreground/85">{running ? "Updating memory…" : status === "failed" || status === "error" ? "Memory failed" : memoryCard.title}</p>
+          <p className="font-medium text-foreground/85">{memoryCard.title}</p>
+          {outputStatus}
           <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-foreground/75">{memoryCard.body}</p>
         </div>
       </div>
@@ -562,6 +567,7 @@ export const ToolCallChip = memo(function ToolCallChip({
           ) : null}
           <Icon className="size-3 shrink-0 opacity-70" />
           <span className={cn("truncate", deleteTool && "text-rose-400/80")}>{headline.title}{sourceLabel ? <span className="ml-1 text-[10px] uppercase tracking-wide opacity-50">{sourceLabel}</span> : null}</span>
+          {searchResult ? <span className="shrink-0 text-[10px] text-muted-foreground">{workspaceSearchCount(searchResult)}</span> : null}
           {previewText ? (
             <span className="hidden truncate text-muted-foreground/45 sm:inline">· {previewText}</span>
           ) : null}
@@ -654,7 +660,7 @@ export const ToolCallChip = memo(function ToolCallChip({
           {result || detail ? (
             <section className="min-w-0">
               <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{isCommand ? "Output" : "Response"}</p>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>
+              {searchResult ? <WorkspaceSearchResults result={searchResult}/> : <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/85">{formatToolOutput(result || detail)}</pre>}
             </section>
           ) : null}
           {outputStatus}
@@ -730,6 +736,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   live = false,
   hostnames,
   workspaces,
+  messageId,
+  toolBirths,
 }: {
   tools: ToolCallData[];
   thinking?: ActivityThinking[];
@@ -743,10 +751,13 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   includePlans?: boolean;
   autoExpand?: boolean;
   live?: boolean;
+  messageId?: string;
+  toolBirths?: ReadonlyMap<string, number>;
   hostnames?: Record<string, string>;
   workspaces?: Array<{ id: string; type?: string; name?: string; content?: string }>;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const toolBornAt = (tool: ToolCallData) => messageId ? toolBirths?.get(toolMotionKey(messageId, tool.id)) : undefined;
   const { planTools, noteTools, canvasTools, memoryTools, todoTools, automationTools, regularEntries } = useMemo(() => {
   const isTodoTool = (tool: ToolCallData) =>
     tool.kind === "todo" ||
@@ -822,22 +833,22 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  return (
  <>
  {planTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {noteTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {canvasTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {memoryTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {todoTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {automationTools.map((tool) => (
- <div key={tool.id}>{renderTool(tool)}</div>
+ <ArrivalFade key={tool.id} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  </>
  );
@@ -846,32 +857,25 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  return (
  <div className="w-full min-w-0" style={{ overflowAnchor: "none" }}>
  {planTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {noteTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {canvasTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {memoryTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {automationTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
  {todoTools.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
  ))}
- {regularEntries.length === 1 && !combinedThinking ? (
- <div className="flex flex-col">
- {regularEntries.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool)}</div>
- ))}
- </div>
- ) : (
- <div className="my-0.5 w-full">
- <button
+ <div className={regularEntries.length === 1 && !combinedThinking ? "flex flex-col" : "my-0.5 w-full"}>
+ {regularEntries.length > 1 || combinedThinking ? <button
  type="button"
  className={activityRowClass}
  aria-expanded={groupOpen}
@@ -883,11 +887,12 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
  )}
  {preparingTool ? <ToolPreparationDetails name={preparingTool.name} kind={preparingTool.kind} source={preparingTool.source} characters={!groupOpen ? preparingTool.inputChars : undefined}/> : <span className="truncate">{groupTitle}</span>}
- </button>
- {groupOpen ? (
- <div className="flex flex-col gap-1 pl-4">
+ </button> : null}
+ <div key="entries" hidden={!(regularEntries.length === 1 && !combinedThinking) && !groupOpen}
+   className={cn("flex flex-col", (regularEntries.length > 1 || combinedThinking) && "gap-1 pl-4")}>
  {combinedThinking?.text || combinedThinking?.done === false ? (
  <ThinkingBlock
+ key="thinking"
  text={combinedThinking.text || "…"}
  done={combinedThinking.done !== false}
  durationMs={combinedThinking.durationMs}
@@ -895,12 +900,10 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  />
  ) : null}
  {regularEntries.map((tool, index) => (
- <div key={toolReactKey(tool, index)}>{renderTool(tool, true)}</div>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool, regularEntries.length > 1 || Boolean(combinedThinking))}</ArrivalFade>
  ))}
  </div>
- ) : null}
  </div>
- )}
  </div>
  );
 

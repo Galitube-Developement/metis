@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+test("workspace exports authenticate, isolate owners and export the submitted current draft", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "metis-export-api-"));
+  Object.assign(process.env, { AI_CHAT_ROOT: root, CHAT_DATA_DIR: root, CHAT_DB_PATH: path.join(root, "chat.sqlite"), AGENT_CWD: root, METIS_AI_BOOTSTRAP_PASSWORD: "", CHAT_LEGACY_HEADER_AUTH: "false" });
+  const { createUser, authenticateUser } = await import("../lib/auth");
+  const { getDatabase } = await import("../lib/sqlite");
+  const { createChat, saveChat } = await import("../lib/db-store");
+  const { POST } = await import("../app/api/workspace-export/route");
+  const { GET } = await import("../app/api/remote/download/route");
+  const a = createUser("export-a", "test-password");
+  const b = createUser("export-b", "test-password");
+  const tokenA = authenticateUser("export-a", "test-password")!.token;
+  const tokenB = authenticateUser("export-b", "test-password")!.token;
+  const chat = createChat("Export test", undefined, a.id);
+  const time = new Date().toISOString();
+  chat.workspaces = [{ id: "plan-1", type: "plan", name: "Saved", content: "Old content", version: 1, createdAt: time, updatedAt: time }];
+  saveChat(chat);
+  const draft = { chatId: chat.id, workspaceId: "plan-1", name: "Größe", content: "# Aktueller Entwurf\n\n**Neu**", format: "md" };
+  const request = (body: unknown, token?: string) => new Request("http://localhost/api/workspace-export", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { cookie: "ai_chat_auth=" + token } : {}) }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await POST(request(draft))).status, 401);
+    assert.equal((await POST(request(draft, tokenB))).status, 404);
+    assert.equal((await POST(request({ ...draft, workspaceId: "missing" }, tokenA))).status, 404);
+    for (const body of [{ ...draft, format: "html" }, { ...draft, content: "x".repeat(100_001) }, { ...draft, name: "x".repeat(201) }, null]) assert.equal((await POST(request(body, tokenA))).status, 400);
+    const md = await POST(request(draft, tokenA));
+    assert.equal(md.status, 200);
+    assert.equal(await md.text(), draft.content);
+    assert.match(md.headers.get("Content-Disposition")!, /Gr%C3%B6%C3%9Fe.md/);
+    assert.equal(md.headers.get("Cache-Control"), "private, no-store");
+    const txt = await POST(request({ ...draft, format: "txt" }, tokenA));
+    assert.equal(await txt.text(), "Aktueller Entwurf\n\nNeu");
+    const pdf = await POST(request({ ...draft, format: "pdf" }, tokenA));
+    assert.equal(pdf.status, 200);
+    assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString(), "%PDF-");
+    assert.equal((await GET(new Request("http://localhost/api/remote/download?path=x"))).status, 401);
+    assert.equal((await GET(new Request("http://localhost/api/remote/download?path=x", { headers: { cookie: "ai_chat_auth=" + tokenB } }))).status, 403);
+    assert.equal((await import("../lib/db-store")).getChat(chat.id, a.id)!.workspaces![0].content, "Old content");
+  } finally {
+    getDatabase().close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

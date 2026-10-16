@@ -9,6 +9,8 @@ import { getUserAgentCwd } from "@/lib/mcp";
 import { isInsideWorkspace } from "@/lib/user-isolation";
 import { isHostAdmin, requireUserExecutionIdentity } from "@/lib/user-access";
 import { stripReadFileLinePrefixes } from "@/lib/remote-file-content";
+import { fileNameSearchPattern } from "@/lib/file-editor-search";
+import { runFileIO } from "@/lib/file-sync-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,9 +113,14 @@ export async function POST(req: Request) {
 
   let body: {
     action?: string;
+    query?: string;
+    searchMode?: "files" | "content";
+    regex?: boolean;
+    caseSensitive?: boolean;
     path?: string;
     cwd?: string;
     content?: string;
+    revision?: string;
     preview?: boolean;
     line?: number;
     newPath?: string;
@@ -247,9 +254,40 @@ export async function POST(req: Request) {
       }
       return Response.json({ ok: true });
     }
+    if (body.action === "search") {
+      if (typeof body.query !== "string" || !body.query.trim() || body.query.length > 500 ||
+        !["files", "content"].includes(body.searchMode || "") ||
+        (body.regex !== undefined && typeof body.regex !== "boolean") ||
+        (body.caseSensitive !== undefined && typeof body.caseSensitive !== "boolean")) {
+        return Response.json({ error: "Enter a search query of up to 500 characters and choose Files or Contents." }, { status: 400 });
+      }
+      if (body.searchMode === "content" && body.regex) {
+        try { new RegExp(body.query); }
+        catch { return Response.json({ error: "Invalid regular expression." }, { status: 400 }); }
+      }
+      const files = body.searchMode === "files";
+      const output = await callRemoteGatewayTool(files ? "file_search" : "grep_search", {
+        path: targetPath, pattern: files ? fileNameSearchPattern(body.query.trim()) : body.query,
+        include_hidden: true, limit: 100,
+        ...(!files ? { regex: body.regex === true, case_sensitive: body.caseSensitive === true } : {}),
+      }, isolation);
+      return Response.json({ search: JSON.parse(output) });
+    }
     if (body.action === "list") {
       const output = await callRemoteGatewayTool("list_directory", { target: "server", path: targetPath }, isolation);
       return Response.json({ path: targetPath, output });
+    }
+    if (body.action === "snapshot" || body.action === "save") {
+      if ((body.revision !== undefined && (typeof body.revision !== "string" || !/^[a-f0-9]{64}$/.test(body.revision))) ||
+          (body.action === "save" && (typeof body.content !== "string" || !body.revision))) {
+        return Response.json({ error: "A valid file revision and content are required." }, { status: 400 });
+      }
+      const result = await runFileIO({ action: body.action, path: targetPath, root: defaultCwd, revision: body.revision, content: body.content }, isolation) as {
+        status: number; error?: string; revision?: string; content?: string; unchanged?: boolean;
+      };
+      if (![200,400,403,404,409,413,415,502].includes(result.status)) throw new Error("Invalid file server response.");
+      const { status, ...payload } = result;
+      return Response.json({ path: targetPath, ...payload }, { status });
     }
     if (body.action === "read") {
       const output = await callRemoteGatewayTool("read_file", {
@@ -260,6 +298,15 @@ export async function POST(req: Request) {
       }, isolation);
       const content = stripReadFileLinePrefixes(output);
       return Response.json({ path: targetPath, content: body.preview === true ? content.slice(0, 8000) : content });
+    }
+    if (body.action === "create") {
+      const script = "const fs=require('node:fs');const p=process.argv[1];try{fs.closeSync(fs.openSync(p,'wx'));console.log('METIS_FILE_CREATED')}catch(e){console.error(e.code==='EEXIST'?'A file or folder with this name already exists.':e.message);process.exitCode=1}";
+      const output = await callRemoteGatewayTool("execute_command", {
+        target: "server", command: `${shellQuote(process.execPath)} -e ${shellQuote(script)} ${shellQuote(targetPath)}`,
+        cwd, timeout: 60, sudo: false,
+      }, isolation);
+      if (!output.includes("METIS_FILE_CREATED")) throw new Error(output.trim() || "File could not be created.");
+      return Response.json({ path: targetPath });
     }
     if (body.action === "write") {
       if (typeof body.content !== "string") {
@@ -288,11 +335,12 @@ export async function POST(req: Request) {
     if (body.action === "mkdir") {
       const output = await callRemoteGatewayTool("execute_command", {
         target: "server",
-        command: `mkdir -p -- ${shellQuote(targetPath)}`,
+        command: `mkdir -- ${shellQuote(targetPath)} && printf METIS_FOLDER_CREATED`,
         cwd,
         timeout: 60,
         sudo: false,
       }, isolation);
+      if (!output.includes("METIS_FOLDER_CREATED")) throw new Error(output.trim() || "Folder could not be created.");
       return Response.json({ path: targetPath, output });
     }
     if (body.action === "rename") {
@@ -302,11 +350,12 @@ export async function POST(req: Request) {
       }
       const output = await callRemoteGatewayTool("execute_command", {
         target: "server",
-        command: `mv -- ${shellQuote(targetPath)} ${shellQuote(newPath)}`,
+        command: `mv -T -n -- ${shellQuote(targetPath)} ${shellQuote(newPath)} && test ! -e ${shellQuote(targetPath)} && test ! -L ${shellQuote(targetPath)} && printf METIS_ENTRY_RENAMED`,
         cwd,
         timeout: 60,
         sudo: false,
       }, isolation);
+      if (!output.includes("METIS_ENTRY_RENAMED")) throw new Error("Could not rename: the destination may already exist, or the entry is not writable.");
       return Response.json({ path: targetPath, newPath, output });
     }
     if (body.action === "delete") {

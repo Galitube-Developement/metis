@@ -295,7 +295,7 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "search_tools",
   "call_mcp_tool",
   "list_mcp_servers",
-  "customnotify",
+  "notify",
   "ask_user",
   "request_mode_change",
   "delegate_subagent",
