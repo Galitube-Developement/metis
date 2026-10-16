@@ -30,6 +30,9 @@ export function questionKey(question: AgentQuestion, index: number) { return que
 export function questionType(question: Pick<QuestionInput, "type" | "multiple" | "options">): QuestionType {
   return question.type || (question.multiple ? "multiselect" : question.options?.length ? "radio" : "textarea");
 }
+export function questionAllowsCustom(question: Pick<QuestionInput, "type" | "multiple" | "options">) {
+  return ["select", "radio", "multiselect"].includes(questionType(question));
+}
 export function optionValue(option: QuestionOption): QuestionScalar { return option.value ?? option.label; }
 export function encodeQuestionValue(value: QuestionValue | undefined): string {
   return value === null || value === undefined ? "" : Array.isArray(value) ? JSON.stringify(value) : String(value);
@@ -58,7 +61,7 @@ export function normalizeAskUserInput(input: unknown): AskUserInput {
     if (item.min !== undefined && item.max !== undefined && item.min > item.max) throw new QuestionValidationError(`Invalid range for ${key}.`);
     if (type === "slider" && (item.min === undefined || item.max === undefined)) throw new QuestionValidationError(`Slider ${key} needs min and max.`);
     const normalized = { ...item, key, type, question: item.question.trim(), options,
-      required: item.required ?? true, allowCustom: item.allowCustom ?? !item.type };
+      required: item.required ?? true, allowCustom: questionAllowsCustom(item) || (item.allowCustom ?? !item.type) };
     if (item.default !== undefined && item.default !== null) {
       try {
         normalized.default = decode({ ...normalized, id: key }, item.default);
@@ -106,7 +109,7 @@ function decode(question: AgentQuestion, raw: unknown): QuestionValue {
     let values: unknown = raw;
     if (typeof raw === "string") {
       try { values = JSON.parse(raw); }
-      catch { if (question.allowCustom ?? !question.type) values = [raw]; else throw new Error("Select one or more options."); }
+      catch { if (questionAllowsCustom(question)) values = [raw]; else throw new Error("Select one or more options."); }
     }
     if (!Array.isArray(values)) throw new Error("Select one or more options.");
     return values.map(value => matchOption(question, value));
@@ -118,7 +121,7 @@ function decode(question: AgentQuestion, raw: unknown): QuestionValue {
 function matchOption(question: AgentQuestion, raw: unknown): QuestionScalar {
   const option = question.options?.find(o => raw === optionValue(o) || (typeof raw === "string" && raw === String(optionValue(o))));
   if (option) return optionValue(option);
-  if ((question.allowCustom ?? !question.type) && typeof raw === "string" && raw.trim()) return raw.trim();
+  if ((questionAllowsCustom(question)) && typeof raw === "string" && raw.trim()) return raw.trim();
   throw new Error("Choose an available option.");
 }
 function validateValue(question: AgentQuestion, value: QuestionValue) {
@@ -146,7 +149,10 @@ function validateValue(question: AgentQuestion, value: QuestionValue) {
     if (type === "time" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error("Enter a valid time.");
   }
   if (["select", "radio", "multiselect"].includes(type)) {
-    for (const item of Array.isArray(value) ? value : [value]) matchOption(question, item);
+    for (const item of Array.isArray(value) ? value : [value]) {
+      matchOption(question, item);
+      if (typeof item === "string" && item.length > (question.maxLength ?? 4000)) throw new Error(`Maximum ${question.maxLength ?? 4000} characters.`);
+    }
   }
   if (["text", "textarea", "date", "time"].includes(type) && typeof value !== "string") throw new Error("Enter text.");
 }

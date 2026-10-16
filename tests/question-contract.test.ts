@@ -69,7 +69,7 @@ test("number, slider, date, time and text bounds are enforced on the server cont
     [{ question: "Date", type: "date" }, "2026-02-30"],
     [{ question: "Time", type: "time" }, "24:00"],
     [{ question: "Text", type: "text", maxLength: 3 }, "four"],
-    [{ question: "Choice", type: "select", options: ["A"] }, "forged"],
+    [{ question: "Choice", type: "select", options: ["A"] }, 123],
   ];
   for (const [question, value] of cases) {
     const f = form({ questions: [{ ...question, key: "field" }] });
@@ -136,4 +136,17 @@ test("icons render in headings and prose but leave code and unknown tokens intac
   assert.ok(all.some(n => n.type === "inlineCode" && n.value === "[icon:cpu]"));
   assert.ok(all.some(n => n.type === "code" && n.value === "[icon:cpu]"));
   assert.ok(all.some(n => n.type === "text" && n.value?.includes("[icon:unknown]")));
+});
+
+ test("typed and already pending choices always accept a free answer without agent opt-in", () => {
+ for (const type of ["radio", "select", "multiselect"] as const) {
+   const f = form({ questions: [{ key: "auth", question: "Authorized?", type, options: ["Yes", "No"], allowCustom: false }] });
+   assert.equal(f.questions[0].allowCustom, true);
+   const stale = { ...f.questions[0], allowCustom: false };
+   const raw = type === "multiselect" ? ["The code has expired. Request a new one."] : "The code has expired. Request a new one.";
+   const result = normalizeQuestionAnswers([stale], { auth: raw });
+   assert.deepEqual(result.values.auth, raw);
+   assert.match(questionSummary(f, [stale], result.values), /code has expired/);
+   assert.throws(() => normalizeQuestionAnswers([stale], { auth: type === "multiselect" ? [""] : "" }), QuestionValidationError);
+ }
 });

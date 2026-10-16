@@ -12,6 +12,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, { params }: Params) {
   if (!(await isAuthenticated(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  try {
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
   const { id } = await params;
   const project = getProject(id, ownerId);
@@ -23,6 +24,10 @@ export async function GET(req: Request, { params }: Params) {
     chats: listChatsForUser(ownerId).filter((chat) => chat.projectId === id),
     skills: listSkillSettings(projectSkillSettings(getGlobalModelSettings(ownerId), project)),
   });
+  } catch (error) {
+    captureApiError("/api/projects/[id] GET", error, req);
+    return Response.json({ error: "Could not load your project. Try again." }, { status: 500 });
+  }
 }
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -33,7 +38,9 @@ export async function PATCH(req: Request, { params }: Params) {
     const body = (await req.json().catch(() => ({}))) as {
       name?: string;
       mode?: "chat" | "agents";
-      defaultModeId?: string;
+      defaultModelEnabled?: boolean;
+  defaultModelId?: string;
+  defaultModelParams?: Array<{ id: string; value: string }>;
       icon?: string;
       color?: string;
       instructions?: string;
@@ -53,7 +60,7 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!project) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json({ project });
   } catch (error) {
-    if (error instanceof Error && error.name === "InvalidProjectAgentMode") {
+    if (error instanceof Error && error.name === "InvalidProjectModel") {
       return Response.json({ error: error.message }, { status: 400 });
     }
     captureApiError("/api/projects/[id] PATCH", error, req);

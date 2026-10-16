@@ -1,5 +1,6 @@
 import type { MessagePart, ToolPart } from "@/lib/store";
 import { getDatabase } from "@/lib/sqlite";
+import { editedFileFromTool } from "@/lib/edited-files";
 
 const TOOL_INPUT_MAX_CHARS = 32_000;
 const TOOL_RESULT_MAX_CHARS = 64_000;
@@ -61,6 +62,7 @@ export function compactToolForPersistence(tool: ToolPart, nested = false): ToolP
 
   return {
     ...tool,
+    ...(tool.status === "completed" ? { editedFile: editedFileFromTool(tool) } : {}),
     // Full before/after snapshots live in tool_revert_snapshots. Keeping them in
     // the transcript made a handful of edits inflate chats to tens of MB.
     ...(compactDiff && Object.keys(compactDiff).length ? { diff: compactDiff } : { diff: undefined }),
@@ -91,6 +93,7 @@ export function compactMessagePartsForPersistence(parts: MessagePart[]): Message
       ...(part.kind ? { kind: part.kind } : {}),
       ...(part.source ? { source: part.source } : {}),
       ...(part.path ? { path: part.path } : {}),
+      ...(part.status === "completed" ? { editedFile: editedFileFromTool(part) } : {}),
       ...(part.detail ? { detail: part.detail } : {}),
     };
   });

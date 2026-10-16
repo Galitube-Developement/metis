@@ -1,4 +1,5 @@
-import { projectModeForChat, projectModeOverride } from "@/lib/project-agent-mode-server";
+import { getChatActivity, recordMessageActivity, recordAttentionActivity, acknowledgeChatActivity } from "@/lib/chat-activity-server";
+import { projectModelOverride } from "@/lib/project-model-server";
 import { isChatWaitingForUser } from "@/lib/user-input-resume";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
@@ -236,7 +237,7 @@ function syncChatList(chat: Chat) {
     );
 }
 
-function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage, mode: "set" | "append") {
+function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage, mode: "set" | "append", previous?: ChatMessage) {
   const updatedAt = now();
   chat.updatedAt = updatedAt;
   const db = getDatabase();
@@ -271,6 +272,10 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
   // only the message and timestamp, so refresh the cache from that canonical
   // row instead of putting the worker's stale pre-run Chat object back.
   const persisted = rowChat(db.prepare("SELECT data FROM chats WHERE id = ?").get(chat.id)) || chat;
+  recordMessageActivity(chat.id, previous ? [previous] : [], [message]);
+  syncChatList(persisted);
+  chatIndexCache = null;
+  Object.assign(persisted, getChatActivity(chat.id));
   recordAccountUsage(persisted.ownerId, message);
   chatCache.set(chat.id, { updatedAt, chat: persisted });
   for (const key of chatPageCache.keys()) {
@@ -302,6 +307,8 @@ export function listChatsForUser(
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
                 queue_message AS queueMessage, queued_message_count AS queuedMessageCount, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
+                COALESCE((SELECT revision FROM chat_activity WHERE chat_id = chat_list.id), 0) AS activityRevision,
+                COALESCE((SELECT read_revision FROM chat_activity WHERE chat_id = chat_list.id), 0) AS readRevision,
                 automation_run_id AS automationRunId, incognito, project_id AS projectId,
                 agent_title_locked AS agentTitleLocked
          FROM chat_list
@@ -317,6 +324,8 @@ export function listChatsForUser(
                 model_id AS modelId, run_status AS runStatus, run_updated_at AS runUpdatedAt,
                 queue_message AS queueMessage, queued_message_count AS queuedMessageCount, pending_question AS pendingQuestion,
                 pending_approval AS pendingApproval, badge, pinned, archived, share,
+                COALESCE((SELECT revision FROM chat_activity WHERE chat_id = chat_list.id), 0) AS activityRevision,
+                COALESCE((SELECT read_revision FROM chat_activity WHERE chat_id = chat_list.id), 0) AS readRevision,
                 automation_run_id AS automationRunId, incognito, project_id AS projectId,
                 agent_title_locked AS agentTitleLocked
          FROM chat_list
@@ -339,6 +348,9 @@ export function listChatsForUser(
         ownerId: typeof item.ownerId === "string" ? item.ownerId : undefined,
         title: typeof item.title === "string" ? item.title : "New chat",
         queuedMessageCount: Number(item.queuedMessageCount) || 0,
+        activityRevision: Number(item.activityRevision) || 0,
+        readRevision: Number(item.readRevision) || 0,
+        unread: Number(item.activityRevision) > Number(item.readRevision),
         ...(item.agentTitleLocked === 1 || item.agentTitleLocked === true ? { agentTitleLocked: true } : {}),
         ...(keywords.length ? { keywords } : {}),
         updatedAt: String(item.updatedAt || ""),
@@ -441,7 +453,7 @@ export function getChat(id: string, ownerId?: string): Chat | null {
       chatIndexCache = null;
       return null;
     }
-    return cached.chat.ownerId && ownerId && cached.chat.ownerId !== ownerId ? null : cached.chat;
+    return cached.chat.ownerId && ownerId && cached.chat.ownerId !== ownerId ? null : { ...cached.chat, ...getChatActivity(id) };
   }
   const row = ownerId
     ? db.prepare("SELECT data FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
@@ -454,7 +466,7 @@ export function getChat(id: string, ownerId?: string): Chat | null {
     return null;
   }
   if (chat && updatedAt) chatCache.set(id, { updatedAt, chat });
-  return chat && ownerId && chat.ownerId && chat.ownerId !== ownerId ? null : chat;
+  return chat && ownerId && chat.ownerId && chat.ownerId !== ownerId ? null : chat ? { ...chat, ...getChatActivity(id) } : null;
 }
 
 export function getChatPage(
@@ -476,7 +488,7 @@ export function getChatPage(
   const pageKey = `${ownerId || "*"}:${id}:${messageLimit}:${messageOffset}`;
   const cachedPage = chatPageCache.get(pageKey);
   if (cachedPage?.updatedAt === identity.updatedAt) {
-    return cachedPage.page;
+    return { ...cachedPage.page, chat: { ...cachedPage.page.chat, ...getChatActivity(id) } };
   }
   // JSON1 re-parsed the complete transcript for metadata, count, iteration and
   // aggregation. Read once and slice in JS; raw messages remain unchanged.
@@ -490,7 +502,7 @@ export function getChatPage(
     const totalMessages = full.messages.length;
     const end = Math.max(0, totalMessages - messageOffset);
     const start = Math.max(0, end - messageLimit);
-    const chat: Chat = { ...full, updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) };
+    const chat: Chat = { ...full, ...getChatActivity(id), updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) };
     const page: ChatPageResult = {
       chat,
       currentTodos: currentChatTodos(full.messages),
@@ -513,6 +525,7 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
+  const before = rowChat(getDatabase().prepare("SELECT data FROM chats WHERE id = ?").get(chat.id));
   const updated = { ...chat, ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
   // Removal wins over delayed browser autosaves and stale worker projections.
   // Keep tombstones outside the JSON projection so an old snapshot cannot erase them.
@@ -540,6 +553,9 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
       updated.createdAt,
       updated.updatedAt,
     );
+  recordMessageActivity(updated.id, before?.messages ?? [], updated.messages);
+  recordAttentionActivity(updated.id, before, updated);
+  Object.assign(updated, getChatActivity(updated.id));
   syncChatList(updated);
   recordChatSyncEvent({
     ownerId: updated.ownerId,
@@ -583,6 +599,8 @@ export function createChat(
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+    const projectModel = projectModelOverride(chat.projectId, chat.ownerId);
+    if (projectModel) Object.assign(chat, projectModel);
     saveChatInternal(chat, { syncKind: "created" });
     return chat;
   });
@@ -640,6 +658,7 @@ export function updateChat(
     pendingApproval?: Chat["pendingApproval"] | null;
     approvedPatterns?: string[] | null;
     badge?: ChatBadge | null;
+    readRevision?: number;
     touchUpdatedAt?: boolean;
     projectId?: string | null;
   },
@@ -817,9 +836,8 @@ export function updateChat(
       }
       next.sessionState = merged;
     }
-    if (projectModeOverride(next.projectId, next.ownerId)) {
-      next.sessionState = { ...next.sessionState, modeId: projectModeForChat(next, next.sessionState?.modeId, getGlobalModelSettings(next.ownerId).customModes || []).id };
-    }
+    const projectModel = projectModelOverride(next.projectId, next.ownerId);
+    if (projectModel) Object.assign(next, projectModel);
     if (patch.runStatus) {
       const previousStatus = next.runStatus || "idle";
       if (!canTransitionRunStatus(previousStatus, patch.runStatus)) {
@@ -864,7 +882,10 @@ export function updateChat(
       if (approvedPatterns.length) next.approvedPatterns = approvedPatterns;
       else delete next.approvedPatterns;
     }
-    if (patch.badge === null) delete next.badge;
+    if (patch.readRevision !== undefined && Number.isSafeInteger(patch.readRevision) && patch.readRevision >= 0) {
+      Object.assign(next, acknowledgeChatActivity(id, patch.readRevision));
+    }
+    if (patch.badge === null && (patch.readRevision === undefined || patch.readRevision >= getChatActivity(id).activityRevision)) delete next.badge;
     else if (patch.badge) next.badge = patch.badge;
     return saveChatInternal(next, { touchUpdatedAt: patch.touchUpdatedAt !== false });
   });
@@ -1118,6 +1139,7 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
     const chat = getChat(chatId);
     if (!chat) return null;
     const index = chat.messages.findIndex((item) => item.id === message.id);
+    const previous = chat.messages[index];
     // Files registered by the gateway must survive provider checkpoints that
     // omit attachments or only report a subset of tool results.
     const attachments = [...(chat.messages[index]?.attachments ?? [])];
@@ -1131,7 +1153,7 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
     };
     if (index >= 0) {
       chat.messages[index] = next;
-      return persistAssistantMessage(chat, index, next, "set");
+      return persistAssistantMessage(chat, index, next, "set", previous);
     } else {
       chat.messages.push(next);
       return persistAssistantMessage(chat, chat.messages.length - 1, next, "append");

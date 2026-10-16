@@ -1,5 +1,7 @@
-import { projectDefaultModeId } from "@/lib/project-agent-mode";
+import { projectDefaultModel } from "@/lib/project-model";
+import { projectModelOverride, validateProjectModelSelection } from "@/lib/project-model-server";
 import { modeById } from "@/lib/modes";
+import { hasUserInputResponse, userInputProgress, type UserInputProgress } from "@/lib/user-input-progress";
 import { providerRateLimit, type ProviderRateLimit } from "@/lib/provider-rate-limit";
 import { getProviderLimitResumeEnabled } from "@/lib/provider-rate-limit-settings";
 import { randomUUID } from "node:crypto";
@@ -191,7 +193,9 @@ function enqueueJobInTransaction(
       const agent = team.agentData ? JSON.parse(team.agentData) : null;
       if (!input.userId || team.ownerId !== input.userId || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
-      input = { ...input, modeId: modeById(projectDefaultModeId(JSON.parse(team.projectData)) || undefined, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
+      const model = projectDefaultModel(JSON.parse(team.projectData));
+      if (model) { validateProjectModelSelection(input.userId, model.modelId, model.modelParams); input = { ...input, ...model }; }
+      input = { ...input, modeId: modeById(input.modeId || getChat(input.chatId, input.userId)?.sessionState?.modeId, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
     if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: resolveAgentRuntimeMs(input.maxRuntimeMs, getGlobalModelSettings(input.userId).agentRuntimeMs) };
     const now = iso();
@@ -626,6 +630,8 @@ export function updateJob(
       | "modeId"
       | "resumePrompt"
       | "resumeRequestedAt"
+      | "userInputWriterEnded"
+      | "userInputResume"
       | "runId"
       | "modelId"
       | "modelParams"
@@ -706,6 +712,8 @@ export function queueUserInputResume(input: {
   jobId: string;
   heartbeatAt?: string;
   resumePrompt: string;
+  questionId?: string;
+  progress?: UserInputProgress;
 }) {
   return transaction(() => {
     const job = getJob(input.jobId);
@@ -714,12 +722,19 @@ export function queueUserInputResume(input: {
     const activeLease = getDatabase().prepare(
       "SELECT 1 FROM job_leases WHERE job_id = ? AND expires_at > ?",
     ).get(job.id, now);
-    if (activeLease || !shouldQueueUserInputResume(job.status, input.heartbeatAt)) {
+    const resume = input.questionId && input.progress ? {
+      questionId: input.questionId, attempt: job.attempts, progress: input.progress,
+    } : undefined;
+    const waiting = getDatabase().prepare(
+      "SELECT 1 FROM pending_questions WHERE job_id = ? AND status = 'waiting_for_user' UNION ALL SELECT 1 FROM pending_approvals WHERE job_id = ? AND status = 'waiting_for_user' LIMIT 1",
+    ).get(job.id, job.id);
+    if (waiting || (!job.userInputWriterEnded && (activeLease || !shouldQueueUserInputResume(job.status, input.heartbeatAt)))) {
       // The existing writer may consume the answer normally. Retain it for
       // recovery if its transport died before the still-valid lease expires.
       updateJob(job.id, {
         resumePrompt: input.resumePrompt,
         resumeRequestedAt: now,
+        ...(resume ? { userInputResume: resume } : {}),
       }, { expectedRevision: jobRevision(job) });
       return null;
     }
@@ -728,7 +743,55 @@ export function queueUserInputResume(input: {
       error: undefined,
       resumePrompt: input.resumePrompt,
       resumeRequestedAt: now,
+      userInputWriterEnded: undefined,
+      ...(resume ? { userInputResume: resume } : {}),
     }, { expectedRevision: jobRevision(job) });
+  });
+}
+
+/** Called only after the provider has returned, never while its tool wait is alive. */
+export function parkEndedUserInputWriter(jobId: string) {
+  return transaction(() => {
+    const job = getJob(jobId), db = getDatabase();
+    if (!job || !isJobWaitingForUser(job.status) || !hasActiveWorkerLease(db, jobId, iso())) return null;
+    appendRunEvent(job.id, job.chatId, job.userId, "status", { status: "waiting_for_user", message: "Waiting for the user's response before resuming the agent." });
+    const parked = { ...job, userInputWriterEnded: true, revision: jobRevision(job) + 1, updatedAt: iso() };
+    delete parked.leaseOwner; delete parked.leaseToken; delete parked.leaseExpiresAt;
+    const changed = db.prepare("UPDATE jobs SET data = ?, updated_at = ? WHERE id = ? AND status = ? AND COALESCE(CAST(json_extract(data, '$.revision') AS INTEGER), 0) = ?")
+      .run(JSON.stringify(parked), parked.updatedAt, job.id, job.status, jobRevision(job));
+    if (!changed.changes) return null;
+    db.prepare("DELETE FROM job_leases WHERE job_id = ?").run(job.id);
+    return parked;
+  });
+}
+
+/** The answer route uses the same transaction lock: an answer cannot slip past terminal completion. */
+export function commitWithUserInputContinuation(jobId: string, complete: () => void, agentId?: string, assistantMessageId?: string) {
+  return transaction(() => {
+    if (parkEndedUserInputWriter(jobId)) return "waiting" as const;
+    const job = getJob(jobId);
+    if (!job || job.status !== "running") return "stopped" as const;
+    const resume = job.userInputResume;
+    if (resume && resume.attempt < job.attempts && assistantMessageId) {
+      const message = getChat(job.chatId, job.userId)?.messages.find(item => item.id === assistantMessageId);
+      if (!hasUserInputResponse(message)) {
+        throw new Error("The agent ended without responding to your saved answer. Retry the run.");
+      }
+    }
+    if (resume && resume.attempt === job.attempts) {
+      const chat = getChat(job.chatId, job.userId);
+      const progress = userInputProgress(chat?.messages ?? [], resume.progress.messageId);
+      if (progress.signature === resume.progress.signature) {
+        updateChat(job.chatId, { runStatus: "running", pendingQuestion: null, ...(agentId ? { agentId } : {}) }, job.userId);
+        appendRunEvent(job.id, job.chatId, job.userId, "status", { status: "resuming", message: "Continuing with your saved answer." });
+        const queued = updateJob(job.id, { status: "queued", userInputWriterEnded: undefined, ...(agentId ? { agentId } : {}) },
+          { expectedRevision: jobRevision(job) });
+        if (!queued) throw new Error("Could not queue the saved user answer.");
+        return "queued" as const;
+      }
+    }
+    complete();
+    return "completed" as const;
   });
 }
 
@@ -1103,7 +1166,10 @@ export function requestJobModelSwitch(
 ) {
   const job = getActiveJob(chatId, userId);
   if (!job) return null;
-  const nextModelId = modelId.trim();
+  const chat = getChat(chatId, userId);
+  const projectModel = projectModelOverride(chat?.projectId, userId);
+  const nextModelId = projectModel?.modelId || modelId.trim();
+  if (projectModel) modelParams = projectModel.modelParams;
   if (!nextModelId) return job;
 
   // A queued/paused job has no active provider stream to interrupt, so the new

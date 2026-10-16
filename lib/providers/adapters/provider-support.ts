@@ -1,4 +1,4 @@
-import { projectModeForChat } from "@/lib/project-agent-mode-server";
+import { modeById } from "@/lib/modes";
 import { createAiUsageAccumulator } from "@/lib/providers/ai-usage-accumulator";
 import { FILE_EDIT_DESCRIPTION, FILE_EDIT_PROPERTIES } from "../../../remote-client/file-edit.mjs";
 import { createToolInputProgress } from "@/lib/tool-input-progress";
@@ -13,6 +13,7 @@ import {
 } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogle } from "@ai-sdk/google";
+import { withGoogleToolSchemas } from "@/lib/providers/google-tool-schema";
 import { createGoogleVertex } from "@ai-sdk/google-vertex";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -171,8 +172,7 @@ const remoteToolSchema = jsonSchema<Record<string, unknown>>({
 });
 
 export function providerRemoteTools(context: ProviderContext): ToolSet {
-  const mode = projectModeForChat(
-    context.chat,
+  const mode = modeById(
     context.job.modeId || context.chat.sessionState?.modeId,
     getGlobalModelSettings(context.job.userId).customModes || [],
   );
@@ -891,7 +891,7 @@ export function aiModel(
   }
   if (providerKey === "google") {
     if (connection.authType === "vertex_adc") {
-      return createGoogleVertex({
+      return withGoogleToolSchemas(createGoogleVertex({
         project:
           typeof connection.config.project === "string"
             ? connection.config.project
@@ -900,12 +900,12 @@ export function aiModel(
           typeof connection.config.location === "string"
             ? connection.config.location
             : undefined,
-      }).languageModel(modelId);
+      }).languageModel(modelId));
     }
-    return createGoogle({
+    return withGoogleToolSchemas(createGoogle({
       apiKey: secret,
       ...(baseURL ? { baseURL } : {}),
-    }).chat(modelId);
+    }).chat(modelId));
   }
   if (providerKey === "xai") {
     return createXai({
@@ -1413,8 +1413,7 @@ export async function consumeAiStream(
 }
 
 export function providerMcpContext(context: ProviderContext) {
-  const mode = projectModeForChat(
-    context.chat,
+  const mode = modeById(
     context.job.modeId || context.chat.sessionState?.modeId,
     getGlobalModelSettings(context.job.userId).customModes || [],
   );

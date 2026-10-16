@@ -24,6 +24,8 @@ export type ToolPart = {
   kind?: "plan" | "edit" | "read" | "shell" | "subagent" | "mcp" | "canvas" | "note" | "todo" | "browser" | "memory" | "automation" | "compaction" | "other";
   source?: "mcp" | "native" | "browser";
   path?: string;
+  /** Small, durable record of a successful file edit; null excludes dry runs/no-ops. */
+  editedFile?: import("./edited-files").EditedFile | null;
   input?: string;
   result?: string;
   /** UI-only URL for a large persisted output, loaded on expansion. */
@@ -189,7 +191,9 @@ export type Project = {
   name: string;
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
-  defaultModeId?: string;
+  defaultModelEnabled?: boolean;
+  defaultModelId?: string;
+  defaultModelParams?: Array<{ id: string; value: string }>;
   hideChatsFromAll?: boolean;
   icon: string;
   color: string;
@@ -485,6 +489,9 @@ export type Chat = {
   };
   approvedPatterns?: string[];
   badge?: ChatBadge;
+  activityRevision?: number;
+  readRevision?: number;
+  unread?: boolean;
   share?: ChatShare;
   pinned?: boolean;
   archived?: boolean;
@@ -518,6 +525,9 @@ export type ChatIndexEntry = {
   };
   approvedPatterns?: string[];
   badge?: ChatBadge;
+  activityRevision?: number;
+  readRevision?: number;
+  unread?: boolean;
   pinned?: boolean;
   archived?: boolean;
   lastMessageSent?: string;

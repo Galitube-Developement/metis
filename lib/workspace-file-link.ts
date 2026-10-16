@@ -1,5 +1,5 @@
 /** Explicit workspace links and legacy absolute POSIX file links. Authorization stays in /api/remote. */
-export type WorkspaceFileLocation = { path: string; line?: number; column?: number };
+export type WorkspaceFileLocation = { path: string; line?: number; column?: number; endLine?: number; endColumn?: number; changes?: import("./file-change-ranges").FileChangeRange[] };
 export type WorkspaceFileRequest = WorkspaceFileLocation & { id: number };
 
 const appRoute = /^\/(?:api|_next|chat|chats|p|share|login|register|setup|settings|automations|notes|projects|invite|auth)(?:\/|$)/i;
@@ -15,6 +15,8 @@ export function parseWorkspaceFileLink(href: string | undefined): WorkspaceFileL
   let rawPath = href;
   let line: number | undefined;
   let column: number | undefined;
+  let endLine: number | undefined;
+  let endColumn: number | undefined;
   let explicit = false;
   const workspace = /^workspace:\/\/file\/(.*)$/i.exec(href);
   if (workspace) {
@@ -24,6 +26,8 @@ export function parseWorkspaceFileLink(href: string | undefined): WorkspaceFileL
     const params = new URLSearchParams(query);
     line = position(params.get("line"));
     column = position(params.get("column"));
+    endLine = position(params.get("endLine"));
+    endColumn = position(params.get("endColumn"));
   } else if (/^file:\/\//i.test(href)) {
     // Never reinterpret another host's file or a Windows drive as a server file.
     if (!/^file:\/\/\//i.test(href)) return null;
@@ -48,13 +52,15 @@ export function parseWorkspaceFileLink(href: string | undefined): WorkspaceFileL
   try { path = decodeURIComponent(rawPath); } catch { return null; }
   if (!path.startsWith("/") || path.startsWith("//") || /^\/[a-z]:[\\/]/i.test(path) || path === "/" || /[\u0000-\u001f\u007f]/.test(path)) return null;
   if (!explicit && appRoute.test(path)) return null;
-  return { path, ...(line ? { line } : {}), ...(column ? { column } : {}) };
+  return { path, ...(line ? { line } : {}), ...(column ? { column } : {}), ...(endLine && line && endLine >= line ? { endLine } : {}), ...(endColumn && endLine ? { endColumn } : {}) };
 }
 
 export function workspaceFileHref(location: WorkspaceFileLocation): string {
   const query = new URLSearchParams();
   if (location.line) query.set("line", String(location.line));
   if (location.column) query.set("column", String(location.column));
+  if (location.endLine) query.set("endLine", String(location.endLine));
+  if (location.endColumn) query.set("endColumn", String(location.endColumn));
   return `workspace://file/${encodeURIComponent(location.path)}${query.size ? `?${query}` : ""}`;
 }
 

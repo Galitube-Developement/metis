@@ -190,6 +190,38 @@ await t.test("project scheduler prevents simultaneous writers while permitting a
  assert.equal(jobs.claimNextJob()?.id, direct.id);
  jobs.requestJobCancel(direct.chatId, owner);
 });
+await t.test("team history reconciliation preserves a newer completed or waiting chat after an old handoff failed", async () => {
+ const f = fixture();
+ const assignment = team.createProjectHandoff({projectId:f.project.id,ownerId:owner,parentJobId:f.parent.id,recipientAgentId:f.agents[1].id,task:"Historical assignment",wait:true});
+ jobs.updateJob(f.parent.id,{projectWaitingForHandoffId:assignment.handoff.id});
+ const oldJob=jobs.claimNextJob({workerId:"history-worker"})!;
+ assert.equal(oldJob.id,assignment.job!.id);
+ jobs.updateJob(oldJob.id,{status:"error",error:"Historical failure"});
+ const chatId=f.agents[1].chatId;
+ store.updateChat(chatId,{runStatus:"running"},owner);
+ store.updateChat(chatId,{runStatus:"completed"},owner);
+ let handoffs=team.syncProjectHandoffStatuses(f.project.id,owner);
+ assert.equal(handoffs.find(h=>h.id===assignment.handoff.id)?.status,"error");
+ assert.equal(store.getChat(chatId,owner)?.runStatus,"completed");
+ stop(f);
+ const {createPendingQuestion,getPendingQuestion}=await import("../lib/db-questions");
+ const next=jobs.enqueueJob({chatId,userId:owner,modelId:model,message:"New assignment"});
+ const current=jobs.claimNextJob({workerId:"current-worker"})!;
+ assert.equal(current.id,next.id);
+ store.updateChat(chatId,{runStatus:"running"},owner);
+ const pending=createPendingQuestion([{key:"detail",type:"text",question:"New question"}],chatId,owner,{jobId:current.id});
+ pending.stop();
+ jobs.updateJob(current.id,{status:"waiting_input"});
+ store.updateChat(chatId,{runStatus:"waiting_for_user",pendingQuestion:{...pending,status:"waiting_for_user"}},owner);
+ handoffs=team.syncProjectHandoffStatuses(f.project.id,owner);
+ assert.equal(store.getChat(chatId,owner)?.runStatus,"waiting_for_user");
+ assert.equal(store.getChat(chatId,owner)?.pendingQuestion?.questionId,pending.questionId);
+ assert.equal(getPendingQuestion(pending.questionId,owner)?.status,"waiting_for_user");
+ assert.equal(handoffs.find(h=>h.id===assignment.handoff.id)?.status,"error");
+ assert.equal(store.getChat(chatId,owner)?.messages.filter(m=>m.id===`handoff:${assignment.handoff.id}:result:recipient`).length,1);
+ jobs.requestJobCancel(chatId,owner);
+ stop(f);
+});
 await t.test("cancellation stops descendants, persists terminal handoffs, and preserves histories on archive", () => {
  const f = fixture();
  const first = team.createProjectHandoff({ projectId: f.project.id, ownerId: owner, parentJobId: f.parent.id, recipientAgentId: f.agents[1].id, task: "First" });

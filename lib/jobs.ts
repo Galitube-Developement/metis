@@ -76,6 +76,10 @@ export type AgentJob = {
   cancellationCause?: "runtime_limit";
   resumePrompt?: string;
   resumeRequestedAt?: string;
+  /** The provider returned while a durable user-input request remained open. */
+  userInputWriterEnded?: boolean;
+  /** One automatic continuation per answered question and originating attempt. */
+  userInputResume?: { questionId: string; attempt: number; progress: import("@/lib/user-input-progress").UserInputProgress };
   runId?: string;
   queueMessage?: string;
   status: JobStatus;

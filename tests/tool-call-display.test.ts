@@ -632,7 +632,7 @@ test("memoryCardFromPayload shows saved content instead of raw json", () => {
     JSON.stringify({ content: "Cursor context must stay settable" }),
     JSON.stringify({ memory: { id: "1", content: "Cursor context must stay settable" } }),
   );
-  assert.equal(card.title, "Saved memory");
+  assert.equal(card.title, "Saved Memory");
   assert.equal(card.body, "Cursor context must stay settable");
 });
 
@@ -678,7 +678,7 @@ test("memory acknowledgements fall back to submitted content, including MCP wrap
     const card = memoryCardFromPayload("call_mcp_tool", {
       tool_name: "add_memory", arguments: { content: "Use English UI labels\nKeep the exact wording." },
     }, result);
-    assert.equal(card.title, "Saved memory");
+    assert.equal(card.title, "Saved Memory");
     assert.equal(card.body, "Use English UI labels\nKeep the exact wording.");
   }
 });
@@ -688,7 +688,7 @@ test("memory cards prefer stored structured content over submitted content", () 
     content: [{ type: "text", text: "Memory updated" }],
     structuredContent: { memory: { content: "actually stored" } },
   });
-  assert.deepEqual(card, { title: "Updated memory", body: "actually stored" });
+  assert.deepEqual(card, { title: "Updated Memory", body: "actually stored" });
 });
 
 test("memory cards unwrap JSON MCP results and preserve complete long content", () => {
@@ -700,7 +700,43 @@ test("memory cards unwrap JSON MCP results and preserve complete long content", 
 
 test("memory cards do not show submitted content as a successful failed save", () => {
   assert.deepEqual(memoryCardFromPayload("add_memory", { content: "not saved" }, { error: "Storage unavailable" }),
-    { title: "Memory failed", body: "Storage unavailable" });
+    { title: "Memory Failed", body: "Storage unavailable" });
+});
+
+test("memory cards label all scopes and mutation actions", () => {
+  for (const scope of ["chat", "global", "project"]) {
+    const label = scope[0].toUpperCase() + scope.slice(1);
+    for (const [name, action] of [["add_memory", "Saved"], ["edit_memory", "Updated"], ["delete_memory", "Deleted"]]) {
+      assert.equal(memoryCardFromPayload(name, {}, {
+        content: [{ type: "text", text: JSON.stringify({ scope, memory: { content: "Stored fact" } }) }],
+      }).title, `${action} ${label} Memory`);
+    }
+    assert.equal(memoryCardFromPayload("list_memories", {}, { scope, memories: [] }).title, `${label} Memories`);
+    assert.equal(memoryCardFromPayload("list_memories", {}, { scope, memories: [{ content: "one" }] }).title, `${label} Memory`);
+  }
+});
+
+test("memory cards prefer effective result scope and unwrap argument scopes", () => {
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "global" }, {
+    structuredContent: { scope: "project", memory: { content: "fact" } },
+  }).title, "Saved Project Memory");
+  assert.equal(memoryCardFromPayload("call_mcp_tool", {
+    tool_name: "edit_memory", arguments: JSON.stringify({ scope: "chat", content: "fact" }),
+  }, { success: true }).title, "Updated Chat Memory");
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "global" }, { memory: { scope: "chat", content: "fact" } }).title, "Saved Chat Memory");
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "unknown" }, { success: true }).title, "Saved Memory");
+  assert.equal(memoryCardFromPayload("add_memory", { content: "the word global in a fact" }, { availableScopes: ["chat", "global"] }).title, "Saved Memory");
+});
+
+test("memory cards distinguish pending, terminal and failed scoped operations", () => {
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "chat" }, undefined, "running").title, "Saving Chat Memory…");
+  assert.equal(memoryCardFromPayload("edit_memory", { scope: "global" }, undefined, "running").title, "Updating Global Memory…");
+  assert.equal(memoryCardFromPayload("delete_memory", { scope: "project" }, undefined, "running").title, "Deleting Project Memory…");
+  assert.equal(memoryCardFromPayload("list_memories", { scope: "chat" }, undefined, "running").title, "Listing Chat Memories…");
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "chat" }, { scope: "chat", success: true }, "running").title, "Saved Chat Memory");
+  assert.deepEqual(memoryCardFromPayload("add_memory", { scope: "global", content: "not saved" }, { error: "Unavailable" }), { title: "Global Memory Failed", body: "Unavailable" });
+  assert.equal(memoryCardFromPayload("edit_memory", { scope: "project" }, undefined, "error").title, "Project Memory Failed");
+  assert.equal(memoryCardFromPayload("add_memory", { scope: "chat" }, { isError: true }).title, "Chat Memory Failed");
 });
 
 test("memory list and deletion acknowledgements have accurate empty fallbacks", () => {

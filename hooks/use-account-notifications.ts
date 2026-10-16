@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import type { NotificationPrefs, NotificationRecord } from "@/lib/notification-store";
 
 /** Serial polling avoids overlap; cursor is session-only so old alerts never replay on login. */
-export function useAccountNotifications(enabled: boolean, deliver: (record: NotificationRecord, prefs: NotificationPrefs) => void, prefsChanged: (prefs: NotificationPrefs) => void) {
+export function useAccountNotifications(enabled: boolean, deliver: (record: NotificationRecord, prefs: NotificationPrefs) => void, prefsChanged?: (prefs: NotificationPrefs) => void) {
   const callbacks = useRef({ deliver, prefsChanged });
   callbacks.current = { deliver, prefsChanged };
   useEffect(() => {
@@ -20,7 +20,7 @@ export function useAccountNotifications(enabled: boolean, deliver: (record: Noti
         if (!response.ok) throw new Error("Notification feed unavailable");
         const data = await response.json() as { cursor: number; notifications: NotificationRecord[]; prefs: NotificationPrefs; hasMore: boolean };
         if (stopped) return;
-        callbacks.current.prefsChanged(data.prefs);
+        callbacks.current.prefsChanged?.(data.prefs);
         cursor = data.cursor;
         for (const notification of data.notifications) {
           if (seen.has(notification.id)) continue;

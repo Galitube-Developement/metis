@@ -97,6 +97,15 @@ function available() {
   return typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
 }
 
+// Queues are live server state. Never revive a cached queue on navigation or reload.
+function withoutCachedQueue<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  const copy = { ...value } as T & { queuedMessages?: unknown; removedQueuedMessageIds?: unknown };
+  delete copy.queuedMessages;
+  delete copy.removedQueuedMessageIds;
+  return copy;
+}
+
 function cacheKey(scope: string, chatId: string) {
   return `${scope.trim() || "default"}::${chatId}`;
 }
@@ -167,7 +176,7 @@ export async function readClientChatSnapshot<T>(scope: string, chatId: string): 
       void deleteClientChatSnapshot(scope, chatId);
       return null;
     }
-    return row.value;
+    return withoutCachedQueue(row.value);
   } catch {
     return null;
   } finally {
@@ -189,7 +198,7 @@ export async function writeClientChatSnapshot<T>(scope: string, chatId: string, 
       scope: scope.trim() || "default",
       chatId,
       cachedAt: Date.now(),
-      value,
+      value: withoutCachedQueue(value),
     } satisfies CachedSnapshot<T>);
     await new Promise<void>((resolve) => {
       tx.oncomplete = () => resolve();

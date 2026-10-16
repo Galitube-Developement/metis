@@ -4,10 +4,17 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## v1.0.14 — 2026-10-13
+## v1.0.14 — 2026-10-13 (updated 2026-10-16)
 
+- Search workspace file names and contents, export notes, plans and canvases as Markdown, plain text or PDF, and download workspace files.
+- Synchronize editor content with external changes, preserve unsaved drafts, detect save conflicts, search within files and highlight agent edits with links to affected lines.
+- Improve streamed text and Markdown animations, chat activity indicators, browser frame feedback and tool-call details, while respecting reduced-motion settings.
+- Preserve queued attachments across chat switches and isolate pending uploads and cached messages by chat.
+- Configure Remote Client notifications globally and per device, control agent-finished alerts, and expose delivery status through the notify tool while retaining compatibility with customnotify.
+- Recover saved form answers when a provider stream ends, prevent duplicate continuations, and allow custom responses in choice fields.
+- Improve Project Hub and agent-team loading, caching and error recovery; normalize Google and Vertex tool schemas for provider compatibility.
 - Keep Ask user forms connected beyond the default five-minute HTTP limit and preserve submitted answers for safe recovery after a provider disconnect, without starting duplicate runs.
-- Choose a default agent mode when creating an agent-oriented project or in Project Hub; enforce it across project chats, queued runs and tool permissions, with a disabled selector and explanatory tooltip.
+- Choose an optional default model and model parameters for projects and enforce the selection across project chats, team agents and queued runs, while keeping agent modes independent.
 - Open the recipient agent chat from handoff cards, move prompt and reply details into a three-dot menu, and display the assigned prompt as a normal user message in the recipient chat.
 - Show the queued message count next to sidebar chat actions on hover or keyboard focus, including project agent chats, with immediate updates in the active chat.
 - Pick custom project colors with a color picker or HEX input and search all 2,007 Lucide icons while preserving existing icons and uploaded logos.

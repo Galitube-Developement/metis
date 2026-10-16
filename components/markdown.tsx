@@ -31,7 +31,8 @@ import { ThinkingBlock } from "@/components/thinking-block";
 import { GraphBoard } from "@/components/graph-board";
 import rehypeStreamingText from "@/lib/rehype-streaming-text";
 import { StreamingSpan, StreamingText } from "@/components/streaming-text";
-import { STREAM_FADE_MS } from "@/lib/streaming-text";
+import { appendStreamingArrival, initialStreamingArrival } from "@/lib/streaming-text";
+import type { PluggableList } from "unified";
 import { ChartBoard } from "@/components/chart-board";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { isChartSource } from "@/lib/chart-spec";
@@ -269,7 +270,7 @@ function CodeBlock({
     ? hljs.highlight(code, { language: detectedLanguage }).value
     : hljs.highlightAuto(code).value;
   return (
-    <div className="group relative">
+    <div className="markdown-code-container group">
       <pre className="markdown-code-block" {...props}>
         <div className="mb-1.5 flex items-center justify-between text-[10px] font-sans uppercase tracking-wide text-muted-foreground/70">
           <span>{detectedLanguage || "text"}</span>
@@ -279,18 +280,21 @@ function CodeBlock({
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       </pre>
-      <button
-        type="button"
-        className="absolute top-2 right-2 rounded border border-border/50 bg-background/80 px-2 py-1 text-[10px] text-muted-foreground opacity-100 transition-opacity hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
-        onClick={() => {
-          void navigator.clipboard.writeText(code).then(() => {
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1200);
-          });
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
+      <div className="markdown-code-toolbar">
+        <button
+          type="button"
+          aria-label={copied ? "Code copied" : "Copy code"}
+          className="pointer-events-auto rounded border border-border/50 bg-background/80 px-2 py-1 text-[10px] text-muted-foreground opacity-100 transition-opacity hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+          onClick={() => {
+            void navigator.clipboard.writeText(code).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            });
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -329,12 +333,16 @@ export const Markdown = memo(function Markdown({
   interactiveTasks = false,
   thinkingDurationMs,
   editableFiles = false,
+  animateText = streaming,
+  initialBornAt,
 }: {
   content: string;
   streaming?: boolean;
   interactiveTasks?: boolean;
   thinkingDurationMs?: number;
   editableFiles?: boolean;
+  animateText?: boolean;
+  initialBornAt?: number;
 }) {
   const markdownComponentsWithCode = useMemo(() => ({
     ...markdownComponents,
@@ -348,6 +356,16 @@ export const Markdown = memo(function Markdown({
     ),
   }), [editableFiles, interactiveTasks]);
 
+  const { ready, pending } = streaming ? splitStreamingMath(content) : { ready: normalizeMath(content), pending: "" };
+  const source = wrapBareMermaid(ready);
+  const [arrivalState, setArrivalState] = useState(() => initialStreamingArrival(source, Date.now(), initialBornAt));
+  const arrival = appendStreamingArrival(arrivalState, source, Date.now());
+  if (arrival !== arrivalState) setArrivalState(arrival);
+  const [pendingState, setPendingState] = useState(() => initialStreamingArrival(pending, Date.now(), initialBornAt));
+  const pendingArrival = appendStreamingArrival(pendingState, pending, Date.now());
+  if (pendingArrival !== pendingState) setPendingState(pendingArrival);
+  const rehypePlugins: PluggableList = [[rehypeKatex, { throwOnError: false, strict: "ignore" }]];
+  if (animateText) rehypePlugins.push([rehypeStreamingText, { from: arrival.from, born: arrival.born, source }]);
   const thinkingSegments = splitThinkingBlocks(content);
   if (thinkingSegments.some((segment) => segment.kind === "thinking")) {
     return (
@@ -365,6 +383,8 @@ export const Markdown = memo(function Markdown({
               key={`text-${index}`}
               content={segment.text}
               streaming={streaming}
+              animateText={animateText}
+              initialBornAt={initialBornAt}
               interactiveTasks={interactiveTasks}
               editableFiles={editableFiles}
               thinkingDurationMs={thinkingDurationMs}
@@ -375,44 +395,19 @@ export const Markdown = memo(function Markdown({
     );
   }
 
-  if (streaming) {
-    const { ready, pending } = splitStreamingMath(content);
-    return (
-      <div className="markdown-body">
-        {ready ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath, remarkChatIcons]}
-            rehypePlugins={[
-              [rehypeKatex, { throwOnError: false, strict: "ignore" }],
-              rehypeStreamingText,
-            ]}
-            urlTransform={transformMarkdownUrl}
-            components={markdownComponentsWithCode}
-          >
-            {wrapBareMermaid(ready)}
-          </ReactMarkdown>
-        ) : null}
-        {pending ? (
-          <span className="whitespace-pre-wrap text-muted-foreground/80">
-            <StreamingText text={pending}/>
-          </span>
-        ) : null}
-      </div>
-    );
-  }
-
   return (
     <div className="markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkChatIcons]}
-        rehypePlugins={[
-          [rehypeKatex, { throwOnError: false, strict: "ignore" }],
-        ]}
+        rehypePlugins={rehypePlugins}
         urlTransform={transformMarkdownUrl}
         components={markdownComponentsWithCode}
       >
-        {wrapBareMermaid(normalizeMath(content))}
+        {source}
       </ReactMarkdown>
+      {pending ? <span className="whitespace-pre-wrap text-muted-foreground/80">
+        <StreamingText text={pending} initialFrom={pendingArrival.from} born={pendingArrival.born}/>
+      </span> : null}
     </div>
   );
 });
@@ -421,22 +416,14 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
   content,
   thinkingDurationMs,
   streaming = true,
-  animate = streaming,
+  initialBornAt,
 }: {
   content: string;
   thinkingDurationMs?: number;
   streaming?: boolean;
-  animate?: boolean;
+  initialBornAt?: number;
 }) {
   const [shown, setShown] = useState(content);
-  const [settling, setSettling] = useState(animate);
-  useEffect(() => {
-    if (!animate) { setSettling(false); return; }
-    setSettling(true);
-    if (streaming) return;
-    const timer = window.setTimeout(() => setSettling(false), STREAM_FADE_MS + STREAMING_RENDER_INTERVAL_MS);
-    return () => window.clearTimeout(timer);
-  }, [animate, streaming, content]);
   const latestRef = useRef(content);
   const shownRef = useRef(shown);
   const timerRef = useRef<number | null>(null);
@@ -466,5 +453,5 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
   }, []);
 
-  return <Markdown content={streaming ? shown : content} streaming={streaming || settling} thinkingDurationMs={thinkingDurationMs} />;
+  return <Markdown content={streaming ? shown : content} streaming={streaming} animateText initialBornAt={initialBornAt} thinkingDurationMs={thinkingDurationMs} />;
 });

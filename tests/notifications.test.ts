@@ -33,7 +33,7 @@ test("notification backend: owner boundaries, durable replay, ACK and API authen
   const event = (owner:string,kind:string,data:unknown={}) => db.prepare("INSERT INTO run_events(job_id,chat_id,user_id,event,data,created_at) VALUES (?,?,?,?,?,?)")
     .run(owner+"-job",owner+"-chat",owner,kind,JSON.stringify(data),now);
   await t.test("preferences reject foreign and revoked clients and default safely", () => {
-    assert.deepEqual(store.getNotificationPrefs("alice"),{toastEnabled:true,browserEnabled:false,remoteClientIds:[]});
+    assert.deepEqual(store.getNotificationPrefs("alice"),{toastEnabled:true,browserEnabled:false,remoteEnabled:false,agentFinishedEnabled:true,remoteClientIds:[]});
     assert.throws(()=>store.setNotificationPrefs("alice",{remoteClientIds:["bob-pc"]}));
     assert.throws(()=>store.setNotificationPrefs("alice",{toastEnabled:"yes"}));
     assert.throws(()=>store.setNotificationPrefs("alice",{execute_command:"anything"}));
@@ -151,6 +151,55 @@ test("notification backend: owner boundaries, durable replay, ACK and API authen
     await observer.deliverPendingNotifications(async()=>{assert.fail("Disabled client received data");return true;});
     // Records survive; disabling channels does not erase the browser feed.
     assert.equal(store.getNotificationFeed("alice",0).notifications.at(-1)?.title,"disabled");
+  });
+  await t.test("master and completion switches stop queued alerts, retain device choices and never replay muted history",async()=>{
+    store.setNotificationPrefs("alice",{remoteEnabled:true,agentFinishedEnabled:true,remoteClient:{id:"alice-pc",enabled:true}});
+    const finished=store.createNotification("alice",{title:"completed for settings"}, "run:alice:done:settings-job");
+    const custom=store.createNotification("alice",{title:"custom for settings"});
+    assert.equal(store.notificationDeliverySummary("alice",finished.id).queuedDevices,1);
+    store.setNotificationPrefs("alice",{agentFinishedEnabled:false});
+    assert.equal(store.notificationDeliverySummary("alice",finished.id).status,"disabled");
+    assert.equal(store.notificationDeliverySummary("alice",custom.id).status,"queued");
+    const muted=store.createNotification("alice",{title:"muted completion"},"run:alice:done:muted-job");
+    assert.equal(store.notificationDeliverySummary("alice",muted.id).queuedDevices,0);
+    store.setNotificationPrefs("alice",{remoteEnabled:false});
+    assert.deepEqual(store.getNotificationPrefs("alice").remoteClientIds,["alice-pc"]);
+    assert.equal(store.notificationDeliverySummary("alice",custom.id).queuedDevices,0);
+    await observer.deliverPendingNotifications(async()=>{assert.fail("Globally muted notification sent");return true});
+    const offline=store.createNotification("alice",{title:"disabled custom"});
+    assert.equal(store.notificationDeliverySummary("alice",offline.id).status,"disabled");
+    store.setNotificationPrefs("alice",{remoteEnabled:true,agentFinishedEnabled:true});
+    store.createNotification("alice",{title:"muted completion"},"run:alice:done:muted-job");
+    assert.equal(store.notificationDeliverySummary("alice",muted.id).queuedDevices,0);
+    const next=store.createNotification("alice",{title:"fresh"});
+    assert.equal(store.notificationDeliverySummary("alice",next.id).status,"queued");
+    store.setNotificationPrefs("alice",{remoteClient:{id:"alice-pc",enabled:false}});
+    assert.equal(store.notificationDeliverySummary("alice",next.id).status,"no_devices");
+    assert.equal(store.notificationDeliverySummary("alice",next.id).queuedDevices,0);
+    assert.throws(()=>store.setNotificationPrefs("alice",{remoteClient:{id:"bob-pc",enabled:true}}));
+    assert.throws(()=>store.setNotificationPrefs("alice",{remoteClient:{id:"alice-pc",enabled:true},remoteClientIds:[]}));
+    store.setNotificationPrefs("alice",{remoteClient:{id:"alice-pc",enabled:true}});
+    store.setNotificationPrefs("alice",{toastEnabled:false});
+    assert.deepEqual(store.getNotificationPrefs("alice").remoteClientIds,["alice-pc"]);
+    assert.equal(store.getNotificationPrefs("alice").remoteEnabled,true);
+    store.setNotificationPrefs("alice",{remoteEnabled:false});
+  });
+  await t.test("individual device patches compose and global switches never erase choices", () => {
+    db.prepare("INSERT INTO remote_clients(id,owner_id,name,created_at,updated_at) VALUES (?,?,?,?,?)").run("alice-laptop","alice","Laptop",now,now);
+    store.setNotificationPrefs("alice",{remoteEnabled:true,remoteClient:{id:"alice-laptop",enabled:true}});
+    assert.deepEqual(store.getNotificationPrefs("alice").remoteClientIds,["alice-pc","alice-laptop"]);
+    store.setNotificationPrefs("alice",{remoteClient:{id:"alice-pc",enabled:false}});
+    assert.deepEqual(store.getNotificationPrefs("alice").remoteClientIds,["alice-laptop"]);
+    const n=store.createNotification("alice",{title:"Laptop only"});
+    assert.equal(store.notificationDeliverySummary("alice",n.id).queuedDevices,1);
+    store.setNotificationPrefs("alice",{remoteEnabled:false});
+    assert.equal(store.notificationDeliverySummary("alice",n.id).queuedDevices,0);
+    store.setNotificationPrefs("alice",{remoteEnabled:true});
+    assert.equal(store.notificationDeliverySummary("alice",n.id).queuedDevices,0);
+    store.setNotificationPrefs("alice",{remoteClient:{id:"alice-pc",enabled:true}});
+    store.setNotificationPrefs("alice",{remoteClient:{id:"alice-laptop",enabled:false}});
+    db.prepare("DELETE FROM remote_clients WHERE id='alice-laptop'").run();
+    store.setNotificationPrefs("alice",{remoteEnabled:false});
   });
   await t.test("authenticated feed/prefs/custom route and strict owner selection", async () => {
     const api=await import("../app/api/notifications/route");

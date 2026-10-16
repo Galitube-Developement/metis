@@ -704,6 +704,13 @@ export function getDatabase(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS chat_list_owner_sidebar
       ON chat_list(owner_id, incognito, automation_run_id, archived, pinned, last_message_sent);
+    CREATE TABLE IF NOT EXISTS chat_activity (
+      chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL DEFAULT 0,
+      read_revision INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO chat_activity(chat_id, revision, read_revision)
+      SELECT id, CASE WHEN json_extract(data, '$.badge') = 'blue' THEN 1 ELSE 0 END, 0 FROM chats;
     CREATE TABLE IF NOT EXISTS chat_sync_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

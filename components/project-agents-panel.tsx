@@ -1,6 +1,7 @@
 "use client";
 
 import { RunStatus } from "@/components/run-status";
+import { fetchProjectTeam, mergeProjectChatAgents } from "@/lib/project-team-client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Archive, ArrowRight, CircleStop, Edit3, FileClock, MoreHorizontal, Pin, PinOff, Plus, RotateCcw, Trash2, Users } from "lucide-react";
@@ -23,16 +24,25 @@ export function useProjectTeam(projectId: string) {
  const [loading, setLoading] = useState(true);
  const [error, setError] = useState("");
  const generation = useRef(0);
- const load = useCallback(async () => {
+ const pending = useRef<{ generation: number; controller: AbortController; promise: Promise<void> } | null>(null);
+ const load = useCallback(() => {
   const current = generation.current;
-  try {
-   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/agents`, { cache: "no-store" });
-   const body = await response.json();
-   if (!response.ok) throw new Error(body.error || "Could not load team.");
-   if (current !== generation.current) return;
-   setAgents(body.agents || []); setHandoffs(body.handoffs || []); setError("");
-  } catch (cause) { if (current === generation.current) setError(cause instanceof Error ? cause.message : "Could not load team."); }
-  finally { if (current === generation.current) setLoading(false); }
+  if (pending.current?.generation === current) return pending.current.promise;
+  const controller = new AbortController();
+  const promise = (async () => {
+   try {
+    const body = await fetchProjectTeam(projectId, controller.signal);
+    if (current !== generation.current || controller.signal.aborted) return;
+    setAgents(body.agents); setHandoffs(body.handoffs); setError("");
+   } catch (cause) {
+    if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not load team.");
+   } finally {
+    if (pending.current?.controller === controller) pending.current = null;
+    if (current === generation.current && !controller.signal.aborted) setLoading(false);
+   }
+  })();
+  pending.current = { generation: current, controller, promise };
+  return promise;
  }, [projectId]);
  useEffect(() => {
   generation.current += 1; setLoading(true); setAgents([]); setHandoffs([]); setError("");
@@ -40,7 +50,7 @@ export function useProjectTeam(projectId: string) {
   const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 4000);
   const changed = () => void load();
   window.addEventListener("metis:team-changed", changed);
-  return () => { generation.current += 1; window.clearInterval(timer); window.removeEventListener("metis:team-changed", changed); };
+  return () => { generation.current += 1; pending.current?.controller.abort(); pending.current = null; window.clearInterval(timer); window.removeEventListener("metis:team-changed", changed); };
  }, [load]);
  return { agents, handoffs, loading, error, load };
 }
@@ -52,16 +62,15 @@ export function useProjectChatAgents(projectIds: string[]) {
  const [agents, setAgents] = useState<Record<string, ProjectAgent>>({});
  useEffect(() => {
   const controller = new AbortController();
+  let version = 0;
   const load = async () => {
-   const teams = await Promise.all(projectKey.split(",").filter(Boolean).map(async id => {
-    try {
-     const response = await fetch(`/api/projects/${encodeURIComponent(id)}/agents`, { cache: "no-store", signal: controller.signal });
-     if (!response.ok) return [];
-     const body = await response.json();
-     return (body.agents || []) as ProjectAgent[];
-    } catch { return []; }
+   const current = ++version;
+   const projectIds = projectKey.split(",").filter(Boolean);
+   const teams = await Promise.all(projectIds.map(async projectId => {
+    try { return { projectId, agents: (await fetchProjectTeam(projectId, controller.signal)).agents }; }
+    catch { return { projectId }; }
    }));
-   if (!controller.signal.aborted) setAgents(Object.fromEntries(teams.flat().map(agent => [agent.chatId, agent])));
+   if (!controller.signal.aborted && current === version) setAgents(previous => mergeProjectChatAgents(previous, projectIds, teams));
   };
   void load();
   window.addEventListener("metis:team-changed", load);
@@ -71,7 +80,7 @@ export function useProjectChatAgents(projectIds: string[]) {
 }
 
 
-export function ProjectAgentNav({ projectId, activeChatId, onOpenChat, pinnedChatIds = [], renderActions }: { projectId: string; activeChatId?: string | null; onOpenChat: (chatId: string) => void; pinnedChatIds?: string[]; renderActions?: (agent: ProjectAgent, agents: ProjectAgent[]) => ReactNode }) {
+export function ProjectAgentNav({ projectId, activeChatId, onOpenChat, pinnedChatIds = [], renderIndicator, renderActions }: { projectId: string; activeChatId?: string | null; onOpenChat: (chatId: string) => void; pinnedChatIds?: string[]; renderIndicator?: (chatId: string) => ReactNode; renderActions?: (agent: ProjectAgent, agents: ProjectAgent[]) => ReactNode }) {
  const team = useProjectTeam(projectId);
  const [open, setOpen] = useState(false);
  useEffect(() => { const create = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail?.projectId === projectId && detail?.target === "nav") setOpen(true); }; window.addEventListener("metis:new-project-agent", create); return () => window.removeEventListener("metis:new-project-agent", create); }, [projectId]);
@@ -81,7 +90,7 @@ export function ProjectAgentNav({ projectId, activeChatId, onOpenChat, pinnedCha
   {team.agents.filter(a => !a.archivedAt).sort((a, b) => Number(pinnedChatIds.includes(b.chatId)) - Number(pinnedChatIds.includes(a.chatId))).map(agent => <div key={agent.id} className={cn("group flex w-full min-w-0 items-center rounded-lg hover:bg-muted", activeChatId === agent.chatId && "bg-muted text-foreground")}>
    <button type="button" onClick={() => onOpenChat(agent.chatId)} aria-current={activeChatId === agent.chatId ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
     <TeamAgentAvatar color={agent.color} name={agent.name} animated={activeChatId === agent.chatId || agent.status === "running"} className="size-8"/>
-    <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5 text-[13px] font-medium"><span className="truncate">{agent.name}</span>{pinnedChatIds.includes(agent.chatId) ? <Pin className="size-3 shrink-0 fill-current" aria-label="Pinned chat"/> : null}</span><span className="block truncate text-[11px] text-muted-foreground">{agent.role}</span><span className={cn("block text-[11px]", agent.status === "error" ? "text-destructive" : "text-muted-foreground")}><RunStatus status={agent.status} label={labels[agent.status] || agent.status}/></span></span>
+    <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5 text-[13px] font-medium"><span className="truncate">{agent.name}</span>{activeChatId !== agent.chatId ? renderIndicator?.(agent.chatId) : null}{pinnedChatIds.includes(agent.chatId) ? <Pin className="size-3 shrink-0 fill-current" aria-label="Pinned chat"/> : null}</span><span className="block truncate text-[11px] text-muted-foreground">{agent.role}</span><span className={cn("block text-[11px]", agent.status === "error" ? "text-destructive" : "text-muted-foreground")}><RunStatus status={agent.status} label={labels[agent.status] || agent.status}/></span></span>
    </button>
    {renderActions?.(agent, team.agents)}
   </div>)}
@@ -156,7 +165,7 @@ export function ProjectAgentsPanel({ projectId, onOpenChat }: { projectId: strin
  return <section className="space-y-4" aria-label="Agent team" data-slot="project-agents">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-base font-semibold">Your team</h2><p className="mt-1 text-xs text-muted-foreground">Message an agent to start work. Handoffs stay visible across the team.</p></div><Button variant="outline" size="sm" onClick={() => setPresetsOpen(true)}>Team presets</Button></div>
   {team.error || actionError ? <p role="alert" className="text-sm text-destructive">{team.error || actionError} <button className="underline" onClick={() => void team.load()}>Retry</button></p> : null}
-  {team.loading ? <p role="status" className="py-6 text-sm text-muted-foreground">Loading team…</p> : !visible.length ? <div className="py-6"><h3 className="text-sm font-medium">Give your project a team</h3><p className="mt-1 text-sm text-muted-foreground">Create any role, or add a Coordinator, Planner, Software Engineer, and Tester.</p><Button variant="outline" className="mt-3" onClick={async () => { setActionError(""); try { const r = await fetch(`/api/projects/${projectId}/agents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preset: true }) }); const b = await r.json(); if (!r.ok) throw new Error(b.error); changed(); } catch (e) { setActionError(e instanceof Error ? e.message : "Could not create team."); } }}>Add starter team</Button></div> : <ul className="divide-y divide-border/50">
+  {team.loading ? <p role="status" className="py-6 text-sm text-muted-foreground">Loading team…</p> : !visible.length && team.error ? null : !visible.length ? <div className="py-6"><h3 className="text-sm font-medium">Give your project a team</h3><p className="mt-1 text-sm text-muted-foreground">Create any role, or add a Coordinator, Planner, Software Engineer, and Tester.</p><Button variant="outline" className="mt-3" onClick={async () => { setActionError(""); try { const r = await fetch(`/api/projects/${projectId}/agents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preset: true }) }); const b = await r.json(); if (!r.ok) throw new Error(b.error); changed(); } catch (e) { setActionError(e instanceof Error ? e.message : "Could not create team."); } }}>Add starter team</Button></div> : <ul className="divide-y divide-border/50">
    {visible.map(agent => <li key={agent.id} className="flex items-center gap-3 py-3">
     <button onClick={() => onOpenChat(agent.chatId)} className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open ${agent.name} chat`}><TeamAgentAvatar color={agent.color} name={agent.name} animated={agent.status === "running"}/><span className="min-w-0"><span className="block truncate text-sm font-medium">{agent.name}</span><span className="block text-xs text-muted-foreground">{agent.role}</span><span className="mt-0.5 block text-xs text-muted-foreground">{agent.supervisorId ? `Reports to ${team.agents.find(a => a.id === agent.supervisorId)?.name || "archived supervisor"} · ` : ""}<RunStatus status={agent.status} label={labels[agent.status] || agent.status}/></span></span></button>
     {!agent.archivedAt ? <><Button variant="ghost" size="icon-sm" aria-label={`Edit ${agent.name}`} onClick={() => { setEditing(agent); setOpen(true); }}><Edit3 className="size-4"/></Button><Button variant="ghost" size="icon-sm" aria-label={`Archive ${agent.name}`} onClick={() => setRemoving(agent)}><Trash2 className="size-4"/></Button></> : <span className="text-xs text-muted-foreground">History kept</span>}

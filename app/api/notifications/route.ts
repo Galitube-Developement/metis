@@ -1,5 +1,5 @@
 import { getAuthenticatedUserId } from "@/lib/auth";
-import { createNotification, getNotificationFeed, setNotificationPrefs } from "@/lib/notification-store";
+import { createNotification, getNotificationFeed, setNotificationPrefs, notificationDeliverySummary } from "@/lib/notification-store";
 import { listRemoteClients } from "@/lib/remote-clients";
 import { notificationCapability } from "@/lib/notification-remote";
 export const runtime = "nodejs";
@@ -22,6 +22,6 @@ export async function PATCH(req: Request) {
 export async function POST(req: Request) {
   const ownerId = await getAuthenticatedUserId(req);
   if (!ownerId) return response({error:"Unauthorized"},401);
-  try { return response({notification:createNotification(ownerId,await req.json())},201); }
+  try { const notification = createNotification(ownerId,await req.json()); return response({notification,delivery:notificationDeliverySummary(ownerId,notification.id)},201); }
   catch { return response({error:"Invalid notification or unavailable chat"},400); }
 }

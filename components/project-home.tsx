@@ -4,9 +4,10 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Brain, FileText, Folder, ImagePlus, Layers, Paperclip, Plus, StickyNote, Trash2, Upload, X, type LucideIcon } from "lucide-react";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { ProjectMemoryManager, type ProjectMemoryItem } from "@/components/project-memory-manager";
-import { ProjectSkillsManager, type ProjectSkillItem } from "@/components/project-skills-manager";
-import { ProjectAgentModeSelect } from "@/components/project-agent-mode-select";
+import { ProjectMemoryManager } from "@/components/project-memory-manager";
+import { ProjectSkillsManager } from "@/components/project-skills-manager";
+import { ProjectModelSelect } from "@/components/project-model-select";
+import type { ProjectModelSettings } from "@/lib/project-model";
 import { ProjectAgentsPanel } from "@/components/project-agents-panel";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,28 +24,7 @@ import { ProjectColorPicker, ProjectIconPicker } from "@/components/project-appe
 import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS } from "@/lib/project-constants";
 import { cn } from "@/lib/utils";
 
-type ProjectHomeData = {
- project: {
-  id: string;
-  name: string;
-  mode?: "chat" | "agents";
-  allowAgentManagement?: boolean;
-  defaultModeId?: string;
-  hideChatsFromAll?: boolean;
-  icon: string;
-  color: string;
-  instructions: string;
-  memoryMode: "default" | "project_only";
-  disabledSkillIds: string[];
-  memories: ProjectMemoryItem[];
-  logoStoredName?: string;
-  updatedAt?: string;
- };
- files: Array<{ id: string; name: string; mimeType: string; size: number }>;
- notes: Array<{ id: string; title: string; color?: string }>;
- chats: Array<{ id: string; title: string }>;
- skills: ProjectSkillItem[];
-};
+import { fetchProjectHome, type ProjectHomeData } from "@/lib/project-home-client";
 
 type ProjectHomePanel = "instructions" | "memory" | "skills" | "files";
 
@@ -181,7 +161,7 @@ export function ProjectHome({
  const [dragOver, setDragOver] = useState(false);
  const [memorySaving, setMemorySaving] = useState(false);
  const [chatVisibilitySaving, setChatVisibilitySaving] = useState(false);
- const [defaultAgentSaving, setDefaultAgentSaving] = useState(false);
+ const [defaultModelSaving, setDefaultModelSaving] = useState(false);
  const [agentManagementSaving, setAgentManagementSaving] = useState(false);
  const [activePanel, setActivePanel] = useState<ProjectHomePanel | null>(null);
  const togglePanel = (id: ProjectHomePanel) => {
@@ -190,6 +170,7 @@ export function ProjectHome({
  const logoInputRef = useRef<HTMLInputElement>(null);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const loadGenerationRef = useRef(0);
+ const loadRequestRef = useRef(0);
 
  const applyBody = (body: ProjectHomeData) => {
  setData(body);
@@ -203,14 +184,14 @@ export function ProjectHome({
 
  const load = useCallback(async (signal?: AbortSignal) => {
  const generation = loadGenerationRef.current;
+ const request = ++loadRequestRef.current;
  try {
-  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { cache: "no-store", signal });
-  const body = (await response.json().catch(() => ({}))) as ProjectHomeData & { error?: string };
-  if (signal?.aborted || generation !== loadGenerationRef.current) return;
-  if (!response.ok) throw new Error(body.error || "Could not load project.");
+  const body = await fetchProjectHome(projectId, signal);
+  if (signal?.aborted || generation !== loadGenerationRef.current || request !== loadRequestRef.current) return;
   applyBody(body);
  } catch (cause) {
   if (signal?.aborted || (cause instanceof DOMException && cause.name === "AbortError") || (cause instanceof Error && cause.name === "AbortError")) return;
+  if (generation !== loadGenerationRef.current || request !== loadRequestRef.current) return;
   setError(cause instanceof Error ? cause.message : "Could not load project.");
  }
  }, [projectId]);
@@ -288,22 +269,22 @@ export function ProjectHome({
   }
  }
 
- async function saveDefaultAgent(defaultModeId: string) {
-  if (defaultAgentSaving) return;
-  setDefaultAgentSaving(true); setError("");
+ async function saveDefaultModel(settings: ProjectModelSettings) {
+  if (defaultModelSaving) return;
+  setDefaultModelSaving(true); setError("");
   const generation = loadGenerationRef.current;
   try {
    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ defaultModeId }),
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
    });
    const body = await response.json() as { project?: ProjectHomeData["project"]; error?: string };
-   if (!response.ok || !body.project) throw new Error(body.error || "Could not save the default agent.");
+   if (!response.ok || !body.project) throw new Error(body.error || "Could not save the default model.");
    if (generation !== loadGenerationRef.current) return;
    setData(current => current?.project.id === body.project!.id ? { ...current, project: body.project! } : current);
    window.dispatchEvent(new Event("metis:projects-changed"));
   } catch (cause) {
-   if (generation === loadGenerationRef.current) setError(cause instanceof Error ? cause.message : "Could not save the default agent.");
-  } finally { setDefaultAgentSaving(false); }
+   throw cause;
+  } finally { setDefaultModelSaving(false); }
  }
 
  async function saveAgentManagement(allowed: boolean) {
@@ -419,7 +400,7 @@ export function ProjectHome({
   onDeleted();
  }
 
- if (error && (!data || data.project.id !== projectId)) return <p className="p-6 text-sm text-destructive">{error}</p>;
+ if (error && (!data || data.project.id !== projectId)) return <p role="alert" className="p-6 text-sm text-destructive">{error} <button type="button" className="underline" onClick={() => void load()}>Retry</button></p>;
  if (!data || data.project.id !== projectId) return <ProjectHomeSkeleton />;
 
  return (
@@ -504,7 +485,7 @@ export function ProjectHome({
     <>
      <section aria-label="Agent settings" className="grid gap-3">
       <h3 className="text-sm font-medium">Agent settings</h3>
-      <ProjectAgentModeSelect id="project-default-agent" value={data.project.defaultModeId || "agent"} onChange={value => { void saveDefaultAgent(value); }} disabled={defaultAgentSaving} />
+      <ProjectModelSelect key={data.project.id} id="project-default-model" value={data.project} onChange={saveDefaultModel} disabled={defaultModelSaving} />
      </section>
      <section aria-labelledby="agent-permissions-heading" className="grid gap-3">
       <h3 id="agent-permissions-heading" className="text-sm font-medium">Agent permissions</h3>

@@ -1,4 +1,4 @@
-import { projectModeForChat } from "@/lib/project-agent-mode-server";
+import { modeById } from "@/lib/modes";
 import { agentRulesPrompt } from "@/lib/agent-rules";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { projectTeamContextBlock } from "@/lib/project-team";
@@ -101,7 +101,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
   const project = !incognito ? scope?.project : undefined;
   const globalSettings = getGlobalModelSettings(ownerId);
   const skillSettings = projectSkillSettings(globalSettings, project);
-  const activeMode = projectModeForChat(chat, job.modeId || chat.sessionState?.modeId, globalSettings.customModes || []);
+  const activeMode = modeById(job.modeId || chat.sessionState?.modeId, globalSettings.customModes || []);
   const globalFacts = incognito
     ? []
     : globalFactsForScope({

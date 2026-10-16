@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { projectActivityIndicator, chatActivityIndicator, type ChatAttention } from "@/lib/chat-activity";
+import { ChatActivityIndicator } from "@/components/chat-activity-indicator";
 import { FolderPlus, Plus, Sparkles } from "lucide-react";
 import { ProjectColorPicker, ProjectIconPicker } from "@/components/project-appearance-picker";
-import { ProjectAgentModeSelect } from "@/components/project-agent-mode-select";
+import { ProjectModelSelect } from "@/components/project-model-select";
+import type { ProjectModelSettings } from "@/lib/project-model";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { TeamPresetDialog } from "@/components/team-preset-dialog";
 import type { TeamDraft, TeamPreset } from "@/lib/team-preset-types";
@@ -26,7 +29,9 @@ export type SidebarProject = {
  id: string;
  name: string;
  mode?: "chat" | "agents";
- defaultModeId?: string;
+ defaultModelEnabled?: boolean;
+  defaultModelId?: string;
+  defaultModelParams?: Array<{ id: string; value: string }>;
  hideChatsFromAll?: boolean;
  icon: string;
  color: string;
@@ -34,7 +39,7 @@ export type SidebarProject = {
  updatedAt?: string;
 };
 
-export type SidebarChat = {
+export type SidebarChat = ChatAttention & {
  id: string;
  title: string;
  projectId?: string;
@@ -103,7 +108,7 @@ export function ProjectNav({
  const [icon, setIcon] = useState<string>(PROJECT_ICONS[0]);
  const [color, setColor] = useState(PROJECT_COLORS[0]);
  const [agentMode, setAgentMode] = useState<"chat" | "agents">("chat");
- const [defaultModeId, setDefaultModeId] = useState("agent");
+ const [defaultModel, setDefaultModel] = useState<ProjectModelSettings>({ defaultModelEnabled: false });
  const [teamPreset, setTeamPreset] = useState("none");
  const [teamDraft, setTeamDraft] = useState<TeamDraft | null>(null);
  const [savedPresets, setSavedPresets] = useState<TeamPreset[]>([]);
@@ -148,10 +153,10 @@ export function ProjectNav({
  async function create() {
   setCreating(true); setCreateError("");
   try {
-   const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() || "New project", icon, color, mode: agentMode, ...(agentMode === "agents" ? { defaultModeId } : {}), teamPreset: agentMode === "agents" && teamPreset === "starter", ...(agentMode === "agents" && teamDraft ? { teamDraft } : {}) }) });
+   const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() || "New project", icon, color, mode: agentMode, ...(agentMode === "agents" ? defaultModel : {}), teamPreset: agentMode === "agents" && teamPreset === "starter", ...(agentMode === "agents" && teamDraft ? { teamDraft } : {}) }) });
    const body = (await response.json()) as { project?: SidebarProject; error?: string };
    if (!response.ok || !body.project) throw new Error(body.error || "Could not create project.");
-   setCreateOpen(false); setName(""); setAgentMode("chat"); setDefaultModeId("agent"); setTeamPreset("none"); setTeamDraft(null); load(true);
+   setCreateOpen(false); setName(""); setAgentMode("chat"); setDefaultModel({ defaultModelEnabled: false }); setTeamPreset("none"); setTeamDraft(null); load(true);
    window.dispatchEvent(new Event("metis:projects-changed")); onOpenProject(body.project.id); onCollapseNav?.();
   } catch (cause) { setCreateError(cause instanceof Error ? cause.message : "Could not create project."); }
   finally { setCreating(false); }
@@ -243,13 +248,14 @@ export function ProjectNav({
         className="size-4 rounded-full"
        />
        <span className="min-w-0 truncate">{project.name}</span>
+       <ChatActivityIndicator indicator={projectActivityIndicator(chats.filter(chat => chat.projectId === project.id), activeChatId)}/>
       </button>,
       )}
       </div>
      );
     })}
    </div>
-   {activeProjectId && projects.find(p => p.id === activeProjectId)?.mode === "agents" ? <ProjectAgentNav projectId={activeProjectId} activeChatId={activeChatId} onOpenChat={onOpenAgentChat} pinnedChatIds={chats.filter(chat => chat.pinned).map(chat => chat.id)} renderActions={renderAgentActions}/> : droppable(
+   {activeProjectId && projects.find(p => p.id === activeProjectId)?.mode === "agents" ? <ProjectAgentNav projectId={activeProjectId} activeChatId={activeChatId} onOpenChat={onOpenAgentChat} pinnedChatIds={chats.filter(chat => chat.pinned).map(chat => chat.id)} renderIndicator={chatId => <ChatActivityIndicator indicator={chatActivityIndicator(chats.find(chat => chat.id === chatId) || {})}/>} renderActions={renderAgentActions}/> : droppable(
     activeProjectId || null,
     <div className="space-y-1">
      <div className="flex items-center justify-between px-2.5 pt-2">
@@ -303,7 +309,7 @@ export function ProjectNav({
         {([["chat", "No"], ["agents", "Yes"]] as const).map(([value, label]) => <button key={value} type="button" className={cn("rounded-lg border px-3 py-2 text-left text-xs transition-colors", agentMode === value ? "border-foreground bg-muted" : "border-border hover:bg-muted/50")} aria-pressed={agentMode === value} onClick={() => setAgentMode(value)}><span className="block font-medium">{label}</span><span className="mt-0.5 block text-muted-foreground">{value === "agents" ? "Team of agents" : "Regular project chats"}</span></button>)}
        </div>
       </div>
-      {agentMode === "agents" ? <ProjectAgentModeSelect id="new-project-default-agent" value={defaultModeId} onChange={setDefaultModeId} disabled={creating} /> : null}
+      {agentMode === "agents" ? <ProjectModelSelect id="new-project-default-model" value={defaultModel} onChange={value => setDefaultModel(current => ({ ...current, ...value }))} disabled={creating} /> : null}
       {agentMode === "agents" ? <div className="grid gap-2"><label className="grid gap-2 text-xs text-muted-foreground">Team preset <select aria-label="Team preset" value={teamPreset} onChange={(event) => {
         const value = event.target.value;
         if (value === "ai") { setPresetPurpose("ai"); setPresetOpen(true); return; }

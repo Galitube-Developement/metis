@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolPart } from "@/lib/store";
 import { estimateContextTokens } from "@/lib/context-window";
 import { enrichToolDisplay } from "@/lib/tool-call-display";
+import { editedFileFromTool } from "@/lib/edited-files";
 
 const INLINE_PAYLOAD_LIMIT = 2_048;
 const PREVIEW_LENGTH = 256;
@@ -33,6 +34,7 @@ export function compactChatPageMessages(messages: ChatMessage[], chatId: string)
       const url = `/api/chats/${encodeURIComponent(chatId)}/tool-result?messageId=${encodeURIComponent(message.id)}&toolId=${encodeURIComponent(tool.id)}`;
       return {
         ...tool,
+        ...(tool.status === "completed" ? { editedFile: editedFileFromTool(tool) } : {}),
         name: display.name,
         kind: display.kind,
         ...(deferResult ? { result: tool.result!.slice(0, PREVIEW_LENGTH), resultUrl: url } : {}),

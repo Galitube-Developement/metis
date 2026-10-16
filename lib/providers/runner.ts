@@ -51,9 +51,10 @@ import {
   getProviderSessionBinding,
   nativeSessionNeedsManagedCompaction,
 } from "@/lib/providers/session-bindings";
-import { withLocalFileEditSnapshot } from "@/lib/file-edit-snapshot";
+import { withEditedFileTracking, withLocalFileEditSnapshot } from "@/lib/file-edit-snapshot";
 import { getAgentCwd } from "@/lib/mcp";
 import { isJobWaitingForUser } from "@/lib/user-input-resume";
+import { parkEndedUserInputWriter, commitWithUserInputContinuation } from "@/lib/db-jobs";
 
 async function runProvider(context: ProviderContext): Promise<ProviderResult> {
   const providerKey =
@@ -303,6 +304,7 @@ export async function runAlternativeProviderJob(
       existingIndex >= 0 ? tools[existingIndex] : undefined,
       agentCwd,
     );
+    normalizedTool = withEditedFileTracking(normalizedTool, agentCwd, existingIndex >= 0 ? tools[existingIndex] : undefined);
     if (existingIndex >= 0) {
       tools[existingIndex] = { ...tools[existingIndex], ...normalizedTool };
     } else {
@@ -418,11 +420,7 @@ export async function runAlternativeProviderJob(
     }
     if (isJobWaitingForUser(durableStatus)) {
       checkpoint(true);
-      emit("status", {
-        status: "waiting_for_user",
-        message: "Waiting for the user's response before resuming the agent.",
-      });
-      return true;
+      if (parkEndedUserInputWriter(job.id)) return true;
     }
     const cancelled =
       controller.signal.aborted || durableStatus === "cancelled";
@@ -551,34 +549,36 @@ export async function runAlternativeProviderJob(
         completedAt: new Date().toISOString(),
       },
     });
-    const completedChat = updateChat(
-      job.chatId,
-      {
+    commitWithUserInputContinuation(job.id, () => {
+      const completedChat = updateChat(
+        job.chatId,
+        {
+          ...(result.agentId ? { agentId: result.agentId } : {}),
+          runStatus: "completed",
+          runUpdatedAt: new Date().toISOString(),
+          queueMessage: null,
+          pendingApproval: null,
+        },
+        job.userId,
+      );
+      if (!completedChat) {
+        throw new Error("Run completion lost its active worker lease before the chat projection was committed.");
+      }
+      chat = completedChat;
+      // Publish the terminal timeline event while the worker still owns the
+      // lease. updateJob(completed) releases that lease and must be last.
+      emit("done", {
+        status: "finished",
+        provider: definition.key,
+        modelId: parsed.modelId,
         ...(result.agentId ? { agentId: result.agentId } : {}),
-        runStatus: "completed",
-        runUpdatedAt: new Date().toISOString(),
-        queueMessage: null,
-        pendingApproval: null,
-      },
-      job.userId,
-    );
-    if (!completedChat) {
-      throw new Error("Run completion lost its active worker lease before the chat projection was committed.");
-    }
-    chat = completedChat;
-    // Publish the terminal timeline event while the worker still owns the
-    // lease. updateJob(completed) releases that lease and must be last.
-    emit("done", {
-      status: "finished",
-      provider: definition.key,
-      modelId: parsed.modelId,
-      ...(result.agentId ? { agentId: result.agentId } : {}),
-    });
-    updateJob(job.id, {
-      status: "completed",
-      ...(result.agentId ? { agentId: result.agentId } : {}),
-    });
-    completionCommitted = true;
+      });
+      updateJob(job.id, {
+        status: "completed",
+        ...(result.agentId ? { agentId: result.agentId } : {}),
+      });
+      completionCommitted = true;
+    }, result.agentId, assistantMessageId);
   } catch (error) {
     if (modelSwitchTarget && handoffModelSwitch()) return true;
     if (completionCommitted) {

@@ -1,4 +1,5 @@
 import { isSubagentControlName, isSubagentSpawnName } from "@/lib/subagent-bar";
+import { isMemoryScope } from "@/lib/memory-scopes.mjs";
 
 function joinAssistantText(left: string, right: string): string {
   if (!left) return right;
@@ -699,7 +700,8 @@ function extractPath(args: Record<string, unknown>, fallback?: string): string |
     || stringField(args, "path")
     || stringField(args, "file")
     || stringField(args, "filePath")
-    || stringField(args, "filename");
+    || stringField(args, "filename")
+    || stringField(args, "root");
 }
 
 function clientIdFromTarget(target?: string): string | undefined {
@@ -777,7 +779,8 @@ function extractSearchPattern(args: Record<string, unknown>): string | undefined
     || stringField(args, "query")
     || stringField(args, "search_term")
     || stringField(args, "glob_pattern")
-    || stringField(args, "regex");
+    || stringField(args, "regex")
+    || stringField(args, "symbol");
 }
 
 export type ToolActionIcon =
@@ -825,7 +828,7 @@ export function resolveToolAction(name?: string, kind?: string): {
   if (/(search_tools|get_mcp_tools|list_mcp|search_registry)/.test(value)) {
     return { verb: "Searched", icon: "mcp", category: "search" };
   }
-  if (/(web_search|context_search|exa_|github_search)/.test(value) || (kind === "mcp" && value.includes("search"))) {
+  if (/(web_search|context_search|exa_|github_search|repo_search|file_search|inspect_codebase|find_symbol)/.test(value) || (kind === "mcp" && value.includes("search"))) {
     return { verb: "Searched", icon: "search", category: "search" };
   }
   if (/(list_directory|glob|listdir)/.test(value)) {
@@ -869,6 +872,8 @@ export function toolCallHeadline(input: {
     core = pattern ? `${action.verb} ${pattern}` : action.verb;
   } else if (action.verb === "Searched" && /(search_tools|get_mcp_tools|list_mcp)/i.test(toolName)) {
     core = "Searched MCP tools";
+  } else if (/(?:^|__|[.:])file_search$/.test(toolName)) {
+    core = pattern ? `Searched files ${pattern}` : "Searched files";
   } else if (action.verb === "Explored") {
     core = shortPath || pattern ? `${action.verb} ${shortPath || pattern}` : action.verb;
   } else if (action.category === "file" || action.category === "edit") {
@@ -884,13 +889,13 @@ export function toolCallHeadline(input: {
 
   const title = remote && hostname ? `${hostname}: ${core}` : core;
   const previewSource = [
-    action.verb === "Grepped" ? filePath : undefined,
+    action.category === "search" ? filePath : undefined,
     action.verb === "Searched" ? pattern : undefined,
     stringField(args, "description"),
     input.detail,
   ].find((value) => {
     if (!value) return false;
-    if (value === command || value === filePath || value === core || value === shortPath) return false;
+    if (value === command || value === core || value === shortPath || (value === filePath && action.category !== "search")) return false;
     if (pattern && value === pattern && core.includes(pattern)) return false;
     return true;
   });
@@ -990,6 +995,7 @@ export function memoryCardFromPayload(
   name: string,
   input?: unknown,
   result?: unknown,
+  status?: string,
 ): { title: string; body: string } {
   const inner = innerToolName(name, input, result).toLowerCase();
   const resultRecord = unwrapToolRecord(result) || {};
@@ -1013,17 +1019,29 @@ export function memoryCardFromPayload(
   });
   const isList = /list/.test(inner);
   const isDelete = /(delete|remove)/.test(inner);
-  const title = isList
-    ? (contents.length === 1 ? "Memory" : "Memories")
-    : isDelete ? "Deleted memory"
-    : /(edit|update)/.test(inner) ? "Updated memory"
-    : /(add|create|remember)/.test(inner) ? "Saved memory"
-    : "Memory";
+  // The response reports the effective scope, including server-selected defaults.
+  // Older payloads without a scope stay generic rather than guessing a default.
+  const scope = [record.scope, asRecord(record.memory)?.scope, inputRecord.scope]
+    .find(isMemoryScope);
+  const scopeLabel = scope === "chat" ? "Chat " : scope === "project" ? "Project " : scope === "global" ? "Global " : "";
+  const label = `${scopeLabel}${isList && contents.length !== 1 ? "Memories" : "Memory"}`;
+  const isEdit = /(edit|update)/.test(inner);
+  const isSave = /(add|create|remember)/.test(inner);
+  const running = isToolRunning(status) && result === undefined;
+  const title = running
+    ? `${isList ? "Listing" : isDelete ? "Deleting" : isEdit ? "Updating" : isSave ? "Saving" : "Reading"} ${label}…`
+    : isList ? label
+    : isDelete ? `Deleted ${label}`
+    : isEdit ? `Updated ${label}`
+    : isSave ? `Saved ${label}`
+    : label;
   // Mutation acknowledgements can contain only an ID/success flag. In that
   // case show the submitted content, while preferring the actual stored text.
   const single = contentFrom(record) || (!isList ? contentFrom(inputRecord) : undefined);
   const error = nonEmptyString(record.error);
-  if (error) return { title: "Memory failed", body: error };
+  if (error || record.isError === true || status === "failed" || status === "error") {
+    return { title: `${scopeLabel}Memory Failed`, body: error || "Memory operation failed" };
+  }
   if (isList && !contents.length && !single) return { title, body: "No memories" };
   const body = contents.length
     ? (contents.length === 1 ? contents[0] : contents.map((item) => `• ${item}`).join("\n"))
@@ -1084,8 +1102,15 @@ export function adoptOptimisticAssistantId<T extends MergeableChatMessage>(curre
   const optimistic = [...current].reverse().find((message) => (
     message.role === "assistant" && message.streaming && message.id.startsWith("a-")
   ));
-  const serverAssistant = [...incoming].reverse().find((message) => message.role === "assistant");
-  if (!optimistic || !serverAssistant || optimistic.id === serverAssistant.id) return current;
+  if (!optimistic) return current;
+  // A checkpoint can still contain only the previous turn while the new run
+  // starts. Adopt an ID only after the matching submitted user message.
+  const optimisticIndex = current.indexOf(optimistic);
+  const prompt = current.slice(0, optimisticIndex).reverse().find((message) => message.role === "user");
+  const promptIndex = prompt ? incoming.findIndex((message) => message.id === prompt.id && message.role === "user") : -1;
+  if (promptIndex < 0) return current;
+  const serverAssistant = incoming.slice(promptIndex + 1).find((message) => message.role === "assistant");
+  if (!serverAssistant || optimistic.id === serverAssistant.id) return current;
   return current.map((message) => (
     message.id === optimistic.id ? { ...message, id: serverAssistant.id } : message
   ));

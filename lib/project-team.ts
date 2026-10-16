@@ -1,13 +1,11 @@
+import { validateProjectModelSelection } from "@/lib/project-model-server";
+export { validateProjectModelSelection } from "@/lib/project-model-server";
 import type { ChatRunStatus } from "@/lib/store";
 import { createHash, randomUUID } from "node:crypto";
 import { getDatabase, parseData, transaction } from "@/lib/sqlite";
 import { createChat, appendMessage, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import { cancelAgentJob, enqueueJob, getJob, requestJobCancel } from "@/lib/db-jobs";
 import { DEFAULT_AGENT_RUNTIME_MS, agentRuntimeDeadline, resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
-import { isModelAllowed } from "@/lib/model-access";
-import { findActiveConnection, getProviderConnection, listProviderModels } from "@/lib/provider-connections";
-import { parseModelKey } from "@/lib/providers/types";
-import { providerModelIdsMatch } from "@/lib/providers/model-aliases";
 import { getProject } from "@/lib/projects";
 import { modeById } from "@/lib/modes";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
@@ -55,13 +53,6 @@ export function getProjectAgentForChat(chatId: string, ownerId?: string) {
 export function listProjectAgents(projectId: string, ownerId?: string) {
  if (!ownerId || !getProject(projectId, ownerId)) return [];
  return getDatabase().prepare("SELECT data FROM project_agents WHERE project_id = ? AND owner_id = ? ORDER BY created_at, rowid").all(projectId, ownerId).map(row => rowAgent(row, ownerId)).filter((a): a is ProjectAgent => !!a);
-}
-export function validateProjectModelSelection(ownerId: string, modelId?: string) {
- if (!modelId) return;
- const selected = parseModelKey(modelId);
- const connection = selected.connectionId ? getProviderConnection(selected.connectionId, ownerId) : findActiveConnection(ownerId, selected.providerKey);
- if (!connection?.enabled || !listProviderModels(connection.id).some(m => providerModelIdsMatch(selected.providerKey, m.id, selected.modelId))) throw new Error("This model has not been discovered. Refresh models in Settings.");
- if (!isModelAllowed(ownerId, modelId)) throw new Error("This model is not available for your account");
 }
 function validateSupervisor(projectId: string, id: string, supervisorId: string | undefined, ownerId: string) {
  if (!supervisorId) return;
@@ -216,7 +207,7 @@ export function syncProjectHandoffStatuses(projectId: string, ownerId?: string) 
  return transaction(() => {
   for (const h of listProjectHandoffs(projectId, ownerId)) {
    const job = h.jobId ? getJob(h.jobId) : null;
-   if (job && job.userId === ownerId) syncHandoffForJob(job);
+   if (job && job.userId === ownerId) syncHandoffForJob(job, { updateChatState: false });
   }
   return listProjectHandoffs(projectId, ownerId);
  });
