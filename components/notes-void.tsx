@@ -60,6 +60,8 @@ export function NotesVoid({
   const [globalPinnedIds, setGlobalPinnedIds] = useState<string[]>([]);
   const [configuredPinnedIds, setConfiguredPinnedIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [narrowViewport, setNarrowViewport] = useState(false);
+  const gridMode = narrowViewport && !compact;
   const [view, setView] = useState<View>({ x: 0, y: 0, zoom: 1 });
   const [drag, setDrag] = useState<DragState>(null);
   const [frontNoteId, setFrontNoteId] = useState<string | null>(null);
@@ -92,6 +94,20 @@ export function NotesVoid({
  const consumedFocusNoteIdRef = useRef<string | null>(null);
   const viewRef = useRef(view);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 1023px)");
+    const syncLayout = () => {
+      setNarrowViewport(query.matches);
+      setDrag(null);
+      pinchRef.current = null;
+      document.body.style.removeProperty("user-select");
+      document.body.style.removeProperty("cursor");
+    };
+    syncLayout();
+    query.addEventListener("change", syncLayout);
+    return () => query.removeEventListener("change", syncLayout);
+  }, []);
  notesRef.current = notes;
   viewRef.current = view;
 
@@ -208,7 +224,13 @@ export function NotesVoid({
     if (!note) return;
  consumedFocusNoteIdRef.current = focusNoteId;
     setFrontNoteId(note.id);
-    setView((current) => {
+    if (gridMode) {
+      requestAnimationFrame(() => {
+        const card = Array.from(surfaceRef.current?.querySelectorAll<HTMLElement>("[data-note-card]") || [])
+          .find((item) => item.dataset.noteId === note.id);
+        card?.scrollIntoView({ block: "nearest" });
+      });
+    } else setView((current) => {
       const bounds = surfaceRef.current?.getBoundingClientRect();
       return {
         ...current,
@@ -218,7 +240,7 @@ export function NotesVoid({
     });
     const timer = window.setTimeout(() => setFrontNoteId(null), 2200);
     return () => window.clearTimeout(timer);
-  }, [focusNoteId, notes]);
+  }, [focusNoteId, gridMode, notes]);
 
   useEffect(() => {
     const refreshOnReturn = () => {
@@ -508,6 +530,10 @@ export function NotesVoid({
       const nextNotes = [created, ...notesRef.current.filter((item) => item.id !== created.id)];
       notesRef.current = nextNotes;
       setNotes(nextNotes);
+      if (gridMode) {
+        setSearch("");
+        setEditingTitleId(created.id);
+      }
       setStatus("saved");
     } catch (cause) {
       setStatus("error");
@@ -681,7 +707,7 @@ export function NotesVoid({
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface) return;
+    if (!surface || gridMode) return;
     const wheelOptions = { capture: true, passive: false } as const;
     const handleWheel = (event: WheelEvent) => {
       const insideEditor = event.target instanceof Element && event.target.closest(".editable-markdown");
@@ -755,7 +781,7 @@ export function NotesVoid({
       document.removeEventListener("visibilitychange", resetSurfaceInteraction);
       window.removeEventListener("pageshow", resetSurfaceInteraction);
     };
-  }, [zoomAt]);
+  }, [gridMode, zoomAt]);
 
   const addMedia = useCallback((files: File[], dropPoint?: { x: number; y: number }) => {
     const currentView = viewRef.current;
@@ -815,21 +841,21 @@ export function NotesVoid({
       compact && "pointer-events-none absolute inset-0 z-10 rounded-none border-0 bg-transparent",
     )}>
       {!compact ? <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/40 px-2 py-1.5">
-        <div className="relative min-w-32 flex-1 sm:max-w-56">
+        <div className={cn("relative min-w-32 flex-1 sm:max-w-56", gridMode && "sm:max-w-none")}>
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" className="h-7 pl-7 text-xs" />
+          <Input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" className={cn("h-7 pl-7 text-xs", gridMode && "h-10 text-base")} />
         </div>
         <span className={cn("text-[10px]", status === "error" || status === "offline" ? "text-destructive" : "text-muted-foreground")}>
           {status === "loading" ? "Loading…" : status === "saving" ? "Saving…" : status === "offline" ? "Offline" : status === "error" ? "Error" : status === "saved" ? "Saved" : `${visibleNotes.length} items`}
         </span>
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+        <div className={cn("ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5", gridMode && "w-full justify-start [&_button]:h-10")}>
           {!compact ? <Button type="button" size="xs" onClick={() => void create()}><Plus className="size-3.5" />New note</Button> : null}
           <Button type="button" size="xs" variant="ghost" onClick={() => mediaInputRef.current?.click()}><Paperclip className="size-3.5" />Add files</Button>
           <input ref={mediaInputRef} type="file" multiple hidden aria-label="Add scratchpad files" onChange={(event) => { addMedia(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ""; }} />
-          <Button type="button" size="xs" variant="ghost" title="Arrange notes in a tidy, consistent layout" aria-label="Arrange notes in a tidy, consistent layout" onClick={() => arrangeNotes()}><LayoutGrid className="size-3.5" />Arrange</Button>
+          {!gridMode ? <><Button type="button" size="xs" variant="ghost" title="Arrange notes in a tidy, consistent layout" aria-label="Arrange notes in a tidy, consistent layout" onClick={() => arrangeNotes()}><LayoutGrid className="size-3.5" />Arrange</Button>
           <Button type="button" size="icon-xs" variant="ghost" title="Fit all notes" aria-label="Fit all notes" onClick={() => fitAll()}><Maximize2 className="size-3.5" /></Button>
           <Button type="button" size="icon-xs" variant="ghost" title="Zoom out" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, zoom: Math.max(0.2, current.zoom - 0.1) }))}><ZoomOut className="size-3.5" /></Button>
-          <Button type="button" size="icon-xs" variant="ghost" title="Zoom in" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, zoom: Math.min(3, current.zoom + 0.1) }))}><ZoomIn className="size-3.5" /></Button>
+          <Button type="button" size="icon-xs" variant="ghost" title="Zoom in" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, zoom: Math.min(3, current.zoom + 0.1) }))}><ZoomIn className="size-3.5" /></Button></> : null}
           <Button type="button" size="icon-xs" variant="ghost" title="Reload notes" aria-label="Reload notes" onClick={() => void load()}><RefreshCw className="size-3.5" /></Button>
         </div>
       </div> : null}
@@ -886,29 +912,33 @@ export function NotesVoid({
       <div
         ref={surfaceRef}
         data-scratchpad-surface
+        data-notes-layout={gridMode ? "grid" : "canvas"}
         data-note-drop-target="scratchpad"
         tabIndex={0}
         aria-label="Scratchpad: drop or paste images and files"
         onPasteCapture={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); event.stopPropagation(); addMedia(files); } }}
         className={cn(
-          "relative min-h-0 flex-1 touch-none overflow-hidden",
+          "relative min-h-0 min-w-0 flex-1",
+          gridMode
+            ? "grid touch-pan-y auto-rows-max grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] content-start gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain p-4"
+            : "touch-none overflow-hidden",
         )}
         style={{
           backgroundColor: compact ? "transparent" : "var(--background)",
-          backgroundImage: compact
+          backgroundImage: compact || gridMode
             ? "none"
             : "radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--muted-foreground) 24%, transparent) 1px, transparent 1.2px)",
           backgroundSize: compact ? undefined : `${24 * view.zoom}px ${24 * view.zoom}px`,
           backgroundPosition: compact ? undefined : `${view.x}px ${view.y}px`,
         }}
         onPointerDown={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (gridMode || event.target !== event.currentTarget) return;
           const point = localPoint(event);
           setDrag({ id: "__pan__", dx: point.x, dy: point.y, mode: "move" });
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
-          if (!drag) return;
+          if (gridMode || !drag) return;
           const point = localPoint(event);
           if (drag.mode === "move" && drag.id === "__pan__") {
             setView((current) => ({ ...current, x: current.x + (point.x - drag.dx) * current.zoom, y: current.y + (point.y - drag.dy) * current.zoom }));
@@ -984,26 +1014,31 @@ export function NotesVoid({
           <article
             key={note.id}
             data-note-card
+            data-note-id={note.id}
             data-note-drop-target={note.id}
             className={cn(
-              "sticky-note pointer-events-auto absolute flex cursor-move flex-col overflow-hidden rounded-md border border-black/10 shadow-md transition-shadow",
+              "sticky-note pointer-events-auto flex min-w-0 flex-col overflow-hidden rounded-md border border-black/10 shadow-md transition-shadow",
+              gridMode ? "relative h-80" : "absolute cursor-move",
               note.id === frontNoteId && "ring-4 ring-primary ring-offset-2 ring-offset-background",
             )}
             style={{
-              left: note.position.x * view.zoom + view.x,
-              top: note.position.y * view.zoom + view.y,
-              width: note.size.width,
-              height: note.size.height,
-              transform: `scale(${view.zoom})`,
-              transformOrigin: "top left",
+              ...(!gridMode ? {
+                left: note.position.x * view.zoom + view.x,
+                top: note.position.y * view.zoom + view.y,
+                width: note.size.width,
+                height: note.size.height,
+                transform: `scale(${view.zoom})`,
+                transformOrigin: "top left",
+              } : {}),
               backgroundColor: note.color,
               ["--note-color" as string]: note.color,
               zIndex: note.id === frontNoteId ? visibleNotes.length + 1 : index + 1,
-              touchAction: "none",
+              touchAction: gridMode ? "pan-y" : "none",
             }}
             onPointerDown={(event) => {
               event.stopPropagation();
               setFrontNoteId(note.id);
+              if (gridMode) return;
               const target = event.target as HTMLElement;
               const fromContent = Boolean(target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]"));
               const fromEditorEmpty = Boolean(target.closest(".editable-markdown")) && !fromContent;
@@ -1027,7 +1062,7 @@ export function NotesVoid({
               event.currentTarget.setPointerCapture(event.pointerId);
             }}
           >
-            <div className="flex select-none items-center gap-1 border-b border-black/10 px-2 py-1">
+            <div className={cn("flex select-none items-center gap-1 border-b border-black/10 px-2 py-1", gridMode && "flex-wrap py-2 [&>button]:min-h-9 [&>div>button]:size-9")}>
               {editingTitleId === note.id ? (
                 <Input
                   autoFocus
@@ -1040,7 +1075,8 @@ export function NotesVoid({
                       event.currentTarget.blur();
                     }
                   }}
-                  className="h-6 min-w-0 flex-1 border-0 bg-transparent px-0 text-xs font-semibold text-black shadow-none focus-visible:ring-0"
+                  data-note-title
+                  className={cn("h-6 min-w-0 flex-1 border-0 bg-transparent px-0 text-xs font-semibold text-black shadow-none focus-visible:ring-0", gridMode && "h-9 w-full flex-auto basis-full text-base")}
                   aria-label="Note title"
                   onPointerDown={(event) => {
                     event.stopPropagation();
@@ -1050,7 +1086,8 @@ export function NotesVoid({
               ) : (
                 <button
                   type="button"
-                  className="min-w-0 flex-1 truncate bg-transparent px-0 text-left text-xs font-semibold text-black outline-none"
+                  data-note-title
+                  className={cn("min-w-0 flex-1 truncate bg-transparent px-0 text-left text-xs font-semibold text-black outline-none focus-visible:ring-2 focus-visible:ring-black/50", gridMode && "min-h-9 w-full flex-auto basis-full text-base")}
                   onClick={(event) => {
                     event.stopPropagation();
                     setEditingTitleId(note.id);
@@ -1074,7 +1111,7 @@ export function NotesVoid({
                   type="button"
                   size="icon-xs"
                   variant="ghost"
-                  className="size-6 text-black/70 hover:bg-black/10"
+                  className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
                   aria-label="Add todo"
                   title="Add todo"
                   onPointerDown={(event) => {
@@ -1097,7 +1134,7 @@ export function NotesVoid({
                     <input
                       ref={todoInputRef}
                       autoFocus
-                      className="h-6 w-full bg-transparent px-1 text-[11px] text-popover-foreground outline-none placeholder:text-muted-foreground"
+                      className={cn("h-6 w-full bg-transparent px-1 text-[11px] text-popover-foreground outline-none placeholder:text-muted-foreground", gridMode && "h-10 text-base")}
                       placeholder="Add a todo"
                       aria-label="New todo"
                       onKeyDown={(event) => {
@@ -1135,12 +1172,12 @@ export function NotesVoid({
                   </div>
                 ) : null}
               </div>
-              <Button type="button" size="icon-xs" variant="ghost" className="size-6 text-black/70 hover:bg-black/10" aria-label="Attach images or files" title="Attach images or files" onPointerDown={e=>e.stopPropagation()} onClick={()=>mediaInputRef.current?.click()}><Paperclip className="size-3" /></Button>
+              <Button type="button" size="icon-xs" variant="ghost" className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")} aria-label="Attach images or files" title="Attach images or files" onPointerDown={e=>e.stopPropagation()} onClick={()=>mediaInputRef.current?.click()}><Paperclip className="size-3" /></Button>
               <Button
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                className="size-6 text-black/70 hover:bg-black/10"
+                className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
                 aria-label="Change note color"
                 title="Change note color"
                 onPointerDown={(event) => {
@@ -1158,7 +1195,7 @@ export function NotesVoid({
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                className="size-6 text-black/70 hover:bg-black/10"
+                className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
                 aria-label={isPinned(note) ? "Unpin note from every chat" : "Pin note in every chat"}
                 title={isPinned(note) ? "Unpin from every chat" : "Pin in every chat"}
                 onPointerDown={(event) => {
@@ -1178,7 +1215,7 @@ export function NotesVoid({
                   type="button"
                   size="icon-xs"
                   variant="ghost"
-                  className="size-6 text-black/70 hover:bg-black/10"
+                  className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
                   aria-label="Open note in Shared Notes"
                   title="Open in Shared Notes"
                   onPointerDown={(event) => {
@@ -1197,7 +1234,7 @@ export function NotesVoid({
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                className="size-6 text-black/70 hover:bg-black/10"
+                className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
                 aria-label="Delete note"
                 onPointerDown={(event) => {
                   event.stopPropagation();
@@ -1275,7 +1312,7 @@ export function NotesVoid({
               }}
             />
             </div>}
-            {([
+            {!gridMode && ([
               ["n", "inset-x-1/2 top-0 h-2 w-1/2 -translate-x-1/2 cursor-ns-resize"],
               ["ne", "right-0 top-0 size-3 cursor-nesw-resize"],
               ["e", "inset-y-1/2 right-0 h-1/2 w-2 -translate-y-1/2 cursor-ew-resize"],
@@ -1303,7 +1340,7 @@ export function NotesVoid({
           </div>
         ) : !compact && !visibleNotes.length ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8 text-center text-xs text-muted-foreground">
-            Add a note, paste an image, or drop a file. Each item can be moved and resized.
+            {search.trim() ? "No notes match your search." : gridMode ? "Add a note, paste an image, or add a file." : "Add a note, paste an image, or drop a file. Each item can be moved and resized."}
           </div>
         ) : null}
       </div>
