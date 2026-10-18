@@ -128,7 +128,7 @@ import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
 import { latestPreparingTool } from "@/lib/tool-preparation";
 import { parseFileChangeRanges } from "@/lib/file-change-ranges";
-import { EditedFiles } from "@/components/edited-files";
+import { ComposerEditedFiles, EditedFiles } from "@/components/edited-files";
 import { editedFilesForMessage } from "@/lib/edited-files";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { chatActivityIndicator } from "@/lib/chat-activity";
@@ -2902,6 +2902,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       .filter((part) => part.kind === "shell" || part.kind === "read" || part.kind === "edit"),
   ), [messages]);
   const latestAssistantMessage = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
+  const composerEditedFiles = useMemo(() => latestAssistantMessage ? editedFilesForMessage(latestAssistantMessage) : [], [latestAssistantMessage]);
   const subagentOutputs = useMemo(() => dedupeChatBarSubagents(
     messages.flatMap((message) =>
       (message.parts ?? partsFromFlat(message))
@@ -11211,6 +11212,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ) : null}
                     </div>
                   ) : null}
+                  <ComposerEditedFiles key={`${activeChatId}:${latestAssistantMessage?.id}`} files={composerEditedFiles} />
                   {composer}
                 </div>
               </div>
