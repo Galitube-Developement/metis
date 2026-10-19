@@ -71,6 +71,25 @@ export function editedFilesForMessage(message: { tools?: ToolPart[]; parts?: Arr
   return [...files.values()];
 }
 
+/** Both locations use this turn selection so completion moves the list atomically. */
+export function activeEditedFilesMessageId(
+  messages: ReadonlyArray<{ id: string; role: string; streaming?: boolean; errorMessage?: string; programEvent?: unknown; questionAnswer?: unknown }>,
+  { running = false, loading = false }: { running?: boolean; loading?: boolean } = {},
+): string | undefined {
+  if (loading) return undefined;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    // A new prompt must never inherit files from an earlier response.
+    if (message.role === "user" && !message.questionAnswer) return undefined;
+    if (message.role !== "assistant" || message.programEvent) continue;
+    // An explicit terminal stream state wins over a delayed server running status.
+    if (message.streaming === false || message.errorMessage) return undefined;
+    if (message.streaming || running) return message.id;
+    return undefined;
+  }
+  return undefined;
+}
+
 export function editedFileHref(file: EditedFile): string | undefined {
   if (file.target !== "server") return undefined;
   const first = file.ranges?.[0];

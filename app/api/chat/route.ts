@@ -1,5 +1,5 @@
 import { materializeUploads } from "@/lib/file-upload-store";
-import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
+import { getAuthenticatedUser, isAuthenticated } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
 import { isChatWaitingForUser } from "@/lib/user-input-resume";
 import { enqueueJob, getActiveJob, getJobForMessageId } from "@/lib/db-jobs";
@@ -59,7 +59,8 @@ export async function POST(req: Request) {
   }
   let body: ChatBody = {};
   try {
-    const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
+    const actor = await getAuthenticatedUser(req);
+    const ownerId = actor?.id;
     body = (await req.json().catch(() => ({}))) as ChatBody;
     const chatId = body.chatId?.trim();
     const message = body.message?.trim() || "";
@@ -147,6 +148,8 @@ export async function POST(req: Request) {
         return true;
       },
     );
+    const occupied = getActiveJob(chatId);
+    if(occupied && occupied.userId!==ownerId) return Response.json({error:"Another project member is using this chat. Wait for their run to finish."},{status:409});
     const activeJob = getActiveJob(chatId, ownerId);
     if (activeJob) {
       // Network retries reuse messageId. Returning the already accepted job is
@@ -243,6 +246,7 @@ export async function POST(req: Request) {
           const userMessage = {
             id: messageId,
             role: "user" as const,
+            ...(ownerId && chat.projectId ? { authorId: ownerId, authorName: actor?.username || "Project member" } : {}),
             content:
               message ||
               `Attached ${resolvedAttachments.length} file${resolvedAttachments.length === 1 ? "" : "s"}`,

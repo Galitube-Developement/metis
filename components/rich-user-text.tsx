@@ -1,6 +1,10 @@
 "use client";
 
 import { LinkPreview } from "@/components/link-preview";
+import { FileLink } from "@/components/file-link";
+import { internalLinkNavigation, parseInternalLink } from "@/lib/internal-link";
+import { parseWorkspaceFileLink } from "@/lib/workspace-file-link";
+import { isFileUrl } from "@/lib/file-types";
 import { parseRichUserText } from "@/lib/user-text-links";
 import { ExternalLink } from "lucide-react";
 import { memo, useEffect, useState } from "react";
@@ -14,44 +18,18 @@ type Reference = {
   sessionId?: string;
 };
 
-function dispatchInternalLink(href: string, label: string) {
-  const workspaceMatch = href.match(/^workspace:\/\/(plan|canvas)\/([^/?#]+)(?:[?#].*)?$/i);
-  if (workspaceMatch) {
-    window.dispatchEvent(
-      new CustomEvent("ai-chat:open-workspace", {
-        detail: {
-          type: workspaceMatch[1].toLowerCase(),
-          id: decodeURIComponent(workspaceMatch[2]),
-        },
-      }),
-    );
-    return true;
-  }
-  const noteMatch = href.match(/^note:\/\/([^/?#]+)(?:[?#].*)?$/i);
-  if (noteMatch) {
-    window.dispatchEvent(
-      new CustomEvent("ai-chat:open-note", {
-        detail: { id: decodeURIComponent(noteMatch[1]) },
-      }),
-    );
-    return true;
-  }
-  const automationMatch = href.match(/^automation:\/\/([^/?#]+)(?:[?#].*)?$/i);
-  if (automationMatch) {
-    window.dispatchEvent(
-      new CustomEvent("ai-chat:open-automations", {
-        detail: { id: decodeURIComponent(automationMatch[1]) },
-      }),
-    );
-    return true;
-  }
-  return false;
+function dispatchInternalLink(href: string) {
+  const target = parseInternalLink(href);
+  if (!target) return false;
+  const navigation = internalLinkNavigation(target);
+  window.dispatchEvent(new CustomEvent(navigation.event, { detail: navigation.detail }));
+  return true;
 }
 
-function RichLink({ href, children }: { href: string; children: string }) {
+function RichLink({ href, children, ...props }: { href: string; children: string; "aria-describedby"?: string }) {
   const [hovered, setHovered] = useState(false);
   const [modifierHeld, setModifierHeld] = useState(false);
-  const internal = /^(workspace|note|automation):\/\//i.test(href);
+  const internal = Boolean(parseInternalLink(href));
   useEffect(() => {
     if (!hovered || internal) return;
     const update = (event: KeyboardEvent) => {
@@ -69,6 +47,7 @@ function RichLink({ href, children }: { href: string; children: string }) {
   }, [hovered, internal]);
   return (
     <a
+      {...props}
       href={href}
       className="inline-flex items-center underline underline-offset-2 hover:text-primary"
       onMouseEnter={(event) => {
@@ -81,7 +60,7 @@ function RichLink({ href, children }: { href: string; children: string }) {
       }}
       onClick={(event) => {
         event.preventDefault();
-        if (dispatchInternalLink(href, children)) return;
+        if (dispatchInternalLink(href)) return;
         if (event.ctrlKey || event.metaKey) {
           window.open(href, "_blank", "noopener,noreferrer");
           return;
@@ -137,15 +116,12 @@ export const RichUserText = memo(function RichUserText({
           );
         }
         if (part.kind === "link") {
-          const internal = /^(workspace|note|automation):\/\//i.test(part.href);
-          const link = <RichLink href={part.href}>{part.label}</RichLink>;
-          return internal ? (
-            <span key={`${part.href}-${index}`}>{link}</span>
-          ) : (
-            <LinkPreview key={`${part.href}-${index}`} href={part.href}>
-              {link}
-            </LinkPreview>
-          );
+          if (parseWorkspaceFileLink(part.href) || isFileUrl(part.href)) {
+            return <FileLink key={`${part.href}-${index}`} href={part.href}>{part.label}</FileLink>;
+          }
+          return <LinkPreview key={`${part.href}-${index}`} href={part.href}>
+            <RichLink href={part.href}>{part.label}</RichLink>
+          </LinkPreview>;
         }
         return <span key={`${part.text}-${index}`}>{part.text}</span>;
       })}

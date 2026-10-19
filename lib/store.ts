@@ -53,6 +53,8 @@ export type ToolPart = {
 };
 
 export type ChatMessage = {
+  authorId?: string;
+  authorName?: string;
   /** UI-only estimate from the full transcript before deferring raw outputs. */
   contextTokenEstimate?: number;
   /** UI-only program activity; the agent still receives the original transcript. */
@@ -187,6 +189,7 @@ export type SharedNote = {
 
 export type Project = {
   id: string;
+  membershipRole?: "owner" | "member";
   ownerId?: string;
   name: string;
   mode?: "chat" | "agents";
@@ -563,6 +566,8 @@ export type GlobalModelSettings = {
   agentRules?: AgentRule[];
   /** Account default for new subagents and project agent runs; 0 means Unlimited. */
   agentRuntimeMs?: number;
+  /** Maximum bytes per new attachment for this account; 0 means Unlimited. */
+  attachmentMaxBytes?: number;
   compression?: {
     enabled?: boolean;
     mode?: "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "stacked";

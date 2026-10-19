@@ -1,3 +1,5 @@
+import { projectForUser, projectRole } from "@/lib/project-access";
+import type { Project } from "@/lib/store";
 import { getDatabase, parseData } from "@/lib/sqlite";
 import { findActiveConnection, getProviderConnection, listProviderModels } from "@/lib/provider-connections";
 import { parseModelKey } from "@/lib/providers/types";
@@ -52,7 +54,7 @@ export function validateProjectModelSettings(settings: ProjectModelSettings, own
 
 export function projectModelOverride(projectId: string | undefined, ownerId: string | undefined) {
   if (!projectId || !ownerId) return null;
-  const project = parseData<ProjectModelSettings & { mode?: string }>(getDatabase()
-    .prepare("SELECT data FROM projects WHERE id = ? AND owner_id = ?").get(projectId, ownerId));
-  return projectDefaultModel(project);
+  if(!projectRole(projectId,ownerId)) return null;
+  const project = parseData<Project>(getDatabase().prepare("SELECT data FROM projects WHERE id = ?").get(projectId));
+  return projectDefaultModel(project ? projectForUser(project,ownerId) : null);
 }

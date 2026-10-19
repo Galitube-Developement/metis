@@ -1,3 +1,4 @@
+import { projectForUser, projectRole, projectUserSettings, saveProjectUserSettings } from "@/lib/project-access";
 import { isProjectIcon } from "@/lib/project-appearance";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -53,7 +54,8 @@ function normalizedProjectMemories(value: unknown): Memory[] {
 }
 
 function projectAssetsDir(projectId: string, ownerId?: string) {
- return path.join(getAgentCwd(ownerId), ".ai-chat-uploads", "projects", projectId);
+ const projectOwner = (getDatabase().prepare("SELECT owner_id FROM projects WHERE id=?").get(projectId) as {owner_id?:string}|undefined)?.owner_id;
+ return path.join(getAgentCwd(projectOwner || ownerId), ".ai-chat-uploads", "projects", projectId);
 }
 
 function decodeBase64(data: string) {
@@ -123,23 +125,33 @@ function rowToFile(row: unknown): ProjectFile | null {
 }
 
 function writeProject(project: Project) {
- getDatabase().prepare("UPDATE projects SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(project), project.updatedAt, project.id);
+ const next={...project};
+ if(project.membershipRole) {
+  const raw=parseData<Project>(getDatabase().prepare("SELECT data FROM projects WHERE id=?").get(project.id));
+  for(const key of ["defaultModelEnabled","defaultModelId","defaultModelParams","disabledSkillIds","hideChatsFromAll"] as const) {
+   delete next[key];
+   if(raw?.[key]!==undefined) (next as Record<string,unknown>)[key]=raw[key];
+  }
+  delete next.membershipRole;
+ }
+ getDatabase().prepare("UPDATE projects SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), project.updatedAt, project.id);
  return project;
 }
 
 export function listProjects(ownerId?: string): Project[] {
  return getDatabase()
-  .prepare("SELECT data FROM projects WHERE (? IS NULL OR owner_id = ?) ORDER BY updated_at DESC")
-  .all(ownerId ?? null, ownerId ?? null)
+  .prepare("SELECT data FROM projects WHERE (? IS NULL OR owner_id = ? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=projects.id AND m.user_id=?)) ORDER BY updated_at DESC")
+  .all(ownerId ?? null, ownerId ?? null, ownerId ?? null)
   .map(rowToProject)
+  .map(project => project ? projectForUser(project,ownerId) : null)
   .filter((item): item is Project => Boolean(item));
 }
 
 export function getProject(id: string, ownerId?: string): Project | null {
  if (!id.trim()) return null;
- return rowToProject(
-  getDatabase().prepare("SELECT data FROM projects WHERE id = ? AND (? IS NULL OR owner_id = ?)").get(id, ownerId ?? null, ownerId ?? null),
- );
+ if (ownerId && !projectRole(id,ownerId)) return null;
+ const project=rowToProject(getDatabase().prepare("SELECT data FROM projects WHERE id = ?").get(id));
+ return project ? projectForUser(project,ownerId) : null;
 }
 
 export function createProject(input: {
@@ -187,17 +199,25 @@ export function updateProject(
  ownerId?: string,
 ): Project | null {
  return transaction(() => {
-  const current = getProject(id, ownerId);
-  if (!current) return null;
+  const visible = getProject(id, ownerId);
+  const current = getProject(id);
+  if (!visible || !current) return null;
   const modelChanged = ["defaultModelEnabled", "defaultModelId", "defaultModelParams"].some(key => Object.prototype.hasOwnProperty.call(patch, key));
   if (modelChanged && current.mode !== "agents") {
    const error = new Error("Default models are only available for agent-oriented projects.");
    error.name = "InvalidProjectModel";
    throw error;
   }
+  const personalCurrent = ownerId ? { ...visible, ...projectUserSettings(id,ownerId) } : current;
   const modelSettings = !modelChanged ? {} : patch.defaultModelEnabled === false && patch.defaultModelId === undefined && patch.defaultModelParams === undefined
    ? { defaultModelEnabled: false }
-   : validateProjectModelSettings({ ...current, ...patch, ...(patch.defaultModelId !== undefined && patch.defaultModelId !== current.defaultModelId && patch.defaultModelParams === undefined ? { defaultModelParams: undefined } : {}) }, ownerId);
+   : validateProjectModelSettings({ ...personalCurrent, ...patch, ...(patch.defaultModelId !== undefined && patch.defaultModelId !== current.defaultModelId && patch.defaultModelParams === undefined ? { defaultModelParams: undefined } : {}) }, ownerId);
+  if(ownerId) {
+   const personal:Record<string,unknown>={...modelSettings};
+   if(patch.disabledSkillIds!==undefined) personal.disabledSkillIds=normalizedSkillIds(patch.disabledSkillIds);
+   if(patch.hideChatsFromAll!==undefined) personal.hideChatsFromAll=patch.hideChatsFromAll;
+   if(Object.keys(personal).length) saveProjectUserSettings(id,ownerId,personal);
+  }
   const timestamp = iso();
   const next: Project = {
    ...current,
@@ -206,21 +226,21 @@ export function updateProject(
    ...(patch.color && /^#[0-9a-f]{6}$/i.test(patch.color) ? { color: patch.color } : {}),
    ...(patch.instructions !== undefined ? { instructions: clip(patch.instructions, 20_000) } : {}),
    ...(patch.memoryMode === "project_only" || patch.memoryMode === "default" ? { memoryMode: patch.memoryMode } : {}),
-   ...(patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
-   ...modelSettings,
+   ...((!ownerId || current.ownerId===ownerId) && patch.disabledSkillIds !== undefined ? { disabledSkillIds: normalizedSkillIds(patch.disabledSkillIds) } : {}),
+   ...(!ownerId || current.ownerId===ownerId ? modelSettings : {}),
    ...(typeof patch.allowAgentManagement === "boolean" ? { allowAgentManagement: current.mode === "agents" && patch.allowAgentManagement } : {}),
-   ...(typeof patch.hideChatsFromAll === "boolean" ? { hideChatsFromAll: patch.hideChatsFromAll } : {}),
+   ...((!ownerId || current.ownerId===ownerId) && typeof patch.hideChatsFromAll === "boolean" ? { hideChatsFromAll: patch.hideChatsFromAll } : {}),
    updatedAt: timestamp,
   };
   writeProject(next);
-  const selection = projectDefaultModel(next);
+  const selection = projectDefaultModel(ownerId ? projectForUser(next,ownerId) : next);
   if (modelChanged && selection) {
    for (const chat of listChatsForUser(ownerId).filter(chat => chat.projectId === id)) {
     updateChat(chat.id, { ...selection, touchUpdatedAt: false }, ownerId);
     requestJobModelSwitch(chat.id, ownerId, selection.modelId, selection.modelParams);
    }
   }
-  return next;
+  return ownerId ? projectForUser(next,ownerId) : next;
  });
 }
 
@@ -331,7 +351,7 @@ export function readProjectLogo(id: string, ownerId?: string): { mimeType: strin
 export function deleteProject(id: string, ownerId?: string) {
  return transaction(() => {
   const current = getProject(id, ownerId);
-  if (!current) return null;
+  if (!current || (ownerId && projectRole(id,ownerId)!=="owner")) return null;
   const db = getDatabase();
   if (current.mode === "agents") {
    for (const chat of listChatsForUser(ownerId, { includeArchived: true }).filter(chat => chat.projectId === id)) {
@@ -339,13 +359,12 @@ export function deleteProject(id: string, ownerId?: string) {
     updateChat(chat.id, { archived: true }, ownerId);
    }
   }
+  const chatIds = listChatsForUser(ownerId, { includeArchived: true }).filter(chat => chat.projectId === id).map(chat => chat.id);
+  for(const chatId of chatIds) updateChat(chatId,{projectId:null},ownerId);
   db.prepare("DELETE FROM project_files WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM projects WHERE id = ?").run(id);
     db.prepare("UPDATE automations SET project_id = NULL WHERE project_id = ?").run(id);
   rmSync(projectAssetsDir(id, ownerId), { recursive: true, force: true });
-  const chatIds = listChatsForUser(ownerId, { includeArchived: true })
-   .filter((chat) => chat.projectId === id)
-   .map((chat) => chat.id);
   return { ok: true as const, chatIds };
  });
 }
@@ -459,12 +478,12 @@ function listProjectNotes(projectId: string, ownerId?: string): SharedNote[] {
  return getDatabase()
   .prepare(
    `SELECT data FROM notes
-    WHERE (? IS NULL OR owner_id = ?)
+    WHERE (? IS NULL OR owner_id = ? OR EXISTS(SELECT 1 FROM projects p WHERE p.id=json_extract(notes.data, '$.projectId') AND (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?))))
     AND archived = 0
     AND json_extract(data, '$.projectId') = ?
     ORDER BY updated_at DESC`,
   )
-  .all(ownerId ?? null, ownerId ?? null, projectId)
+  .all(ownerId ?? null, ownerId ?? null, ownerId ?? null, ownerId ?? null, projectId)
   .map((row) => parseData<SharedNote>(row))
   .filter((note): note is SharedNote => Boolean(note?.id));
 }

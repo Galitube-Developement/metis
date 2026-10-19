@@ -1,5 +1,5 @@
 import { materializeUploads } from "@/lib/file-upload-store";
-import { MAX_ATTACHMENTS, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 import type { Chat } from "@/lib/store";
 
 export type QueuedUploadMessage = NonNullable<Chat["queuedMessages"]>[number] & { uploadIds?: string[] };
@@ -15,7 +15,7 @@ export function materializeQueuedUploads(chatId: string, queue: QueuedUploadMess
     if (!Array.isArray(uploadIds) || !uploadIds.every(id => typeof id === "string")) throw new Error("Invalid queued uploads");
     const attachments = [...(message.attachments ?? []), ...materializeUploads(chatId, uploadIds, ownerId)];
     const unique = [...new Map(attachments.map(file => [file.id, file])).values()];
-    if (unique.length > MAX_ATTACHMENTS || unique.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_BYTES) {
+    if (unique.length > MAX_ATTACHMENTS) {
       throw new Error("Queued attachments exceed the attachment limit");
     }
     return { ...message, attachments: unique };

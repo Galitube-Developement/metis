@@ -1,3 +1,4 @@
+import { canAccessChat } from "@/lib/project-access";
 import { notificationDatabase, createNotification, getNotificationPrefs, isAgentFinishedNotification, type NotificationRecord } from "@/lib/notification-store";
 import { sendRemoteNotification } from "@/lib/notification-remote";
 import { transaction } from "@/lib/sqlite";
@@ -14,7 +15,7 @@ export function observeNotificationEvents() {
     for (const event of events) {
       const ownerId = String(event.user_id || "");
       if (!ownerId || !["done", "error", "question", "status", "workspace"].includes(String(event.event))) continue;
-      if (!db.prepare("SELECT 1 FROM chats WHERE id=? AND owner_id=?").get(String(event.chat_id), ownerId)) continue;
+      if (!canAccessChat(String(event.chat_id), ownerId)) continue;
       let data: Record<string, unknown> = {};
       try { const parsed = JSON.parse(String(event.data)); if (parsed && typeof parsed === "object") data = parsed; } catch {}
       const kind = String(event.event);

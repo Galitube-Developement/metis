@@ -10,9 +10,9 @@ const subagentView = readFileSync(new URL("../components/subagent-chat-view.tsx"
 
 test("user messages render markdown links instead of visible brackets", () => {
   assert.match(userText, /parseRichUserText/);
-  assert.match(userText, /ai-chat:open-workspace/);
-  assert.match(userText, /ai-chat:open-note/);
-  assert.match(userText, /ai-chat:open-automations/);
+  assert.match(userText, /parseInternalLink/);
+  assert.match(userText, /internalLinkNavigation/);
+  assert.match(userText, /<LinkPreview/);
   assert.match(userText, /part\.label/);
 });
 

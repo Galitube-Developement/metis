@@ -1,3 +1,4 @@
+import { canAccessChat } from "@/lib/project-access";
 import { watch, type FSWatcher } from "node:fs";
 import path from "node:path";
 import { databasePath, getDatabase } from "@/lib/sqlite";
@@ -125,11 +126,12 @@ export function listChatSyncEvents(ownerId: string, after = 0, limit = 500): Cha
     `SELECT id, owner_id AS ownerId, chat_id AS chatId, kind,
             chat_updated_at AS chatUpdatedAt, created_at AS createdAt
      FROM chat_sync_events
-     WHERE owner_id = ? AND id > ?
+     WHERE (owner_id = ? OR EXISTS(SELECT 1 FROM chats c JOIN projects p ON p.id=json_extract(c.data,'$.projectId')
+       WHERE c.id=chat_sync_events.chat_id AND (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?)))) AND id > ?
      ORDER BY id ASC
      LIMIT ?`,
-  ).all(ownerId, Math.max(0, Math.floor(after)), safeLimit) as Array<Record<string, unknown>>;
-  return rows.map((row) => ({
+  ).all(ownerId, ownerId, ownerId, Math.max(0, Math.floor(after)), safeLimit) as Array<Record<string, unknown>>;
+  return rows.filter(row => row.kind==="deleted" && row.ownerId===ownerId || canAccessChat(String(row.chatId),ownerId)).map((row) => ({
     id: Number(row.id),
     ownerId: String(row.ownerId),
     chatId: String(row.chatId),

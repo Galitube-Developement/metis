@@ -1,3 +1,4 @@
+import { canAccessChat, chatActor, chatForUser, chatIndexForUser, projectRole, sharedChatForStorage } from "@/lib/project-access";
 import { getChatActivity, recordMessageActivity, recordAttentionActivity, acknowledgeChatActivity } from "@/lib/chat-activity-server";
 import { projectModelOverride } from "@/lib/project-model-server";
 import { isChatWaitingForUser } from "@/lib/user-input-resume";
@@ -276,7 +277,7 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
   syncChatList(persisted);
   chatIndexCache = null;
   Object.assign(persisted, getChatActivity(chat.id));
-  recordAccountUsage(persisted.ownerId, message);
+  recordAccountUsage(chatActor(chat) || persisted.ownerId, message);
   chatCache.set(chat.id, { updatedAt, chat: persisted });
   for (const key of chatPageCache.keys()) {
     if (key.includes(`:${chat.id}:`)) chatPageCache.delete(key);
@@ -298,7 +299,7 @@ export function listChatsForUser(
   const db = getDatabase();
   const cacheKey = `${ownerId || "*"}:${options.includeArchived ? "all" : "active"}`;
   if (chatIndexCache?.key === cacheKey && chatIndexCache.expiresAt > Date.now()) {
-    return chatIndexCache.chats;
+    return ownerId ? chatIndexCache.chats.filter(chat => canAccessChat(chat.id,ownerId)).map(chat => chatIndexForUser(chat,ownerId)) : chatIndexCache.chats;
   }
   const rows = ownerId
     ? db.prepare(
@@ -312,12 +313,13 @@ export function listChatsForUser(
                 automation_run_id AS automationRunId, incognito, project_id AS projectId,
                 agent_title_locked AS agentTitleLocked
          FROM chat_list
-         WHERE owner_id = ?
+         WHERE (owner_id = ? OR EXISTS(SELECT 1 FROM projects p WHERE p.id=chat_list.project_id AND
+           (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?))))
            AND incognito = 0
            AND (automation_run_id IS NULL OR automation_run_id = '')
            AND (? = 1 OR archived = 0)
          ORDER BY pinned DESC, COALESCE(last_message_sent, created_at) DESC`,
-      ).all(ownerId, options.includeArchived ? 1 : 0)
+      ).all(ownerId, ownerId, ownerId, options.includeArchived ? 1 : 0)
     : db.prepare(
       `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
@@ -371,7 +373,7 @@ export function listChatsForUser(
       }];
     });
   chatIndexCache = { key: cacheKey, expiresAt: Date.now() + 1_000, chats: result };
-  return result;
+  return ownerId ? result.filter(chat => canAccessChat(chat.id,ownerId)).map(chat => chatIndexForUser(chat,ownerId)) : result;
 }
 
 export type ChatSearchResult = {
@@ -437,11 +439,11 @@ function makeSearchSnippet(text: string, index: number, matchLength: number) {
 }
 
 export function getChat(id: string, ownerId?: string): Chat | null {
-  if (!id || id.includes("/") || id.includes("..")) return null;
+  if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id,ownerId)) return null;
   const db = getDatabase();
   // Check the tiny revision row before transferring a potentially huge transcript.
   const identity = ownerId
-    ? db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    ? db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ?").get(id)
     : db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ?").get(id);
   const updatedAt = (identity as { updatedAt?: string } | undefined)?.updatedAt;
   if (!updatedAt) return null;
@@ -453,10 +455,10 @@ export function getChat(id: string, ownerId?: string): Chat | null {
       chatIndexCache = null;
       return null;
     }
-    return cached.chat.ownerId && ownerId && cached.chat.ownerId !== ownerId ? null : { ...cached.chat, ...getChatActivity(id) };
+    return chatForUser({ ...cached.chat, ...getChatActivity(id) },ownerId);
   }
   const row = ownerId
-    ? db.prepare("SELECT data FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    ? db.prepare("SELECT data FROM chats WHERE id = ?").get(id)
     : db.prepare("SELECT data FROM chats WHERE id = ?").get(id);
   const chat = rowChat(row);
   if (chat?.incognito && chat.expiresAt && new Date(chat.expiresAt).getTime() <= Date.now()) {
@@ -466,7 +468,7 @@ export function getChat(id: string, ownerId?: string): Chat | null {
     return null;
   }
   if (chat && updatedAt) chatCache.set(id, { updatedAt, chat });
-  return chat && ownerId && chat.ownerId && chat.ownerId !== ownerId ? null : chat ? { ...chat, ...getChatActivity(id) } : null;
+  return chat ? chatForUser({ ...chat, ...getChatActivity(id) },ownerId) : null;
 }
 
 export function getChatPage(
@@ -475,12 +477,12 @@ export function getChatPage(
   messageLimit: number,
   messageOffset: number,
 ) {
-  if (!id || id.includes("/") || id.includes("..")) return null;
+  if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id,ownerId)) return null;
   const db = getDatabase();
   const identity = ownerId
     ? db.prepare(
-        "SELECT updated_at AS updatedAt FROM chats WHERE id = ? AND owner_id = ?",
-      ).get(id, ownerId) as { updatedAt?: string } | undefined
+        "SELECT updated_at AS updatedAt FROM chats WHERE id = ?",
+      ).get(id) as { updatedAt?: string } | undefined
     : db.prepare(
         "SELECT updated_at AS updatedAt FROM chats WHERE id = ?",
       ).get(id) as { updatedAt?: string } | undefined;
@@ -493,7 +495,7 @@ export function getChatPage(
   // JSON1 re-parsed the complete transcript for metadata, count, iteration and
   // aggregation. Read once and slice in JS; raw messages remain unchanged.
   const row = ownerId
-    ? db.prepare("SELECT data FROM chats WHERE id = ? AND owner_id = ?").get(id, ownerId)
+    ? db.prepare("SELECT data FROM chats WHERE id = ?").get(id)
     : db.prepare("SELECT data FROM chats WHERE id = ?").get(id);
   try {
     const full = rowChat(row);
@@ -502,7 +504,7 @@ export function getChatPage(
     const totalMessages = full.messages.length;
     const end = Math.max(0, totalMessages - messageOffset);
     const start = Math.max(0, end - messageLimit);
-    const chat: Chat = { ...full, ...getChatActivity(id), updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) };
+    const chat: Chat = chatForUser({ ...full, ...getChatActivity(id), updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) },ownerId);
     const page: ChatPageResult = {
       chat,
       currentTodos: currentChatTodos(full.messages),
@@ -526,7 +528,9 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
   const before = rowChat(getDatabase().prepare("SELECT data FROM chats WHERE id = ?").get(chat.id));
-  const updated = { ...chat, ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
+  const actor = chatActor(chat);
+  if (actor && !canAccessChat(chat.id, actor)) throw new Error("Project chat access has been revoked.");
+  const updated = { ...sharedChatForStorage(chat,before), ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
   // Removal wins over delayed browser autosaves and stale worker projections.
   // Keep tombstones outside the JSON projection so an old snapshot cannot erase them.
   const removed = new Set((getDatabase().prepare(
@@ -568,7 +572,7 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
     if (key.includes(`:${updated.id}:`)) chatPageCache.delete(key);
   }
   chatIndexCache = null;
-  return updated;
+  return chatForUser(updated,actor);
 }
 
 export function createChat(
@@ -582,6 +586,8 @@ export function createChat(
     if (!workerProjectionLeaseValid()) {
       throw new Error("Stale worker lease cannot create a chat projection.");
     }
+    if(options?.projectId && ownerId && !projectRole(options.projectId,ownerId)) throw new Error("Project not found");
+    if(options?.projectId && options.incognito) throw new Error("Private chats cannot be shared in projects.");
     const timestamp = now();
     const chat: Chat = {
       id: randomUUID(),
@@ -668,6 +674,8 @@ export function updateChat(
     if (!workerProjectionLeaseValid(id)) return null;
     const chat = getChat(id, ownerId);
     if (!chat) return null;
+    if(patch.projectId && ownerId && (!projectRole(patch.projectId,ownerId) || chat.incognito)) throw new Error("Project not found or chat is private.");
+    if (patch.projectId !== undefined && patch.projectId !== chat.projectId && ownerId && chat.ownerId !== ownerId && !(patch.projectId===null && projectRole(chat.projectId,ownerId)==="owner")) throw new Error("Only the chat creator can move this chat.");
     const next = { ...chat };
     if (patch.title !== undefined) {
       const title = normalizeChatTitle(patch.title);
@@ -913,7 +921,7 @@ export function canTransitionRunStatus(from: ChatRunStatus, to: ChatRunStatus) {
 export function deleteChat(id: string, ownerId?: string) {
   return transaction(() => {
     const chat = getChat(id, ownerId);
-    if (!chat) return false;
+    if (!chat || (ownerId && chat.ownerId !== ownerId && projectRole(chat.projectId,ownerId)!=="owner")) return false;
     if (chat.ownerId) syncAccountUsage(chat.ownerId);
     recordChatSyncEvent({
       ownerId: chat.ownerId,
@@ -944,7 +952,7 @@ export function updateChatShare(
 ) {
   return transaction(() => {
     const chat = getChat(chatId, ownerId);
-    if (!chat) return null;
+    if (!chat || (chat.projectId && ownerId && projectRole(chat.projectId,ownerId)!=="owner")) return null;
     const timestamp = now();
     const current = chat.share;
     const share: ChatShare = {

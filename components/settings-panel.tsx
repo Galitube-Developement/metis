@@ -72,6 +72,7 @@ import { NotificationDeliverySettings } from "@/components/notification-delivery
 import { RemoteNotificationSettings, RemoteDeviceNotificationSwitch } from "@/components/remote-notification-settings";
 import { useNotificationSettings } from "@/hooks/use-notification-settings";
 import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
+import { AttachmentSettings } from "@/components/attachment-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { PlanUsagePanel } from "@/components/quota-gauges";
@@ -2006,6 +2007,11 @@ export function SettingsPanel({
 </TabsContent>
 
 <TabsContent value="general" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
+
+ <section className="flex flex-col gap-4" aria-labelledby="settings-attachments">
+   <h3 id="settings-attachments" className="text-sm font-medium">Attachments</h3>
+   <AttachmentSettings />
+ </section>
 
  <section className="flex flex-col gap-4">
                   <h3 id="settings-subagent-model" className="text-sm font-medium">Subagent model</h3>

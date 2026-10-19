@@ -455,6 +455,40 @@ export function getDatabase(): DatabaseSync {
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS project_members (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, PRIMARY KEY(project_id,user_id)
+  );
+  CREATE INDEX IF NOT EXISTS project_members_user ON project_members(user_id,project_id);
+  CREATE TABLE IF NOT EXISTS project_invitations (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    inviter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invitee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','declined','revoked')),
+    created_at TEXT NOT NULL, responded_at TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS project_invite_pending ON project_invitations(project_id,invitee_id) WHERE status='pending';
+  CREATE INDEX IF NOT EXISTS project_invite_recipient ON project_invitations(invitee_id,status);
+  CREATE TABLE IF NOT EXISTS project_user_settings (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, PRIMARY KEY(project_id,user_id)
+  );
+  CREATE TABLE IF NOT EXISTS chat_user_settings (
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, PRIMARY KEY(chat_id,user_id)
+  );
+  CREATE TABLE IF NOT EXISTS notification_reads (
+    notification_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL, PRIMARY KEY(notification_id,user_id)
+  );
+  CREATE TABLE IF NOT EXISTS notification_context (
+    notification_id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    invitation_id TEXT REFERENCES project_invitations(id) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS team_presets (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

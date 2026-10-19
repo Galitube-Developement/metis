@@ -14,7 +14,7 @@ import { NoteProjectMenu, type NoteProjectOption } from "@/components/note-proje
 import { pinchDistance, pinchMidpoint, viewAfterZoom } from "@/lib/notes-gestures";
 import { registerFileDrop } from "@/lib/file-drop";
 import { startUpload } from "@/lib/background-uploads";
-import { MAX_FILE_BYTES, MAX_ATTACHMENTS } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 import { NoteMedia } from "@/components/note-media";
 import { cn } from "@/lib/utils";
 
@@ -789,7 +789,7 @@ export function NotesVoid({
     const destinationProjectId = projectId;
     const destinationChatId = pinnedOnly ? chatId : undefined;
     for (const [index, file] of files.slice(0, MAX_ATTACHMENTS).entries()) {
-      if (!file.size || file.size > MAX_FILE_BYTES) { setError("Each file must be 1 GB or smaller."); continue; }
+      if (!file.size) { setError("Choose a non-empty file."); continue; }
       startUpload(file, { label: "Scratchpad", onComplete: async (asset) => {
         const response = await fetch("/api/notes", {
           method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "media-" + asset.id },

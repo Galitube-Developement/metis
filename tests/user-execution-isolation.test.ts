@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
 import { isolationFixture } from "./isolation-fixture";
 
 const fixture = isolationFixture(true);
-test("legacy mappings are guarded without changing root admin access or DB rows", async () => {
+test("legacy mappings are guarded without changing root admin access or DB rows", async (t) => {
   try {
     const { getDatabase } = await import("../lib/sqlite");
     const { config } = await import("../lib/config");
-    const { requireUserExecutionIdentity, getUserExecutionIdentity, ensureUserAccess, isHostAdmin } = await import("../lib/user-access");
+    const { requireUserExecutionIdentity, getUserExecutionIdentity, getUserAccess, ensureUserAccess, isHostAdmin } = await import("../lib/user-access");
     const db = getDatabase();
     const user = (id: string, admin = false, username = id) => db.prepare(
       "INSERT INTO users(id, username, password_hash, created_at, is_admin) VALUES(?, ?, 'test', ?, ?)"
@@ -68,7 +69,9 @@ test("legacy mappings are guarded without changing root admin access or DB rows"
     assert.throws(() => requireUserExecutionIdentity("alice"), /no valid OS user mapping/);
     db.prepare("UPDATE user_workspace_access SET uid=12001 WHERE user_id='alice'").run();
     user("alias"); mapping("alias", "/isolated/alias", "alias", 12001);
-    assert.throws(() => requireUserExecutionIdentity("alice"), /already mapped/);
+    assert.equal(requireUserExecutionIdentity("alice").uid, 12001);
+    assert.equal(requireUserExecutionIdentity("alias").uid, 12001);
+    assert.ok(!fixture.state.probes.at(-1)?.paths.includes("/isolated/alice"));
     db.prepare("DELETE FROM users WHERE id='alias'").run();
     user("bob"); mapping("bob", "/isolated/alice/sub", "bob", 12002);
     assert.throws(() => requireUserExecutionIdentity("alice"), /distinct/);
@@ -90,5 +93,23 @@ test("legacy mappings are guarded without changing root admin access or DB rows"
     try { assert.throws(() => ensureUserAccess("alice", "/isolated/alice", "root"), /Windows nonadmin isolation/); }
     finally { Object.defineProperty(process, "platform", platform); }
     assert.equal(requireUserExecutionIdentity("admin").uid, 0);
+    // Root is a valid configured workspace, without provisioning/chown of the volume.
+    const { resolveManagedWorkspaceRoot } = await import("../lib/user-access");
+    const { getUserAgentCwd } = await import("../lib/mcp");
+    assert.equal(resolveManagedWorkspaceRoot(" / "), "/");
+    ensureUserAccess("admin", "/", "root");
+    user("otheradmin", true);
+    ensureUserAccess("otheradmin", "/", "root");
+    assert.equal(requireUserExecutionIdentity("admin").workspaceRoot, "/");
+    assert.equal(requireUserExecutionIdentity("otheradmin").workspaceRoot, "/");
+    assert.equal(requireUserExecutionIdentity("alice").uid, 12001);
+    assert.ok(!fixture.state.probes.at(-1)?.paths.includes("/"));
+    const mkdir = t.mock.method(fs, "mkdirSync", () => undefined);
+    const chown = t.mock.method(fs, "chownSync", () => undefined);
+    assert.equal(getUserAgentCwd("admin"), "/");
+    assert.equal(mkdir.mock.callCount(), 0);
+    assert.equal(chown.mock.callCount(), 0);
+    assert.throws(() => ensureUserAccess("alice", "/", "root"), /explicitly configured/);
+    assert.equal(getUserAccess("alice").workspaceRoot, "/isolated/alice");
   } finally { fixture.restore(); }
 });

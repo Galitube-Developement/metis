@@ -54,6 +54,7 @@ export function HoverPreview({ children, content }: { children: ReactNode; conte
     : children;
   return <span ref={anchor} className="inline" onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide(); }}
+    onClickCapture={hide}
     onKeyDown={event => { if (event.key === "Escape") hide(); }}>
     {trigger}
     {open ? createPortal(<div ref={tooltip} id={id} role="tooltip" data-hover-preview

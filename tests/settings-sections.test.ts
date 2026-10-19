@@ -15,6 +15,7 @@ function headingIdsInTab(source: string, tab: string) {
 test("settings subsection links match the heading order in each tab", () => {
   const sections = Object.fromEntries(Object.entries(SETTINGS_SECTIONS).map(([tab, items]) => [tab, items.map(item => item.id)]));
   assert.deepEqual(sections.general, [
+    "settings-attachments",
     "settings-subagent-model",
     "settings-token-compression",
     "settings-notifications",

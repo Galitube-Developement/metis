@@ -32,6 +32,8 @@ export type ScopedLearnedFact = {
   confirmed?: boolean;
 };
 
+import { projectRole } from "@/lib/project-access";
+
 export type ContextScope = {
   chatId: string;
   ownerId?: string;
@@ -72,7 +74,7 @@ function visibleNotes(ownerId: string | undefined, chatId: string, incognito: bo
   if (incognito) return [];
   // Passing chatId makes the SQL scope filter explicit: global notes remain
   // available, while chat notes from another chat cannot enter this scope.
-  return listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId);
+  return listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId || (note.kind !== "learned_fact" && projectRole(note.projectId,ownerId)));
 }
 
 /**

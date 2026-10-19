@@ -1,6 +1,6 @@
 "use client";
 import { createClientId } from "@/lib/client-id";
-import { MAX_FILE_BYTES, UPLOAD_CHUNK_BYTES, type UploadedFile } from "@/lib/upload-limits";
+import { UPLOAD_CHUNK_BYTES, type UploadedFile } from "@/lib/upload-limits";
 export type UploadTask = {
   id: string; name: string; size: number; loaded: number; label: string;
   status: "queued" | "uploading" | "finishing" | "completed" | "error" | "cancelled";
@@ -104,7 +104,7 @@ function pump() {
   }
 }
 export function startUpload(file: File, options: { label: string; onComplete?: (file: UploadedFile) => Promise<void> }) {
-  if (!file.size || file.size > MAX_FILE_BYTES) throw new Error("Each file must be 1 GB or smaller");
+  if (!Number.isSafeInteger(file.size) || file.size <= 0) throw new Error("Choose a non-empty file.");
   const id = createClientId();
   let resolve!: InternalTask["resolve"], reject!: InternalTask["reject"];
   const promise = new Promise<UploadedFile>((yes, no) => { resolve = yes; reject = no; });

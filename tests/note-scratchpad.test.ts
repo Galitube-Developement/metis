@@ -64,7 +64,7 @@ test("upload limits reject the whole batch before storage", async () => {
   const { validateNoteFiles } = await attachmentsModule;
   assert.throws(() => validateNoteFiles([]), /at least one/);
   assert.throws(() => validateNoteFiles([{ name: "empty", size: 0 }]), /empty/);
-  assert.throws(() => validateNoteFiles([{ name: "large", size: 50 * 1024 * 1024 + 1 }]), /50 MB/);
+  assert.throws(() => validateNoteFiles([{ name: "large", size: 1024 ** 3 + 1 }]), /attachment limit/);
   assert.throws(() => validateNoteFiles(Array.from({ length: 11 }, () => ({ name: "file", size: 1 }))), /10 files/);
   assert.doesNotThrow(() => validateNoteFiles([{ name: "valid", size: 50 * 1024 * 1024 }]));
 });

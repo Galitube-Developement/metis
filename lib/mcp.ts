@@ -265,9 +265,11 @@ export function getAgentCwd(userId?: string): string {
 
 export function getUserAgentCwd(userId?: string): string {
   const workspace = getUserAccess(userId).workspaceRoot;
-  fs.mkdirSync(workspace, { recursive: true });
+  const filesystemRoot = workspace === path.parse(workspace).root;
+  // Selecting / (or a Windows drive root) must never provision or chown the volume.
+  if (!filesystemRoot) fs.mkdirSync(workspace, { recursive: true });
   const identity = getUserExecutionIdentity(userId);
-  if (identity && typeof identity.uid === "number" && typeof identity.gid === "number") {
+  if (!filesystemRoot && identity && typeof identity.uid === "number" && typeof identity.gid === "number") {
     try {
       fs.chownSync(workspace, identity.uid, identity.gid);
     } catch {

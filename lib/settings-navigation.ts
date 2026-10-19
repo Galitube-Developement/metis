@@ -1,6 +1,7 @@
 export type SettingsSection = { id: string; label: string; keywords?: string };
 export const SETTINGS_SECTIONS: Record<string, SettingsSection[]> = {
   general: [
+    { id: "settings-attachments", label: "Attachments", keywords: "upload file size limit unlimited MB GB anhänge anhaenge dateigröße dateigrosse größe unbegrenzt" },
     { id: "settings-subagent-model", label: "Subagent model", keywords: "delegation standard model modell unteragent" },
     { id: "settings-token-compression", label: "Token compression", keywords: "context tool results chat history rtk caveman kompression kontext" },
     { id: "settings-notifications", label: "Notifications", keywords: "sound cues finish sound custom audio browser push remote client toasts benachrichtigungen ton" },

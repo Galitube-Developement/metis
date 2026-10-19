@@ -21,7 +21,12 @@ test("managed mappings reject unsafe creation/update atomically", async () => {
     assert.throws(() => create("rootbind", "/root/virtual-metis", "root"), /explicitly configured/);
     const alice = create("aliceweb", "/isolated/alice", "alice");
     assert.equal(requireUserExecutionIdentity(alice.id).uid, 12001);
-    assert.throws(() => create("aliasweb", "/isolated/alias", "alias"), /already mapped/);
+    const alias = create("aliasweb", "/isolated/alice", "alias");
+    const shared = create("sharedweb", "/isolated/alice", "alice");
+    assert.equal(requireUserExecutionIdentity(alias.id).uid, 12001);
+    assert.equal(requireUserExecutionIdentity(shared.id).uid, 12001);
+    assert.equal(getUserAccess(shared.id).workspaceRoot, "/isolated/alice");
+    assert.ok(!fixture.state.probes.at(-1)?.paths.includes("/isolated/alice"), "same-identity workspaces are shared");
     fixture.state.owner = 12002;
     assert.throws(() => create("samews", "/isolated/alice", "bob"), /distinct/);
     assert.throws(() => create("nestedws", "/isolated/alice/project", "bob"), /distinct/);
@@ -36,9 +41,17 @@ test("managed mappings reject unsafe creation/update atomically", async () => {
     assert.equal(hash(), previousHash, "failed mapping update rolls back password too");
     assert.deepEqual(getUserAccess(bob.id), previous);
     assert.throws(() => patchManagedUser(bob.id, { osUsername: null }), /isolated unprivileged/);
-    assert.throws(() => patchManagedUser(bob.id, { osUsername: "alice" }), /already mapped/);
+    fixture.state.owner = 12001;
+    patchManagedUser(bob.id, { osUsername: "alice", workspaceRoot: "/isolated/alice" });
+    assert.equal(requireUserExecutionIdentity(bob.id).uid, 12001);
+    fixture.state.owner = 12002;
+    patchManagedUser(bob.id, { osUsername: "bob", workspaceRoot: "/isolated/bob" });
+    assert.equal(requireUserExecutionIdentity(bob.id).uid, 12002);
     assert.throws(() => deleteManagedUser(bob.id, bob.id), /own account/);
-    const secondAdmin = createManagedUser({ username: "secondadmin", password: "password1", isAdmin: true, workspaceRoot: "/admin-other" });
+    const secondAdmin = createManagedUser({ username: "secondadmin", password: "password1", isAdmin: true, workspaceRoot: "/" });
+    assert.equal(getUserAccess(secondAdmin.id).workspaceRoot, "/");
+    assert.equal(requireUserExecutionIdentity(bob.id).uid, 12002, "admin / does not block scoped accounts");
+    assert.ok(!fixture.state.probes.at(-1)?.paths.includes("/"));
     assert.throws(() => patchManagedUser(secondAdmin.id, { isAdmin: false }), /isolated unprivileged/);
     assert.equal(listAdminUsers().find(user => user.id === secondAdmin.id)?.isAdmin, true);
     // A single transaction may replace the privileged mapping while demoting.

@@ -5,6 +5,7 @@ export type ProjectHomeData = {
  project: {
   id: string;
   name: string;
+  membershipRole?: "owner" | "member";
   mode?: "chat" | "agents";
   allowAgentManagement?: boolean;
   defaultModelEnabled?: boolean;
