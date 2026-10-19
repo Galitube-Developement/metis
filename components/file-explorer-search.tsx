@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { workspaceSearchResult, type WorkspaceSearchResult } from "@/lib/workspace-search-result";
 import type { WorkspaceFileLocation } from "@/lib/workspace-file-link";
+import { subscribeVisiblePolling } from "@/lib/visible-polling";
 
 type Props = {
   directory: string;
@@ -26,6 +27,7 @@ export function FileExplorerSearch({ directory, query, onQueryChange, onOpen, di
   const [retry, setRetry] = useState(0);
   const generation = useRef(0);
   const active = Boolean(query.trim());
+  const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const searchKey = JSON.stringify([directory, query, mode, caseSensitive, regex, revision, retry]);
   const [resultKey, setResultKey] = useState("");
   const current = resultKey === searchKey ? result : null;
@@ -36,25 +38,34 @@ export function FileExplorerSearch({ directory, query, onQueryChange, onOpen, di
     setError("");
     if (!active) { setLoading(false); setResult(null); setResultKey(""); return; }
     setLoading(true);
-    const timer = window.setTimeout(async () => {
+    let running = false, initialized = false;
+    const search = async (signal: AbortSignal, background = false) => {
+      if (running || (background && (!initialized || disabledRef.current))) return;
+      running = true;
       try {
         const response = await fetch("/api/remote", {
-          method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+          method: "POST", headers: { "Content-Type": "application/json" }, signal,
           body: JSON.stringify({ action: "search", path: directory, cwd: directory, query, searchMode: mode, caseSensitive, regex }),
         });
         const data = await response.json().catch(() => { throw new Error("Search returned an incomplete response. Try again."); });
         if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Search failed. Try again.");
         const parsed = workspaceSearchResult(data.search);
         if (!parsed) throw new Error("Search returned an invalid response. Try again.");
-        if (version !== generation.current || controller.signal.aborted) return;
-        setResult(parsed); setResultKey(searchKey);
+        if (version !== generation.current || signal.aborted) return;
+        setResult(previous => JSON.stringify(previous) === JSON.stringify(parsed) ? previous : parsed);
+        setResultKey(searchKey); setError("");
       } catch (cause) {
-        if (version !== generation.current || controller.signal.aborted) return;
-        setResult(null); setResultKey(searchKey);
+        if (version !== generation.current || signal.aborted) return;
+        if (!background) { setResult(null); setResultKey(searchKey); }
         setError(cause instanceof Error ? cause.message : "Search failed.");
-      } finally { if (version === generation.current && !controller.signal.aborted) setLoading(false); }
-    }, 300);
-    return () => { window.clearTimeout(timer); controller.abort(); };
+      } finally {
+        running = false; initialized = true;
+        if (version === generation.current && !signal.aborted) setLoading(false);
+      }
+    };
+    const timer = window.setTimeout(() => void search(controller.signal), 300);
+    const stopPolling = subscribeVisiblePolling(signal => search(signal, true));
+    return () => { window.clearTimeout(timer); controller.abort(); stopPolling(); };
   }, [active, directory, query, mode, caseSensitive, regex, revision, retry, searchKey]);
 
   const groups = new Map<string, NonNullable<WorkspaceSearchResult>["entries"]>();

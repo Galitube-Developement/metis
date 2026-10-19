@@ -112,6 +112,22 @@ test("per-run tracking resolves relative paths and leaves remote paths on their 
   assert.deepEqual(responseOnly.editedFile,{path:"src/main.ts",target:"client:laptop"});
 });
 
+test("saved inline diffs use exact tool identity and remain owner scoped", async () => {
+  const [auth,store,api]=await Promise.all([import("../lib/auth"),import("../lib/db-store"),import("../app/api/chats/[id]/tool-diff/route")]);
+  const owner=auth.createUser("diff-owner","test-password"),other=auth.createUser("diff-other","test-password");
+  const chat=store.createChat("Saved diff",undefined,owner.id);
+  const {persistToolsForMessage}=await import("../lib/tool-persistence");
+  const persisted=persistToolsForMessage(chat.id,"diff-message",[edit({kind:"edit",path:"/workspace/src/main.ts",diff:{before:"removed\\n",after:"added\\n"}})]);
+  store.appendMessage(chat.id,{id:"diff-message",role:"assistant",content:"Updated.",tools:persisted},owner.id);
+  const request=(user:typeof owner|undefined,query="messageId=diff-message&toolId=edit")=>api.GET(new Request("http://test/api/chats/"+chat.id+"/tool-diff?"+query,{headers:user?{cookie:"ai_chat_auth="+auth.authenticateUser(user.username,"test-password")!.token}:{}}),{params:Promise.resolve({id:chat.id})});
+  const response=await request(owner);assert.equal(response.status,200);
+  assert.equal(response.headers.get("cache-control"),"private, no-store");
+  assert.deepEqual((await response.json()).diff,{path:"/workspace/src/main.ts",before:"removed\\n",after:"added\\n"});
+  assert.equal((await request(other)).status,404);assert.equal((await request(undefined)).status,401);
+  assert.equal((await request(owner,"messageId=diff-message&toolId=missing")).status,404);
+  assert.equal((await request(owner,"messageId=diff-message")).status,400);
+});
+
 test("real persisted chat pages retain per-message files and stay owner scoped", async () => {
   const [auth,store,api]=await Promise.all([import("../lib/auth"),import("../lib/db-store"),import("../app/api/chats/[id]/route")]);
   const owner=auth.createUser("edited-files-owner","test-password"),other=auth.createUser("edited-files-other","test-password");

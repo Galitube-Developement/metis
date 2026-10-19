@@ -29,6 +29,7 @@ import { isModelAllowed } from "@/lib/model-access";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import { formatChatGoal } from "@/lib/chat-goal";
 import { chatMetadataPrompt } from "@/lib/chat-metadata-prompt";
+import { extractSuggestions, stripSuggestionsFromParts } from "@/lib/response-suggestions";
 import { agentRulesPrompt } from "@/lib/agent-rules";
 import type { AgentJob } from "@/lib/jobs";
 import {
@@ -420,27 +421,6 @@ function extractAutomation(value: string) {
     return { id: id.trim(), name: name?.trim() || "Automation" };
   };
   return visit(value);
-}
-
-function extractSuggestions(value: string) {
-  const match = value.match(/```suggestions\s*\n([\s\S]*?)```/i);
-  if (!match) return { text: value, suggestions: [] as string[] };
-  const suggestions = match[1]
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
-    .filter(Boolean)
-    .map((line) => {
-      const separator = line.indexOf("=>");
-      if (separator <= 0) return line;
-      const label = line.slice(0, separator).trim();
-      const prompt = line.slice(separator + 2).trim();
-      return label && prompt ? { label, prompt } : line;
-    })
-    .slice(0, 5);
-  return {
-    text: value.replace(match[0], "").replace(/\n{3,}/g, "\n\n").trim(),
-    suggestions,
-  };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
@@ -1004,7 +984,6 @@ export async function runQueuedJob(job: AgentJob) {
       runToolContract,
       "Web/browser routing: use web_search for discovery and web_fetch for fast read-only extraction of ordinary public pages (local Scrapling static scraper first, public remote fallback second). For login/authenticated state, forms, uploads/downloads, purchases/checkouts, important state-changing tasks, long interactive page workflows, or any web_fetch result with requiresBrowser=true, ALWAYS use the persistent Metis in-app browser (browser_navigate, browser_form_state, browser_batch, browser_wait_for, browser_fill_form, browser_snapshot). Inspect current browser state first; navigate only when the URL needs to change and never reload/re-login merely to inspect progress. Do not use shell, curl, detached Playwright, or stealth/challenge-bypass tooling as a substitute. If a site blocks static extraction, use the normal persistent browser if appropriate or report the limitation. Request browser_screenshot only when visual reasoning is genuinely required.",
       `Available mode IDs for request_mode_change: ${availableModes || "agent (Agent), plan (Plan), ask (Ask)"}. Use the exact ID before the parentheses; never invent values such as "Code". For implementation or file changes, request modeId "agent".`,
-      "Response recommendation rule: when the result is incomplete, uses demo/stub endpoints, or still lacks real integrations, clearly say what is and is not implemented, then always provide 1–3 concise, concrete next-step recommendations in exactly one ```suggestions fenced block so the UI can render clickable actions. End by asking whether to implement the recommended next step. Do not present demo functionality as production-ready.",
       ...(!["agent", "gauntlet"].includes(activeMode.id) && !job.automationId
         ? [
             "Mode transition rule: if the user's request requires a tool category this mode does not allow, you MUST call the request_mode_change MCP tool and ask for confirmation. Do not merely tell the user to switch modes manually. After confirmation, continue the original request in this same run using the newly allowed MCP tools (for example write_file); do not wait for a second user message.",
@@ -1040,7 +1019,6 @@ export async function runQueuedJob(job: AgentJob) {
       "Use list_workspaces before editing or deleting a workspace, and use git_status/git_diff to inspect project changes. Browser helpers include browser_extract_text, browser_fill_form, and browser_download.",
       ]),
       "You can create a follow-up chat by outputting exactly one or more fenced blocks in this format:\n```chat title=\"Short title\"\nMessage to send in the new chat\n```\nThe block creates a new chat for the current user, sends the message there, and starts an agent run. Do not claim a chat was created without outputting this block.",
-      "When useful, offer up to five concise follow-up questions at the end using exactly this UI-only format. Use `display text => prompt to insert` when the visible label should differ from the inserted prompt:\n```suggestions\nExplain this in more detail => Explain the database synchronization in more detail, with a concrete example.\nShow me an example\n```\nDo not mention or explain this format outside the block.",
       METIS_SHARED_AGENT_CONTROL,
       subagentModelInstruction,
       `Your private AI workspace is:\n${agentCwd}\nUse this directory as the working directory for project files and commands. Do not use another user's workspace.`,
@@ -1725,6 +1703,7 @@ export async function runQueuedJob(job: AgentJob) {
     }
     const extractedSuggestions = extractSuggestions(text);
     text = extractedSuggestions.text;
+    parts.splice(0, parts.length, ...stripSuggestionsFromParts(parts));
     if (!receivedTextDelta && text) {
       const lastPart = parts.at(-1);
       if (lastPart?.type === "text") lastPart.content += text;

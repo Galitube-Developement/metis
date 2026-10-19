@@ -25,6 +25,28 @@ test("file downloads preserve binary bytes, complete large text, empty files and
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("inline workspace previews preserve media MIME, seeking and safe download-only formats", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "metis-file-preview-"));
+  try {
+    for (const [name, mime] of [["clip.mp4", "video/mp4"], ["sound.mp3", "audio/mpeg"], ["image.png", "image/png"], ["document.pdf", "application/pdf"]]) {
+      const file = path.join(root, name); writeFileSync(file, "0123456789");
+      const response = workspaceFileDownload(root, file, new Request("http://localhost/api/remote/preview", { headers: { Range: "bytes=3-6" } }), {inline:true});
+      assert.equal(response.status, 206);
+      assert.equal(response.headers.get("content-type"), mime);
+      assert.match(response.headers.get("content-disposition")!, /^inline;/);
+      assert.equal(response.headers.get("content-range"), "bytes 3-6/10");
+      assert.equal(await response.text(), "3456");
+      const head = workspaceFileDownload(root, file, new Request("http://localhost/api/remote/preview", {method:"HEAD"}), {inline:true});
+      assert.equal(head.status, 200); assert.equal(head.headers.get("content-length"), "10"); assert.equal(await head.text(), "");
+    }
+    for (const name of ["active.html", "active.svg", "source.js", "unknown.bin"]) {
+      writeFileSync(path.join(root, name), "<script>parent.document.body.remove()</script>");
+      assert.equal(workspaceFileDownload(root, name, new Request("http://localhost/api/remote/preview"), {inline:true}).status, 415);
+    }
+    assert.equal(workspaceFileDownload(root, "../outside.mp4", new Request("http://localhost/api/remote/preview"), {inline:true}).status,403);
+  } finally { rmSync(root, {recursive:true,force:true}); }
+});
+
 test("file downloads reject traversal, symlink escapes, directories and missing files", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "metis-file-boundary-"));
   const root = path.join(dir, "owner-a");

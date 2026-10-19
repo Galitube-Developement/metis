@@ -18,5 +18,5 @@ export async function GET(req: Request, { params }: Params) {
   }
   const snapshot = getToolRevertSnapshot(id, messageId, toolId, user.id);
   if (!snapshot) return Response.json({ error: "Diff not found" }, { status: 404 });
-  return Response.json({ diff: snapshot });
+  return Response.json({ diff: snapshot }, { headers: { "Cache-Control": "private, no-store" } });
 }

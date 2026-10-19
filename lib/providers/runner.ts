@@ -8,6 +8,7 @@ import {
   type ToolPart,
 } from "@/lib/db-store";
 import type { MessagePart } from "@/lib/store";
+import { extractSuggestions, stripSuggestionsFromParts, type ResponseSuggestion } from "@/lib/response-suggestions";
 import { canonicalizeToolPart } from "@/lib/providers/tool-events";
 import {
   appendTextMessagePart,
@@ -118,6 +119,7 @@ export async function runAlternativeProviderJob(
   const assistantMessageId = crypto.randomUUID();
   let chat = getChat(job.chatId, job.userId) || initialChat;
   let text = "";
+  let suggestions: ResponseSuggestion[] = [];
   const tools: ToolPart[] = [];
   const parts: MessagePart[] = [];
   const controller = new AbortController();
@@ -195,6 +197,7 @@ export async function runAlternativeProviderJob(
     });
     return {
       content: text,
+      ...(suggestions.length ? { suggestions } : {}),
       ...(durableTools.length ? { tools: durableTools } : {}),
       ...(durableParts.length
         ? { parts: compactMessagePartsForPersistence(durableParts) }
@@ -442,6 +445,11 @@ export async function runAlternativeProviderJob(
     // An empty provider response is kept empty. Do not fabricate assistant text;
     // the caller can surface the actual run status and diagnostics.
     finalizeAlternativeTools(tools);
+    const extractedSuggestions = extractSuggestions(text);
+    text = extractedSuggestions.text;
+    suggestions = extractedSuggestions.suggestions;
+    parts.splice(0, parts.length, ...stripSuggestionsFromParts(parts));
+    if (suggestions.length) emit("suggestions", { suggestions });
     if (
       modeById(job.modeId || chat.sessionState?.modeId).id === "plan" &&
       text.trim()

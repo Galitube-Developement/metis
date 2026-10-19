@@ -22,9 +22,9 @@ function renderPlacement(messages: Message[], state: {running?: boolean; loading
   const active=messages.find(message=>message.id===activeId);
   return renderToStaticMarkup(<>
     <main>{messages.filter(message=>message.role==="assistant").map(message=><article key={message.id} data-message-id={message.id}>
-      <EditedFiles files={editedFilesForMessage(message)} streaming={message.id===activeId}/>
+      <EditedFiles files={editedFilesForMessage(message)} streaming={message.id===activeId} chatId="chat" messageId={message.id} tools={message.tools}/>
     </article>)}</main>
-    <footer>{active ? <ComposerEditedFiles key={active.id} files={editedFilesForMessage(active)}/> : null}<textarea aria-label="Message"/></footer>
+    <footer>{active ? <ComposerEditedFiles key={active.id} files={editedFilesForMessage(active)} chatId="chat" messageId={active.id} tools={active.tools}/> : null}<textarea aria-label="Message"/></footer>
   </>);
 }
 function assertLocations(html:string,composer:number,transcript:number) {
@@ -85,6 +85,17 @@ test("loading or switching chats cannot keep a previous chat's composer file lis
   assertLocations(renderPlacement([reply],{running:true,loading:true}),0,1);
   assertLocations(renderPlacement([{...reply,streaming:false}],{running:false}),0,1);
   assertLocations(renderPlacement([], {running:true}),0,0);
+});
+
+test("closed transcript and composer stay lazy with snapshot props", () => {
+  const tools = [{ ...tool, diff: { before: "private before snapshot", after: "private after snapshot" } }];
+  const html = renderPlacement([{ ...reply, streaming: false, tools }]);
+  assert.match(html, /Show diff/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /private before snapshot|private after snapshot|data-edited-file-diff/);
+  const remote = renderToStaticMarkup(<EditedFiles files={[{path:"C:\\project\\a.ts",target:"client:pc"}]} tools={tools} chatId="chat" messageId="reply"/>);
+  assert.doesNotMatch(remote, /workspace:\/\/file/);
+  assert.match(remote, /client:pc/);
 });
 
 test("runs without successful edits leave both locations clear",()=>{

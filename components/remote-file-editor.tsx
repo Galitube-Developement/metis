@@ -14,7 +14,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { FileExplorerSearch } from "@/components/file-explorer-search";
 import { useFileSync } from "@/lib/use-file-sync";
-import { requestFileSnapshot } from "@/lib/file-sync-client";
+import { subscribeVisiblePolling } from "@/lib/visible-polling";
+import { FileSyncError, requestFileSnapshot } from "@/lib/file-sync-client";
+import { FileEditorPreview } from "@/components/file-editor-preview";
+import { filePreviewKind, isBinaryFilePreview } from "@/lib/file-editor-preview";
 import { applyFileSyncContent, resolveFileHighlight } from "@/lib/file-editor-highlights";
 
 type RemoteFileEditorProps = {
@@ -36,11 +39,16 @@ function languageForPath(path: string): string {
 export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEditorProps) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
+  const [fileView, setFileView] = useState<"code" | "preview">("code");
+  const [fileTextError, setFileTextError] = useState("");
+  const previewKind = filePreviewKind(selectedPath);
+  const canEditFile = !isBinaryFilePreview(previewKind) && !fileTextError;
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState("");
   const [directoryInput, setDirectoryInput] = useState(cwd);
+  const [directorySyncError, setDirectorySyncError] = useState("");
   const [filter, setFilter] = useState("");
   const [searchRevision, setSearchRevision] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -70,8 +78,13 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const applyDiskContent = useCallback((text: string) => { if (editorRef.current) applyFileSyncContent(editorRef.current,text); }, []);
   const { content, savedContent, conflict, reviewing, setReviewing, syncError, syncMessage, setContent, loadSnapshot, syncNow, saveCurrent, useDisk } = useFileSync(selectedPath, loading || saving || mutating, applyDiskContent);
   useEffect(() => () => { diffListenerRef.current?.dispose(); }, []);
-  const dirty = Boolean(selectedPath) && content !== savedContent;
+  const dirty = Boolean(selectedPath) && canEditFile && content !== savedContent;
+  useEffect(() => {
+    if (fileView === "preview") { editorRef.current = null; decorationRef.current = null; diffListenerRef.current?.dispose(); }
+  }, [fileView]);
   const busy = loading || saving || mutating;
+  const directoryStateRef = useRef({ cwd, busy });
+  directoryStateRef.current = { cwd, busy };
   const visibleEntries = entries;
   const entryDialogTitle = entryDialogMode === "rename" ? "Rename entry" : entryDialogMode === "create-file" ? "New file" : "New folder";
 
@@ -115,15 +128,31 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  async function request(body: Record<string, unknown>) {
-    const response = await fetch("/api/remote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const request = useCallback(async (body: Record<string, unknown>, signal?: AbortSignal) => {
+    const response = await fetch("/api/remote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
     let data: { error?: string; output?: string; content?: string; path?: string; newPath?: string };
     try { data = await response.json(); }
     catch { throw new Error("The file server did not return a complete response. Try again."); }
     if (!response.ok) throw new Error(data.error || "File action failed. Try again.");
     if (data.output && /\[exit code: [1-9]\d*\]/.test(data.output)) throw new Error(data.output.trim());
     return data;
-  }
+  }, []);
+
+  useEffect(() => subscribeVisiblePolling(async signal => {
+    if (directoryStateRef.current.busy || loadedDirectoryRef.current !== cwd) return;
+    const version = loadVersionRef.current;
+    try {
+      const data = await request({ action: "list", path: cwd, cwd }, signal);
+      if (signal.aborted || version !== loadVersionRef.current || directoryStateRef.current.cwd !== cwd || directoryStateRef.current.busy) return;
+      const next = parseFileListing(data.output || "", cwd);
+      setEntries(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+      setDirectorySyncError("");
+    } catch (cause) {
+      if (!signal.aborted && version === loadVersionRef.current && directoryStateRef.current.cwd === cwd) {
+        setDirectorySyncError(cause instanceof Error ? cause.message : "Files could not be synced.");
+      }
+    }
+  }), [cwd, request]);
 
   async function loadDirectory(nextPath = cwd, preserveFile = false) {
     const version = ++loadVersionRef.current;
@@ -132,11 +161,12 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
       const data = await request({ action: "list", path: nextPath, cwd });
       if (version !== loadVersionRef.current) return false;
       loadedDirectoryRef.current = nextPath;
+      setDirectorySyncError("");
       setEntries(parseFileListing(data.output || "", nextPath));
       onCwdChange(nextPath); setDirectoryInput(nextPath);
       setSearchRevision(value => value + 1);
       if (!preserveFile) {
-        setSelectedPath(""); loadSnapshot("", { content: "", revision: "" }); setFileLocation(null); setFilter(""); setExplorerOpen(true);
+        setSelectedPath(""); setFileTextError(""); setFileView("code"); loadSnapshot("", { content: "", revision: "" }); setFileLocation(null); setFilter(""); setExplorerOpen(true);
       }
       return true;
     } catch (cause) {
@@ -160,18 +190,25 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
     setError(""); setLoading(true);
     try {
       const parent = workspaceFileDirectory(location.path);
+      const kind = filePreviewKind(location.path);
+      let textError = "";
       const [file, listing] = await Promise.all([
-        requestFileSnapshot({ action: "snapshot", path: location.path }),
+        isBinaryFilePreview(kind) ? Promise.resolve(null) : requestFileSnapshot({ action: "snapshot", path: location.path }).catch(cause => {
+          if (cause instanceof FileSyncError && [413, 415].includes(cause.status)) { textError = cause.message; return null; }
+          throw cause;
+        }),
         loadParent ? request({ action: "list", path: parent, cwd }) : Promise.resolve(null),
       ]);
       if (version !== loadVersionRef.current) return;
       if (listing) {
         loadedDirectoryRef.current = parent;
+        setDirectorySyncError("");
         setEntries(parseFileListing(listing.output || "", parent));
         onCwdChange(parent); setDirectoryInput(parent); setFilter("");
       }
-      setSelectedPath(location.path);
-      loadSnapshot(location.path, file); setFileLocation({ ...location });
+      setSelectedPath(location.path); setFileTextError(textError);
+      setFileView(kind && (!file || (!location.line && !location.changes?.length)) ? "preview" : "code");
+      loadSnapshot(location.path, file || { content: "", revision: "" }); setFileLocation({ ...location });
       if ((containerRef.current?.clientWidth || 0) < 640) setExplorerOpen(false);
     } catch (cause) {
       if (version === loadVersionRef.current) setError(cause instanceof Error ? cause.message : "File could not be read.");
@@ -181,7 +218,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   useEffect(() => {
     if (!fileRequest || handledFileRequestRef.current === fileRequest.id) return;
     handledFileRequestRef.current = fileRequest.id;
-    if (fileRequest.path === selectedPath) { setExplorerOpen(false); setFileLocation({ ...fileRequest }); return; }
+    if (fileRequest.path === selectedPath) { setExplorerOpen(false); if (canEditFile) setFileView("code"); setFileLocation({ ...fileRequest }); return; }
     runAfterUnsavedCheck(() => void readFile(fileRequest, true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileRequest]);
@@ -193,7 +230,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
 
   function openSearchResult(location: WorkspaceFileLocation) {
     if (location.path === selectedPath) {
-      setFileLocation({ ...location });
+      setFileLocation({ ...location }); if (canEditFile) setFileView("code");
       if ((containerRef.current?.clientWidth || 0) < 640) setExplorerOpen(false);
       return;
     }
@@ -201,7 +238,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   }
 
   async function save() {
-    if (!selectedPath || saving) return false;
+    if (!selectedPath || !canEditFile || saving) return false;
     setSaving(true); setError("");
     try {
       const saved = await saveCurrent();
@@ -310,7 +347,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
         <Button type="submit" size="icon-sm" variant="ghost" disabled={busy || !directoryInput.trim()} aria-label="Open directory" title="Open directory"><ChevronRight className="size-4" /></Button>
         <Button type="button" size="icon-sm" variant="ghost" disabled={busy} onClick={() => void loadDirectory(cwd, true)} aria-label="Refresh files" title="Refresh files"><RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} /></Button>
       </form>
-      {error ? <div role="alert" className="mb-2 flex items-start gap-2 rounded-md bg-destructive/10 p-3 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error}</span><Button size="sm" variant="ghost" disabled={busy} onClick={() => void loadDirectory(cwd, true)}>Retry</Button></div> : null}
+      {error || directorySyncError ? <div role="alert" className="mb-2 flex items-start gap-2 rounded-md bg-destructive/10 p-3 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error || directorySyncError}</span><Button size="sm" variant="ghost" disabled={busy} onClick={() => void loadDirectory(cwd, true)}>Retry</Button></div> : null}
       <div className="flex min-h-0 flex-1 overflow-hidden border-t border-border/50">
         <aside hidden={!explorerOpen} className="file-explorer flex min-h-0 shrink-0 flex-col border-r border-border/50" style={{ width: explorerWidth }} aria-label="File explorer">
           <FileExplorerSearch directory={cwd} query={filter} onQueryChange={setFilter} onOpen={openSearchResult} disabled={busy} revision={searchRevision} />
@@ -342,12 +379,16 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
             <Button size="icon-sm" variant="ghost" aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"} title="Toggle file explorer" aria-expanded={explorerOpen} onClick={() => setExplorerOpen(open => !open)}><PanelLeft className="size-4" /></Button>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium" title={selectedPath}>{selectedPath.split("/").pop() || "Editor"}</p>
-              {selectedPath ? <p role="status" className="text-[11px] text-muted-foreground">{saving ? "Saving…" : conflict ? "Conflict on disk" : dirty ? "Unsaved changes" : "Synced with disk"}</p> : null}
+              {selectedPath ? <p role="status" className="text-[11px] text-muted-foreground">{!canEditFile ? "Preview" : saving ? "Saving…" : conflict ? "Conflict on disk" : dirty ? "Unsaved changes" : "Synced with disk"}</p> : null}
             </div>
+            {selectedPath && previewKind && canEditFile ? <div role="group" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
+              <Button size="sm" variant={fileView === "code" ? "secondary" : "ghost"} aria-pressed={fileView === "code"} onClick={() => setFileView("code")}>Code</Button>
+              <Button size="sm" variant={fileView === "preview" ? "secondary" : "ghost"} aria-pressed={fileView === "preview"} onClick={() => setFileView("preview")}>Preview</Button>
+            </div> : null}
             <Button asChild size="icon-sm" variant="ghost" aria-label="Download file" title={dirty ? "Download saved file (save changes first to include them)" : "Download file"}>
               <a href={selectedPath && !busy ? "/api/remote/download?path=" + encodeURIComponent(selectedPath) : undefined} download={selectedPath.split("/").pop()} aria-disabled={!selectedPath || busy} tabIndex={!selectedPath || busy ? -1 : undefined} className={!selectedPath || busy ? "pointer-events-none opacity-50" : undefined}><Download className="size-4" /></a>
             </Button>
-            <Button size="sm" className="file-toolbar-button" disabled={!selectedPath || busy || !dirty || Boolean(conflict) || Boolean(syncError)} onClick={() => void save()} aria-label="Save file" title="Save (Ctrl/⌘ S)">
+            <Button size="sm" className="file-toolbar-button" disabled={!selectedPath || !canEditFile || busy || !dirty || Boolean(conflict) || Boolean(syncError)} onClick={() => void save()} aria-label="Save file" title="Save (Ctrl/⌘ S)">
               {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}<span className="file-toolbar-label">Save</span>
             </Button>
           </div>
@@ -361,7 +402,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
           {syncMessage && !conflict ? <p role="status" className="shrink-0 px-3 py-1 text-[11px] text-muted-foreground">{syncMessage}</p> : null}
           {highlightMessage ? <p role="status" className="shrink-0 px-3 py-1 text-[11px] text-muted-foreground">{highlightMessage}</p> : null}
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {selectedPath && reviewing && conflict ? <DiffEditor height="100%" language={languageForPath(selectedPath)} theme="vs-dark" original={conflict.content} modified={content} onMount={instance => {
+            {selectedPath && fileTextError ? <div role="alert" className="p-5 text-sm text-muted-foreground"><p>{fileTextError}</p><p className="mt-2">Download the original file to open it.</p></div> : selectedPath && fileView === "preview" && previewKind ? <FileEditorPreview key={selectedPath} path={selectedPath} kind={previewKind} content={content} /> : selectedPath && reviewing && conflict ? <DiffEditor height="100%" language={languageForPath(selectedPath)} theme="vs-dark" original={conflict.content} modified={content} onMount={instance => {
               diffListenerRef.current?.dispose(); editorRef.current = instance.getModifiedEditor();
               diffListenerRef.current = instance.getModifiedEditor().onDidChangeModelContent(() => setContent(instance.getModifiedEditor().getModel()?.getValue(undefined,true) || ""));
             }} options={{ originalEditable:false,readOnly:busy,renderSideBySide:(containerRef.current?.clientWidth || 0)>=640,automaticLayout:true,minimap:{enabled:false},wordWrap:"on" }} /> : selectedPath ? <Editor onMount={editor => { diffListenerRef.current?.dispose(); editorRef.current = editor; revealLocation(fileLocationRef.current); }}
