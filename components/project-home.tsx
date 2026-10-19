@@ -3,6 +3,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Brain, FileText, Folder, ImagePlus, Layers, Paperclip, Plus, StickyNote, Trash2, Upload, X, type LucideIcon } from "lucide-react";
 import { ProjectAvatar } from "@/components/project-avatar";
+import { ProjectMembers } from "@/components/project-members";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ProjectMemoryManager } from "@/components/project-memory-manager";
 import { ProjectSkillsManager } from "@/components/project-skills-manager";
@@ -158,6 +159,7 @@ export function ProjectHome({
  const [error, setError] = useState("");
  const [busy, setBusy] = useState(false);
  const [deleteOpen, setDeleteOpen] = useState(false);
+ const [membersOpen, setMembersOpen] = useState(false);
  const [dragOver, setDragOver] = useState(false);
  const [memorySaving, setMemorySaving] = useState(false);
  const [chatVisibilitySaving, setChatVisibilitySaving] = useState(false);
@@ -449,15 +451,16 @@ export function ProjectHome({
          {data.project.mode === "agents" ? "Agent-oriented project" : `${data.chats.length} chats`} · {data.files.length} files · {data.notes.length} notes
      </p>
     </div>
-    <div className="col-span-2 grid grid-cols-2 gap-2 sm:col-span-1 sm:flex sm:shrink-0">
+    <div className="col-span-2 flex flex-wrap gap-2 sm:col-span-1 sm:justify-end">
      <Button type="button" className="min-w-0" onClick={() => data.project.mode === "agents" ? window.dispatchEvent(new CustomEvent("metis:new-project-agent", { detail: { projectId } })) : onNewChat(projectId)}>
       <Plus className="size-4" />
       {data.project.mode === "agents" ? "New agent" : "New chat"}
      </Button>
-     <Button type="button" variant="destructive" className="min-w-0" onClick={() => setDeleteOpen(true)}>
+     <Button type="button" variant="outline" className="min-w-0" onClick={() => setMembersOpen(true)}>{data.project.membershipRole === "member" ? "Members" : "Invite / Members"}</Button>
+     {data.project.membershipRole !== "member" ? <Button type="button" variant="destructive" className="min-w-0" onClick={() => setDeleteOpen(true)}>
       <Trash2 className="size-4" />
       Delete
-     </Button>
+     </Button> : null}
     </div>
    </header>
 
@@ -765,8 +768,9 @@ export function ProjectHome({
     )}
    </section>
 
+   <ProjectMembers key={projectId} projectId={projectId} membershipRole={data.project.membershipRole} open={membersOpen} onOpenChange={setMembersOpen} onLeft={onDeleted} />
    <ConfirmDialog
-    open={deleteOpen}
+    open={deleteOpen && data.project.membershipRole !== "member"}
     onOpenChange={setDeleteOpen}
     title={`Delete ${data.project.name}?`}
     description="Chats stay, but they leave this project. Files and the custom logo are removed."

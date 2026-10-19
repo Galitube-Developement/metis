@@ -16,7 +16,6 @@ import {
   Globe2,
   KeyRound,
   Link2,
-  Lock,
   Mic,
   Monitor,
   MoreHorizontal,
@@ -72,6 +71,7 @@ import { NotificationDeliverySettings } from "@/components/notification-delivery
 import { RemoteNotificationSettings, RemoteDeviceNotificationSwitch } from "@/components/remote-notification-settings";
 import { useNotificationSettings } from "@/hooks/use-notification-settings";
 import { AgentRuntimeSettings } from "@/components/agent-runtime-settings";
+import { AttachmentSettings } from "@/components/attachment-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { PlanUsagePanel } from "@/components/quota-gauges";
@@ -331,7 +331,6 @@ type Props = {
   onRefreshUsage: () => Promise<void>;
   onModelsChanged?: () => void;
   onModesChanged?: () => void;
-  onLogout: () => void;
   onResetMetis?: () => Promise<void>;
   onUpdateMetis?: () => Promise<void>;
   isHostAdmin?: boolean;
@@ -635,7 +634,6 @@ export function SettingsPanel({
   usageSnapshot,
   onRefreshUsage,
   onModelsChanged,
-  onLogout,
   onResetMetis,
   onUpdateMetis,
   isHostAdmin = false,
@@ -2007,6 +2005,11 @@ export function SettingsPanel({
 
 <TabsContent value="general" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
 
+ <section className="flex flex-col gap-4" aria-labelledby="settings-attachments">
+   <h3 id="settings-attachments" className="text-sm font-medium">Attachments</h3>
+   <AttachmentSettings />
+ </section>
+
  <section className="flex flex-col gap-4">
                   <h3 id="settings-subagent-model" className="text-sm font-medium">Subagent model</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2343,27 +2346,6 @@ export function SettingsPanel({
  : "No persistent website data stored yet."}
  </p>
  </section>
-
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h3 id="settings-session" className="text-sm font-medium">Session</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Lock this chat and return to the sign-in screen.
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2"
-                  onClick={() => {
-                    onOpenChange(false);
-                    onLogout();
-                  }}
-                >
-                  <Lock className="size-4" />
-                  Lock screen
-                </Button>
-
-              </section>
 
               <section className="flex flex-col gap-3">
                 <div>

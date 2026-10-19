@@ -47,6 +47,15 @@ test("real nonadmin gateway execution drops UID/groups/secrets and cannot edit a
     assert.ok(!lines[1].split(" ").includes("0"), "supplementary root group must be removed");
     assert.match(output.stdout, /NO_SERVER_SECRETS/);
     assert.doesNotMatch(output.stdout, /SECRET_LEAK/);
+    const rootWorkspace = await call("execute_command", { cwd: "/", command: "pwd; id -u", timeout: 5 }, { workspaceRoot: "/" });
+    assert.ok(!rootWorkspace.isError, text(rootWorkspace));
+    assert.equal(JSON.parse(text(rootWorkspace)).stdout.trim(), `/\n${fields[2]}`);
+    const rootAdmin = { uid: 0, gid: 0, isHostAdmin: true, allowRoot: true, workspaceRoot: "/", home: "/root" };
+    const adminWorkspace = await call("execute_command", { cwd: "/", command: "pwd", timeout: 5 }, rootAdmin);
+    assert.ok(!adminWorkspace.isError, text(adminWorkspace));
+    assert.equal(JSON.parse(text(adminWorkspace)).stdout.trim(), "/");
+    assert.equal((await call("execute_command", { cwd: "/", command: "pwd", timeout: 5 }, { ...rootAdmin, allowRoot: false })).isError, true);
+    assert.equal((await call("execute_command", { cwd: "/", command: "pwd", timeout: 5 }, { ...rootAdmin, isHostAdmin: false })).isError, true);
     const edit = await call("edit_file", { path: path.join(workspace, "link"), oldText: "SYNTHETIC", newText: "CHANGED" });
     assert.equal(edit.isError, true, text(edit));
     assert.equal(readFileSync(privateFile, "utf8"), "SYNTHETIC_PRIVATE");

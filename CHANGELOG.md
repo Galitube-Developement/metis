@@ -4,6 +4,14 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.15 — 2026-10-19
+
+- Invite users to shared projects, manage members and invitations, and use an account notification inbox with unread indicators while keeping provider, model and mode settings private. Automatic run-completed alerts no longer appear in that inbox.
+- Show edited files above the composer only while a reply is running, then keep them under the completed reply. Improve mobile note grids and preserve existing file navigation.
+- Preview internal chats, projects, notes and workspace links consistently from chat and workspace content.
+- Configure account attachment limits and keep background and queued uploads consistent with those settings.
+- Allow multiple Metis accounts to share an OS user and support `/` as an administrator workspace without changing the filesystem root's ownership.
+
 ## v1.0.14 — 2026-10-13 (updated 2026-10-16)
 
 - Search workspace file names and contents, export notes, plans and canvases as Markdown, plain text or PDF, and download workspace files.

@@ -8,8 +8,9 @@ import {
 import path from "node:path";
 import { getAgentCwd } from "@/lib/mcp";
 
-import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_INLINE_IMAGE_BYTES } from "@/lib/upload-limits";
-export { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS, MAX_INLINE_IMAGE_BYTES } from "@/lib/upload-limits";
+import { validateOwnerAttachmentSize } from "@/lib/attachment-settings";
+export { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 
 const IMAGE_MIME = new Set([
   "image/png",
@@ -35,12 +36,14 @@ export type StoredAttachment = {
   size: number;
 };
 
+import { chatAssetOwnerId } from "@/lib/project-access";
+
 function uploadsRoot(ownerId?: string): string {
   return path.join(getAgentCwd(ownerId), ".ai-chat-uploads");
 }
 
 export function chatUploadDir(chatId: string, ownerId?: string): string {
-  return path.join(uploadsRoot(ownerId), chatId);
+  return path.join(uploadsRoot(chatAssetOwnerId(chatId,ownerId)), chatId);
 }
 
 export function isImageMime(mime: string): boolean {
@@ -85,7 +88,6 @@ export function saveAttachments(
   const dir = chatUploadDir(chatId, ownerId);
   mkdirSync(dir, { recursive: true });
 
-  let total = 0;
   const stored: StoredAttachment[] = [];
   const images: Array<{ data: string; mimeType: string }> = [];
 
@@ -99,15 +101,7 @@ export function saveAttachments(
 
     const size = decodeBase64Size(data);
     if (size <= 0) throw new Error(`Invalid attachment: ${item.name}`);
-    if (size > Math.min(MAX_FILE_BYTES, 50 * 1024 * 1024)) {
-      throw new Error(
-        `File too large (max ${50}MB): ${item.name}`,
-      );
-    }
-    total += size;
-    if (total > MAX_TOTAL_BYTES) {
-      throw new Error("Attachments exceed total size limit");
-    }
+    validateOwnerAttachmentSize(size, item.name, ownerId);
 
     const id = randomUUID();
     const safe = sanitizeFileName(item.name);

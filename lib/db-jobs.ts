@@ -1,4 +1,4 @@
-import { projectDefaultModel } from "@/lib/project-model";
+import { projectRole } from "@/lib/project-access";
 import { projectModelOverride, validateProjectModelSelection } from "@/lib/project-model-server";
 import { modeById } from "@/lib/modes";
 import { hasUserInputResponse, userInputProgress, type UserInputProgress } from "@/lib/user-input-progress";
@@ -191,9 +191,9 @@ function enqueueJobInTransaction(
     const team = getDatabase().prepare("SELECT p.id AS projectId, p.owner_id AS ownerId, p.data AS projectData, a.data AS agentData FROM chats c JOIN projects p ON p.id = json_extract(c.data, '$.projectId') LEFT JOIN project_agents a ON a.chat_id = c.id WHERE c.id = ?").get(input.chatId) as { projectId: string; ownerId: string; projectData: string; agentData?: string } | undefined;
     if (team && JSON.parse(team.projectData).mode === "agents") {
       const agent = team.agentData ? JSON.parse(team.agentData) : null;
-      if (!input.userId || team.ownerId !== input.userId || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
+      if (!input.userId || !projectRole(team.projectId,input.userId) || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
-      const model = projectDefaultModel(JSON.parse(team.projectData));
+      const model = projectModelOverride(team.projectId,input.userId);
       if (model) { validateProjectModelSelection(input.userId, model.modelId, model.modelParams); input = { ...input, ...model }; }
       input = { ...input, modeId: modeById(input.modeId || getChat(input.chatId, input.userId)?.sessionState?.modeId, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }

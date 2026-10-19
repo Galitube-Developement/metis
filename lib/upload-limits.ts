@@ -1,7 +1,19 @@
 /** Shared transport limits; files are transferred in bounded chunks. */
 export const MAX_ATTACHMENTS = 10;
-export const MAX_FILE_BYTES = 1024 * 1024 * 1024;
-export const MAX_TOTAL_BYTES = MAX_ATTACHMENTS * MAX_FILE_BYTES;
+/** Default for accounts without a saved preference; 0 means Unlimited. */
+export const DEFAULT_ATTACHMENT_MAX_BYTES = 1024 * 1024 * 1024;
+export function isAttachmentMaxBytes(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+export function normalizeAttachmentMaxBytes(value: unknown): number {
+  return isAttachmentMaxBytes(value) ? value : DEFAULT_ATTACHMENT_MAX_BYTES;
+}
+export function validateAttachmentSize(size: number, maxBytes: number, name: string) {
+  if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`File must contain at least 1 byte: ${name}`);
+  if (maxBytes !== 0 && size > maxBytes) {
+    throw new Error(`File exceeds your ${formatFileBytes(maxBytes)} attachment limit: ${name}. Change it in Settings → General → Attachments.`);
+  }
+}
 export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 export type UploadedFile = {

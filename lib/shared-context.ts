@@ -1,3 +1,4 @@
+import { canAccessProjectResource, projectRole } from "@/lib/project-access";
 import { getCompletedUpload } from "@/lib/file-upload-store";
 import { randomUUID } from "node:crypto";
 import { normalizeVoiceDictionary } from "@/lib/voice-dictionary";
@@ -154,12 +155,17 @@ export function listNotes(input: {
 }) {
   const rows = getDatabase().prepare(
     `SELECT data FROM notes
-     WHERE (? IS NULL OR owner_id = ?)
+     WHERE (? IS NULL OR owner_id = ? OR
+       (COALESCE(json_extract(notes.data,'$.kind'),'note')!='learned_fact' AND EXISTS(
+         SELECT 1 FROM projects p WHERE p.id=json_extract(notes.data,'$.projectId') AND
+         (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?)))))
        AND (? IS NULL OR scope = 'global' OR (scope = 'chat' AND chat_id = ?) OR (scope = 'workspace' AND workspace_id = ?))
        AND (? IS NULL OR scope = ?)
        AND (? = 1 OR archived = 0)
      ORDER BY updated_at DESC`,
   ).all(
+    input.ownerId ?? null,
+    input.ownerId ?? null,
     input.ownerId ?? null,
     input.ownerId ?? null,
     input.chatId ?? null,
@@ -173,6 +179,7 @@ export function listNotes(input: {
   return rows
     .map(rowToNote)
     .filter((note): note is SharedNote => Boolean(note))
+    .filter((note) => canAccessProjectResource(note.projectId,input.ownerId,note.ownerId))
     .filter((note) => !input.projectId || note.projectId === input.projectId)
     .filter((note) => !search || `${note.title}\n${note.content}`.toLocaleLowerCase().includes(search));
 }
@@ -184,10 +191,14 @@ export function getNote(id: string, ownerId?: string, options?: { chatId?: strin
   const row = getDatabase().prepare(
     `SELECT data FROM notes
      WHERE id = ?
-       AND (? IS NULL OR owner_id = ?)
+       AND (? IS NULL OR owner_id = ? OR
+         (COALESCE(json_extract(notes.data,'$.kind'),'note')!='learned_fact' AND EXISTS(
+           SELECT 1 FROM projects p WHERE p.id=json_extract(notes.data,'$.projectId') AND
+           (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?)))))
        AND (? IS NULL OR scope = 'global' OR (scope = 'chat' AND chat_id = ?) OR (scope = 'workspace' AND workspace_id = ?))`,
-  ).get(id, ownerId ?? null, ownerId ?? null, (chatId || workspaceId) ?? null, chatId ?? null, workspaceId ?? null);
-  return rowToNote(row);
+  ).get(id, ownerId ?? null, ownerId ?? null, ownerId ?? null, ownerId ?? null, (chatId || workspaceId) ?? null, chatId ?? null, workspaceId ?? null);
+  const note=rowToNote(row);
+  return note && canAccessProjectResource(note.projectId,ownerId,note.ownerId) ? note : null;
 }
 
 function noteActivity(
@@ -213,15 +224,17 @@ function noteActivity(
 }
 
 export function listNoteActivities(noteId: string, ownerId?: string) {
+  if(!getNote(noteId,ownerId)) return [];
   const rows = getDatabase().prepare(
     `SELECT data FROM note_activities
-     WHERE note_id = ? AND (? IS NULL OR owner_id = ?)
+     WHERE note_id = ?
      ORDER BY created_at DESC LIMIT 100`,
-  ).all(noteId, ownerId ?? null, ownerId ?? null);
+  ).all(noteId);
   return rows.map((row) => parseData<NoteActivity>(row)).filter((item): item is NoteActivity => Boolean(item));
 }
 
 export function createNote(input: NoteWriteInput & { ownerId?: string; idempotencyKey?: string }) {
+  if(input.projectId && input.ownerId && !projectRole(input.projectId,input.ownerId)) throw new Error("Project not found");
   if (input.idempotencyKey) {
     const existing = getIdempotentResponse<SharedNote>("note:create", input.idempotencyKey, input.ownerId, input.chatId);
     if (existing) return existing;
@@ -281,6 +294,8 @@ export function updateNote(
   return transaction(() => {
     const current = getNote(id, input.ownerId);
     if (!current) return null;
+    if(input.projectId && input.ownerId && !projectRole(input.projectId,input.ownerId)) throw new Error("Project not found");
+    if(input.projectId !== undefined && input.projectId !== current.projectId && input.ownerId && current.ownerId!==input.ownerId) throw new Error("Only the note creator can move this note.");
     if (input.expectedVersion !== undefined && input.expectedVersion !== current.version) {
       throw new NoteConflictError(current);
     }

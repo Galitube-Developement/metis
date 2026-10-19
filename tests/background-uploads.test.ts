@@ -12,11 +12,16 @@ process.env.AGENT_CWD = root;
 const modules = import("../lib/file-upload-store");
 test.after(async () => { await rm(root, { recursive: true, force: true }); });
 function bytes(data: Uint8Array) { return new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(data); controller.close(); } }); }
-test("1 GB uploads stream in bounded chunks, attach without copying into memory, and have bounded text previews", async () => {
+test("uploads above 1 GB stream in bounded chunks, attach without copying into memory, and have bounded text previews", async () => {
   const { createUpload, appendUpload, completeUpload, materializeUploads, uploadedFileResponse } = await modules;
-  const { MAX_FILE_BYTES, UPLOAD_CHUNK_BYTES } = await import("../lib/upload-limits");
+  const { DEFAULT_ATTACHMENT_MAX_BYTES, UPLOAD_CHUNK_BYTES } = await import("../lib/upload-limits");
+  const MAX_FILE_BYTES = DEFAULT_ATTACHMENT_MAX_BYTES + UPLOAD_CHUNK_BYTES;
   const { resolveUploadPath, buildAttachmentPrompt } = await import("../lib/uploads");
-  assert.throws(() => createUpload("one", { name: "too-big", mimeType: "text/plain", size: MAX_FILE_BYTES + 1 }), /1 GB/);
+  assert.throws(() => createUpload("one", { name: "too-big", mimeType: "text/plain", size: MAX_FILE_BYTES }), /attachment limit/);
+  const { getDatabase } = await import("../lib/sqlite");
+  const { saveGlobalModelSettings } = await import("../lib/db-store");
+  getDatabase().prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)").run("one", "one", "unused", new Date().toISOString());
+  saveGlobalModelSettings({ attachmentMaxBytes: 0 }, "one");
   const upload = createUpload("one", { name: "large.txt", mimeType: "text/plain", size: MAX_FILE_BYTES });
   const chunk = new Uint8Array(UPLOAD_CHUNK_BYTES).fill(65);
   for (let offset = 0; offset < MAX_FILE_BYTES; offset += chunk.byteLength) {

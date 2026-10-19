@@ -1,3 +1,4 @@
+import { canAccessChat } from "@/lib/project-access";
 import { randomUUID } from "node:crypto";
 import { getDatabase, transaction } from "@/lib/sqlite";
 import { getRemoteClient } from "@/lib/remote-clients";
@@ -85,7 +86,7 @@ export function setNotificationPrefs(ownerId: string, input: unknown) {
 export function createNotification(ownerId: string, input: unknown, sourceKey?: string, createdAt = new Date().toISOString()): NotificationRecord {
   const data = notificationInput.parse(input);
   const db = notificationDatabase();
-  if (data.chatId && !db.prepare("SELECT 1 FROM chats WHERE id=? AND owner_id=?").get(data.chatId, ownerId))
+  if (data.chatId && !canAccessChat(data.chatId, ownerId))
     throw new Error("Chat is unavailable for this account");
   return transaction(() => {
     const id = randomUUID();

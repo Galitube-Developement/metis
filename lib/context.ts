@@ -1,3 +1,4 @@
+import { projectRole } from "@/lib/project-access";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { listNotes, getNote } from "@/lib/shared-context";
 
@@ -26,7 +27,7 @@ export function getPinnedNotes(ownerId: string | undefined, chatId: string) {
   const chat = getChat(chatId, ownerId);
   if (!chat || chat.incognito) return [];
   ownerId ??= chat.ownerId;
-  const allowed = new Map(listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId).map((note) => [note.id, note]));
+  const allowed = new Map(listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId || (note.kind!=="learned_fact" && projectRole(note.projectId,ownerId))).map((note) => [note.id, note]));
   return getPinnedNoteIds(ownerId, chatId)
     .map((id) => allowed.get(id))
     .filter((note): note is NonNullable<typeof note> => Boolean(note))
@@ -49,13 +50,13 @@ export function resolveReferences(
   const chat = getChat(chatId, ownerId);
   if (!chat) return [];
   const resolvedOwnerId = ownerId ?? chat.ownerId;
-  const accessibleNotes = new Map(listNotes({ ownerId: resolvedOwnerId, chatId }).filter((note) => note.ownerId === resolvedOwnerId).map((note) => [note.id, note]));
+  const accessibleNotes = new Map(listNotes({ ownerId: resolvedOwnerId, chatId }).filter((note) => note.ownerId === resolvedOwnerId || (note.kind!=="learned_fact" && projectRole(note.projectId,resolvedOwnerId))).map((note) => [note.id, note]));
   return references
     .slice(0, 20)
     .map((reference): ContextReference | null => {
       if (reference.kind !== "note") return { ...reference, source: reference.source || "explicit" };
       const note = accessibleNotes.get(reference.id) || getNote(reference.id, resolvedOwnerId, { chatId });
-      if (!note || note.ownerId !== resolvedOwnerId) return null;
+      if (!note || (note.ownerId !== resolvedOwnerId && (note.kind==="learned_fact" || !projectRole(note.projectId,resolvedOwnerId)))) return null;
       return {
         kind: "note",
         id: note.id,

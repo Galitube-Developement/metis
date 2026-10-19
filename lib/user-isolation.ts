@@ -30,7 +30,7 @@ export function isInsideWorkspace(root: string, candidate: string) {
 export function isRootWorkspace(workspaceRoot: string, home = "/root") {
   const root = path.resolve(home || "/root");
   const workspace = path.resolve(workspaceRoot);
-  return workspace === root || workspace.startsWith(`${root}${path.sep}`);
+  return workspace === path.parse(workspace).root || workspace === root || workspace.startsWith(`${root}${path.sep}`);
 }
 
 export function parsePasswdLine(line: string): PosixIdentity | undefined {
@@ -121,6 +121,6 @@ export function assertExecutionUid(
     throw new Error("Agent execution requires a valid OS user.");
   }
   if (uid === 0) {
-    throw new Error("Root agent execution is disabled unless explicitly configured for a /root workspace.");
+    throw new Error("Root agent execution is disabled unless explicitly configured for / or the root user's home workspace.");
   }
 }

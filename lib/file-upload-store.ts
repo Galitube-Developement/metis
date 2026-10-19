@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileResponse } from "@/lib/file-response";
 import { config } from "@/lib/config";
 import { chatUploadDir, isImageMime, sanitizeFileName, type StoredAttachment } from "@/lib/uploads";
-import { MAX_FILE_BYTES, MAX_ATTACHMENTS, MAX_TOTAL_BYTES, UPLOAD_CHUNK_BYTES, type UploadedFile } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS, UPLOAD_CHUNK_BYTES, type UploadedFile } from "@/lib/upload-limits";
+import { validateOwnerAttachmentSize } from "@/lib/attachment-settings";
 
 type UploadSession = UploadedFile & { offset: number; complete: boolean; createdAt: number };
 const locks = new Set<string>();
@@ -21,7 +22,8 @@ function save(ownerId: string, upload: UploadSession) {
   renameSync(tmp, path.join(dir, "metadata.json"));
 }
 export function createUpload(ownerId: string, input: { name: string; mimeType: string; size: number }): UploadSession {
-  if (!input.name || !Number.isSafeInteger(input.size) || input.size <= 0 || input.size > MAX_FILE_BYTES) throw new Error("Files must be between 1 byte and 1 GB");
+  if (!input.name) throw new Error("File name is required");
+  validateOwnerAttachmentSize(input.size, input.name, ownerId);
   const mimeType = input.mimeType?.split(";")[0].trim().toLowerCase().replace(/[\r\n]/g, "").slice(0, 200) || "application/octet-stream";
   const upload: UploadSession = { id: randomUUID(), name: input.name.replace(/[\r\n]/g, "").slice(0, 255), mimeType, size: input.size, kind: isImageMime(mimeType) ? "image" : "file", offset: 0, complete: false, createdAt: Date.now() };
   const dir = directory(ownerId, upload.id);
@@ -97,7 +99,6 @@ export function materializeUploads(chatId: string, ids: string[], ownerId: strin
   if (!chatId || chatId.includes("..") || /[/\\]/.test(chatId)) throw new Error("Invalid chat id");
   if (ids.length > MAX_ATTACHMENTS || new Set(ids).size !== ids.length) throw new Error("Invalid upload count");
   const uploads = ids.map((id) => getCompletedUpload(ownerId, id));
-  if (uploads.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_BYTES) throw new Error("Attachments exceed total limit");
   const dir = chatUploadDir(chatId, ownerId);
   mkdirSync(dir, { recursive: true });
   return uploads.map((upload) => {

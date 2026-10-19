@@ -22,6 +22,8 @@ test("workspace containment rejects path escape", () => {
   assert.equal(isInsideWorkspace("/home/alice", "/home/alice/../bob"), false);
   assert.equal(isInsideWorkspace("/workspace", "/workspace/alice"), true);
   assert.equal(isInsideWorkspace("/workspace", "/home/alice"), false);
+  assert.equal(isInsideWorkspace("/", "/"), true);
+  assert.equal(isInsideWorkspace("/", "/home/alice"), true);
 });
 
 test("passwd parser extracts posix identity", () => {
@@ -45,6 +47,9 @@ test("root execution requires explicit configuration and a root workspace", () =
   assert.throws(() => assertExecutionUid(0), /explicitly configured/);
   assert.throws(() => assertExecutionUid(0, { allowRoot: true, workspaceRoot: "/home/alice" }), /explicitly configured/);
   assert.doesNotThrow(() => assertExecutionUid(0, { allowRoot: true, workspaceRoot: "/root/metis-ai" }));
+  assert.doesNotThrow(() => assertExecutionUid(0, { allowRoot: true, workspaceRoot: "/" }));
+  assert.throws(() => assertExecutionUid(0, { workspaceRoot: "/" }), /explicitly configured/);
+  assert.equal(isRootWorkspace("/"), true);
   assert.equal(isRootWorkspace("/root/metis-ai"), true);
   assert.equal(isRootWorkspace("/home/alice"), false);
 });

@@ -15,6 +15,7 @@ function headingIdsInTab(source: string, tab: string) {
 test("settings subsection links match the heading order in each tab", () => {
   const sections = Object.fromEntries(Object.entries(SETTINGS_SECTIONS).map(([tab, items]) => [tab, items.map(item => item.id)]));
   assert.deepEqual(sections.general, [
+    "settings-attachments",
     "settings-subagent-model",
     "settings-token-compression",
     "settings-notifications",
@@ -22,7 +23,6 @@ test("settings subsection links match the heading order in each tab", () => {
     "settings-dictionary",
     "settings-browser",
     "settings-browser-storage",
-    "settings-session",
     "settings-links",
   ]);
   for (const tab of Object.keys(sections)) {
@@ -46,7 +46,7 @@ test("General settings end with external Website and GitHub links", () => {
     settingsSource.indexOf('<TabsContent value="general"'),
     settingsSource.indexOf("</TabsContent>", settingsSource.indexOf('<TabsContent value="general"')),
   );
-  assert.ok(general.indexOf('id="settings-links"') > general.indexOf('id="settings-session"'));
+  assert.ok(general.indexOf('id="settings-links"') > general.indexOf('id="settings-browser-storage"'));
   assert.match(general, /href="https:\/\/metis\.f1shy312\.com" target="_blank" rel="noopener noreferrer"/);
   assert.match(general, /href="https:\/\/github\.com\/f1shyondrugs\/metis-ai" target="_blank" rel="noopener noreferrer"/);
 });

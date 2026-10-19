@@ -1,28 +1,30 @@
+import { getDatabase } from "@/lib/sqlite";
+import { canAccessProjectResource } from "@/lib/project-access";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getAgentCwd } from "@/lib/mcp";
-import { isImageMime, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES, sanitizeFileName } from "@/lib/uploads";
+import { isImageMime, MAX_ATTACHMENTS, sanitizeFileName } from "@/lib/uploads";
+import { validateOwnerAttachmentSize } from "@/lib/attachment-settings";
 
-export function validateNoteFiles(files: readonly Pick<File, "name" | "size">[]) {
+export function validateNoteFiles(files: readonly Pick<File, "name" | "size">[], ownerId?: string) {
   if (!files.length) throw new Error("Choose at least one file.");
   if (files.length > MAX_ATTACHMENTS) throw new Error(`Choose up to ${MAX_ATTACHMENTS} files at a time.`);
-  let total = 0;
   for (const file of files) {
     if (!file.size) throw new Error(`File is empty: ${file.name}`);
-    if (file.size > Math.min(MAX_FILE_BYTES, 50 * 1024 * 1024)) throw new Error(`File exceeds 50 MB: ${file.name}`);
-    total += file.size;
+    validateOwnerAttachmentSize(file.size, file.name, ownerId);
   }
-  if (total > MAX_TOTAL_BYTES) throw new Error("Files exceed the total size limit.");
 }
 
 function attachmentDir(noteId: string, ownerId?: string) {
   // Note IDs become directory names only after resolving an owned note.
-  return path.join(getAgentCwd(ownerId), ".note-attachments", encodeURIComponent(noteId));
+  const note=getDatabase().prepare("SELECT owner_id,json_extract(data,'$.projectId') AS projectId FROM notes WHERE id=?").get(noteId) as {owner_id?:string;projectId?:string}|undefined;
+  const fileOwner=note && canAccessProjectResource(note.projectId,ownerId,note.owner_id) ? note.owner_id : ownerId;
+  return path.join(getAgentCwd(fileOwner), ".note-attachments", encodeURIComponent(noteId));
 }
 
 export async function storeNoteFiles(noteId: string, files: File[], ownerId?: string) {
-  validateNoteFiles(files);
+  validateNoteFiles(files, ownerId);
   const dir = attachmentDir(noteId, ownerId);
   await mkdir(dir, { recursive: true });
   const attachments = [];

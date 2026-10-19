@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import { HoverPreview } from "@/components/hover-preview";
+import { InternalLinkPreviewChat, InternalLinkPreviewContent } from "@/components/internal-link-preview";
+import { parseInternalLink } from "@/lib/internal-link";
 
 type LinkPreviewProps = {
   href: string;
@@ -16,7 +18,11 @@ type Preview = {
 };
 
 export function LinkPreview({ href, children }: LinkPreviewProps) {
-  return <HoverPreview content={<WebPreview key={href} href={href} />}>{children}</HoverPreview>;
+  const target = parseInternalLink(href);
+  const chatId = useContext(InternalLinkPreviewChat);
+  return <HoverPreview content={target
+    ? <InternalLinkPreviewContent key={`${href}:${chatId || ""}`} target={target} chatId={chatId} />
+    : <WebPreview key={href} href={href} />}>{children}</HoverPreview>;
 }
 
 function WebPreview({ href }: { href: string }) {

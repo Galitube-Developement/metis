@@ -4,7 +4,7 @@ import { LoaderCircle, Monitor, Pause, Play, RefreshCw, Settings2, Upload } from
 import { FileDropZone } from "@/components/file-drop-zone";
 import { startUpload } from "@/lib/background-uploads";
 import { toast } from "sonner";
-import { MAX_ATTACHMENTS, MAX_FILE_BYTES } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 import { Button } from "@/components/ui/button";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { chooseDesktopClient, desktopUnavailableReason } from "@/lib/remote-desktop-view";
@@ -110,8 +110,8 @@ export function WorkspaceDesktopsPanel({ active, agentClientId, agentActive, act
   function uploadFiles(files: FileList) {
     if (!transferReady || !selected) { toast.error("Select an online Remote Device with Full access to transfer files."); return; }
     const incoming = Array.from(files), targetId = selected.id, targetName = selected.name || selected.hostname || "Remote Device";
-    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size || file.size > MAX_FILE_BYTES)) {
-      toast.error("Choose up to 10 files, each 1 GB or smaller."); return;
+    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size)) {
+      toast.error("Choose up to 10 non-empty files."); return;
     }
     for (const file of incoming) startUpload(file, { label: targetName + " · Desktop", onComplete: async upload => {
       const response = await fetch("/api/remote-clients/" + encodeURIComponent(targetId) + "/files", {

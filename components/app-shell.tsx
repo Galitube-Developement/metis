@@ -3,6 +3,7 @@ import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { WorkspaceExportMenu } from "@/components/workspace-export-menu";
 import { createClientId } from "@/lib/client-id";
 import { notifyClientError } from "@/lib/client-error-notifications";
+import { useNotificationInbox } from "@/components/account/use-notification-inbox";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 import type { AccountView } from "@/components/account/account-panel";
 
@@ -33,7 +34,7 @@ import {
 import { startUpload, waitForUpload, cancelUpload, subscribeUploads, getUploadStatus, getCompletedUploadResult } from "@/lib/background-uploads";
 import { UploadProgress, UploadTray } from "@/components/upload-progress";
 import { readTextFilePreview } from "@/lib/text-file-preview";
-import { MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "@/lib/upload-limits";
+import { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 import { useSearchParams } from "next/navigation";
 import { scheduleUiBackgroundTask, shouldApplySnapshotVersion } from "@/lib/ui-work-scheduling";
 import { createMessageDerivationCache } from "@/lib/message-derivation-cache";
@@ -123,13 +124,14 @@ import { canAutoRevealBrowser } from "@/lib/browser-auto-reveal";
 import { fileViewKind, isTextAttachment, isOfficeAttachment, mimeTypeFromFileName } from "@/lib/file-types";
 import { EditableMarkdown } from "@/components/editable-markdown";
 import { Markdown, StreamingMarkdown } from "@/components/markdown";
+import { InternalLinkPreviewChat } from "@/components/internal-link-preview";
 import { useLiveMessageMotion } from "@/components/use-live-message-motion";
 import type { ToolPart as StoredToolPart } from "@/lib/store";
 import { AgentActivity } from "@/components/agent-activity";
 import { latestPreparingTool } from "@/lib/tool-preparation";
 import { parseFileChangeRanges } from "@/lib/file-change-ranges";
 import { ComposerEditedFiles, EditedFiles } from "@/components/edited-files";
-import { editedFilesForMessage } from "@/lib/edited-files";
+import { activeEditedFilesMessageId, editedFilesForMessage } from "@/lib/edited-files";
 import { AssistantImageGallery } from "@/components/assistant-image-gallery";
 import { chatActivityIndicator } from "@/lib/chat-activity";
 import { ChatActivityIndicator } from "@/components/chat-activity-indicator";
@@ -430,6 +432,8 @@ type MsgAttachment = {
 };
 
 type Msg = {
+  authorId?: string;
+  authorName?: string;
   contextTokenEstimate?: number;
   programEvent?: ChatProgramEvent;
   questionAnswer?: QuestionAnswerReference;
@@ -485,8 +489,6 @@ type PersistedQueuedMessage = {
 };
 
 const MAX_PENDING_FILES = MAX_ATTACHMENTS;
-const MAX_PENDING_FILE_BYTES = MAX_FILE_BYTES;
-const MAX_PENDING_TOTAL_BYTES = MAX_TOTAL_BYTES;
 function detectedFileLinks(content: string) {
   const links = new Set<string>();
   const pattern = /(?:https?:\/\/[^\s<>()]+)?\/api\/(?:uploads\/[^)\s<>()]+|share\/attachment\?[^)\s<>()]+)/gi;
@@ -657,6 +659,8 @@ type ChatIndexEntry = {
 
 type Chat = ChatIndexEntry & {
   messages: Array<{
+    authorId?: string;
+    authorName?: string;
     contextTokenEstimate?: number;
     programEvent?: ChatProgramEvent;
     questionAnswer?: QuestionAnswerReference;
@@ -1581,6 +1585,8 @@ function mapApiMessages(
       tools: visibleTools,
       parts: persistedParts,
       references: m.references,
+      authorId: m.authorId,
+      authorName: m.authorName,
       suggestions: normalizeSuggestions(m.suggestions),
       runMetadata: m.runMetadata,
       attachments: m.attachments,
@@ -2087,6 +2093,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [accountView, setAccountView] = useState<AccountView | null>(null);
   useEffect(() => setAccountView(null), [routeChatId, routeView]);
   const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
+  const {unreadCount: unreadNotifications,refresh:refreshNotificationInbox}=useNotificationInbox(Boolean(authed));
   const settingsOpen = accountView === "settings";
   const setSettingsOpen = useCallback((open: boolean) => {
     setAccountView(current => open ? "settings" : current === "settings" ? null : current);
@@ -2902,7 +2909,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       .filter((part) => part.kind === "shell" || part.kind === "read" || part.kind === "edit"),
   ), [messages]);
   const latestAssistantMessage = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
-  const composerEditedFiles = useMemo(() => latestAssistantMessage ? editedFilesForMessage(latestAssistantMessage) : [], [latestAssistantMessage]);
+  const composerEditedMessage = useMemo(() => {
+    const id = activeEditedFilesMessageId(messages, { running: activeChatIsRunning, loading: Boolean(loadingChatId) });
+    return id ? messages.find(message => message.id === id) : undefined;
+  }, [messages, activeChatIsRunning, loadingChatId]);
+  const composerEditedFiles = useMemo(() => composerEditedMessage ? editedFilesForMessage(composerEditedMessage) : [], [composerEditedMessage]);
   const subagentOutputs = useMemo(() => dedupeChatBarSubagents(
     messages.flatMap((message) =>
       (message.parts ?? partsFromFlat(message))
@@ -3157,8 +3168,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         y: (event.clientY - rect.top) / rect.height * browserViewport.height };
     }
     const incoming = Array.from(files);
-    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size || file.size > MAX_FILE_BYTES)) {
-      toast.error("Choose up to 10 files, each 1 GB or smaller."); return;
+    if (!incoming.length || incoming.length > MAX_ATTACHMENTS || incoming.some(file => !file.size)) {
+      toast.error("Choose up to 10 non-empty files."); return;
     }
     setBrowserFileUploading(true);
     try {
@@ -6011,6 +6022,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     await fetch("/api/auth", { method: "DELETE" });
+    setAccountView(null);
+    setMobileNavOpen(false);
     authedRef.current = false;
     setAuthed(false);
     chatLoadRequestRef.current += 1;
@@ -6550,21 +6563,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (list.length > room) {
         toast.error(`Max ${MAX_PENDING_FILES} files`);
       }
-      const sizeValid = list.filter((file) => file.size <= MAX_PENDING_FILE_BYTES);
-      if (sizeValid.length < list.length) {
-        toast.error("Each file must be 1 GB or smaller");
-      }
-      const currentTotal = prev.reduce((total, pending) => total + pending.file.size, 0);
-      let remainingBytes = MAX_PENDING_TOTAL_BYTES - currentTotal;
-      const nextFiles: File[] = [];
-      for (const file of sizeValid.slice(0, room)) {
-        if (file.size > remainingBytes) break;
-        nextFiles.push(file);
-        remainingBytes -= file.size;
-      }
-      if (nextFiles.length < Math.min(sizeValid.length, room)) {
-        toast.error("Attachments may not exceed 10 GB total");
-      }
+      // The upload API validates the account limit before accepting file bytes.
+      const nextFiles = list.slice(0, room);
       const next = nextFiles.map((file) => {
         return {
           id: `pf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -9944,11 +9944,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       </div>
 
       <div className="shrink-0 p-2">
-        <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable}
+        <AccountMenu profile={accountProfile} username={username} updateAvailable={settingsUpdateAvailable} unreadCount={unreadNotifications} onNotifications={() => openAccountPage("notifications")}
           onSettings={() => openAccountPage("settings")}
           onAgentHub={() => openAccountPage("agent-hub")}
           onProfile={() => openAccountPage("profile")}
-          onUsage={() => openAccountPage("usage")} />
+          onUsage={() => openAccountPage("usage")}
+          onLogout={() => void logout()} />
       </div>
     </div>
   );
@@ -10097,6 +10098,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   return (
+    <InternalLinkPreviewChat.Provider value={activeChatId}>
     <div
       className="metis-shell flex h-dvh overflow-hidden bg-background"
       onTouchStart={handleTouchStart}
@@ -10248,7 +10250,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
         onFiles={addPendingFiles}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {accountView ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile}>
+        {accountView ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} onNotificationsChanged={() => void refreshNotificationInbox()} onOpenProject={(id) => {setAccountView(null);openProjectHome(id);}} onOpenChat={(id)=>{setAccountView(null);void loadChat(id);}}>
           {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
         setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
         setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
@@ -10302,7 +10304,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         onRefreshUsage={() => refreshPlanUsage(true)}
         onModelsChanged={() => void loadModels()}
         onModesChanged={() => void loadModes()}
-        onLogout={() => void logout()}
         onResetMetis={resetMetis}
         onUpdateMetis={updateMetis}
         isHostAdmin={Boolean(status?.isHostAdmin)}
@@ -10682,6 +10683,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                     )}
                                   >
                                     <div className="whitespace-pre-wrap">
+                                      {m.authorName ? <div className="mb-1 text-xs font-medium text-muted-foreground">{m.authorName}</div> : null}
                                       <RichUserText content={m.content} references={m.references} />
                                     </div>
                                   </div>
@@ -10902,7 +10904,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             </div>
                           );
                         })}
-                        <EditedFiles files={editedFiles} streaming={Boolean(m.streaming)} />
+                        <EditedFiles files={editedFiles} streaming={m.id === composerEditedMessage?.id} />
                         {m.attachments?.some((att) => att.kind !== "image") ? (
                           <div className="my-3 flex max-w-full flex-wrap gap-2">
                             {m.attachments.filter((att) => att.kind !== "image").map((att) => {
@@ -11212,7 +11214,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ) : null}
                     </div>
                   ) : null}
-                  <ComposerEditedFiles key={`${activeChatId}:${latestAssistantMessage?.id}`} files={composerEditedFiles} />
+                  {composerEditedMessage ? <ComposerEditedFiles key={`${activeChatId}:${composerEditedMessage.id}`} files={composerEditedFiles} /> : null}
                   {composer}
                 </div>
               </div>
@@ -12408,5 +12410,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </DialogContent>
       </Dialog>
     </div>
+    </InternalLinkPreviewChat.Provider>
   );
 }

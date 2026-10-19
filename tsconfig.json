@@ -36,8 +36,7 @@
   ],
   "exclude": [
     "node_modules",
-    "data/provider-sessions",
-    "data/work-verification",
+    "data",
     ".next",
     ".next-*/**",
     "tmp",

@@ -1,3 +1,4 @@
+import { canAccessChat } from "@/lib/project-access";
 import { validateProjectModelSelection } from "@/lib/project-model-server";
 export { validateProjectModelSelection } from "@/lib/project-model-server";
 import type { ChatRunStatus } from "@/lib/store";
@@ -30,29 +31,31 @@ export const AGENT_PRESETS = [
 function ownedProject(projectId: string, ownerId?: string) {
  ownerRequired(ownerId);
  const project = getProject(projectId, ownerId);
- if (!project || project.ownerId !== ownerId) throw new Error("Project not found");
+ if (!project) throw new Error("Project not found");
  if (project.mode !== "agents") throw new Error("This project uses regular chats");
  return project;
 }
 function rowAgent(row: unknown, ownerId: string): ProjectAgent | null {
  const value = parseData<ProjectAgent>(row);
  if (!value?.id) return null;
- const chat = getDatabase().prepare("SELECT run_status AS runStatus FROM chat_list WHERE id = ? AND owner_id = ?").get(value.chatId, ownerId) as { runStatus?: ChatRunStatus } | undefined;
+ const chat = getDatabase().prepare("SELECT run_status AS runStatus FROM chat_list WHERE id = ?").get(value.chatId) as { runStatus?: ChatRunStatus } | undefined;
  const active = getDatabase().prepare("SELECT status FROM jobs WHERE chat_id = ? AND user_id = ? AND status IN ('queued','running','switching','waiting_input','waiting_for_user') LIMIT 1").get(value.chatId, ownerId) as { status: string } | undefined;
+ const creator=(getDatabase().prepare("SELECT owner_id FROM project_agents WHERE id=?").get(value.id) as {owner_id:string}|undefined)?.owner_id;
+ if(creator!==ownerId) delete value.modelId;
  return { ...value, status: value.archivedAt ? "archived" : active?.status === "queued" ? "queued" : deriveProjectAgentStatus(chat?.runStatus, value.archivedAt) };
 }
 export function getProjectAgent(projectId: string, agentId: string, ownerId?: string) {
  if (!ownerId || !getProject(projectId, ownerId)) return null;
- return rowAgent(getDatabase().prepare("SELECT data FROM project_agents WHERE id = ? AND project_id = ? AND owner_id = ?").get(agentId, projectId, ownerId), ownerId);
+ return rowAgent(getDatabase().prepare("SELECT data FROM project_agents WHERE id = ? AND project_id = ?").get(agentId, projectId), ownerId);
 }
 export function getProjectAgentForChat(chatId: string, ownerId?: string) {
- if (!ownerId) return null;
- const row = getDatabase().prepare("SELECT data FROM project_agents WHERE chat_id = ? AND owner_id = ?").get(chatId, ownerId);
+ if (!ownerId || !canAccessChat(chatId,ownerId)) return null;
+ const row = getDatabase().prepare("SELECT data FROM project_agents WHERE chat_id = ?").get(chatId);
  return rowAgent(row, ownerId);
 }
 export function listProjectAgents(projectId: string, ownerId?: string) {
  if (!ownerId || !getProject(projectId, ownerId)) return [];
- return getDatabase().prepare("SELECT data FROM project_agents WHERE project_id = ? AND owner_id = ? ORDER BY created_at, rowid").all(projectId, ownerId).map(row => rowAgent(row, ownerId)).filter((a): a is ProjectAgent => !!a);
+ return getDatabase().prepare("SELECT data FROM project_agents WHERE project_id = ? ORDER BY created_at, rowid").all(projectId).map(row => rowAgent(row, ownerId)).filter((a): a is ProjectAgent => !!a);
 }
 function validateSupervisor(projectId: string, id: string, supervisorId: string | undefined, ownerId: string) {
  if (!supervisorId) return;

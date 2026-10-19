@@ -1,0 +1,132 @@
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
+import { getAutomation, type Automation } from "@/lib/automations";
+import { getChat } from "@/lib/db-store";
+import { getNote } from "@/lib/shared-context";
+import { getDatabase } from "@/lib/sqlite";
+import type { InternalLinkPreview, InternalLinkTarget } from "@/lib/internal-link";
+
+const parser = unified().use(remarkParse).use(remarkGfm);
+
+function bounded(value: string, limit: number) {
+  const text = value.replace(/[\u0000-\u001f\u007f\s]+/g, " ").trim();
+  return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
+}
+
+/** Parse GFM so code examples do not count as completed tasks. */
+function documentSummary(content: string) {
+  type Node = { type: string; value?: string; alt?: string | null; checked?: boolean | null; children?: Node[] };
+  const nodes: Node[] = [parser.parse(content.slice(0, 100_000)) as Node];
+  const text: string[] = [];
+  let tasks = 0, completed = 0, steps = 0;
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if (node.type === "listItem") {
+      steps += 1;
+      if (typeof node.checked === "boolean") {
+        tasks += 1;
+        if (node.checked) completed += 1;
+      }
+    }
+    if (["text", "inlineCode", "code"].includes(node.type) && node.value) text.push(node.value);
+    if (node.type === "image" && node.alt) text.push(node.alt);
+    if (node.children) for (let index = node.children.length - 1; index >= 0; index -= 1) nodes.push(node.children[index]);
+  }
+  return { description: bounded(text.join(" "), 600), tasks, completed, steps };
+}
+
+function dateLabel(value: string | undefined, timezone = "UTC") {
+  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  try {
+    return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: timezone }).format(new Date(value));
+  } catch {
+    return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value));
+  }
+}
+
+function scheduleLabel(automation: Automation) {
+  const schedule = automation.schedule;
+  if (schedule.kind === "once") return "Once · " + dateLabel(schedule.at, automation.timezone);
+  if (schedule.kind === "monthly") return "Monthly on day " + schedule.dayOfMonth;
+  if (schedule.kind === "days") return schedule.everyDays === 1 ? "Every day" : "Every " + schedule.everyDays + " days";
+  const minutes = schedule.everyMinutes;
+  if (minutes % 1440 === 0) return minutes === 1440 ? "Every day" : "Every " + minutes / 1440 + " days";
+  if (minutes % 60 === 0) return "Every " + minutes / 60 + (minutes === 60 ? " hour" : " hours");
+  return "Every " + minutes + " minutes";
+}
+
+function preview(target: InternalLinkTarget, title: string, description: string, details: InternalLinkPreview["details"]): InternalLinkPreview {
+  return {
+    ...target,
+    title: bounded(title, 200) || target.kind[0].toUpperCase() + target.kind.slice(1),
+    description: bounded(description, 600),
+    details: details.filter(item => item.value).slice(0, 5).map(item => ({
+      label: bounded(item.label, 40), value: bounded(item.value, 200),
+    })),
+  };
+}
+
+export function getInternalLinkPreview(target: InternalLinkTarget, ownerId: string, chatId?: string): InternalLinkPreview | null {
+  // Never let an absent account widen the canonical stores' optional owner filters.
+  if (!ownerId) return null;
+  if (target.kind === "note") {
+    const note = getNote(target.id, ownerId);
+    if (!note) return null;
+    const todos = note.todos || [];
+    return preview(target, note.title, documentSummary(note.content).description, [
+      { label: "Scope", value: note.scope[0].toUpperCase() + note.scope.slice(1) },
+      ...(todos.length ? [{ label: "Tasks", value: todos.filter(todo => todo.status === "completed").length + "/" + todos.length + " completed" }] : []),
+      { label: "Updated", value: dateLabel(note.updatedAt) },
+    ]);
+  }
+  if (target.kind === "automation") {
+    const automation = getAutomation(target.id, ownerId, false);
+    if (!automation) return null;
+    return preview(target, automation.name, automation.prompt, [
+      { label: "Status", value: automation.status[0].toUpperCase() + automation.status.slice(1) },
+      { label: "Schedule", value: scheduleLabel(automation) },
+      { label: "Timezone", value: automation.timezone },
+      { label: "Next run", value: dateLabel(automation.nextRunAt, automation.timezone) },
+    ]);
+  }
+  const legacyCanvas = target.kind === "canvas" && target.id === "canvas-default";
+  let resolvedChatId = chatId;
+  if (resolvedChatId === undefined) {
+    // Some IDs (notably canvas-default) repeat across chats. A context-free
+    // request is only safe when exactly one owned chat contains that target.
+    const matches = getDatabase().prepare(`
+      SELECT c.id FROM chats AS c
+      WHERE c.owner_id = ? AND (
+        EXISTS (
+          SELECT 1 FROM json_each(c.data, '$.workspaces') AS workspace
+          WHERE json_extract(workspace.value, '$.id') = ?
+            AND json_extract(workspace.value, '$.type') = ?
+        ) OR (
+          ? = 1 AND COALESCE(json_array_length(c.data, '$.workspaces'), 0) = 0
+            AND json_type(c.data, '$.canvas') = 'text'
+            AND length(json_extract(c.data, '$.canvas')) > 0
+        )
+      )
+      LIMIT 2
+    `).all(ownerId, target.id, target.kind, legacyCanvas ? 1 : 0) as Array<{ id: string }>;
+    if (matches.length !== 1) return null;
+    resolvedChatId = matches[0].id;
+  }
+  // An explicit chat must never fall back to another chat with the same ID.
+  // getChat retains its ownership, cache and expired-incognito checks.
+  const chat = getChat(resolvedChatId, ownerId);
+  if (!chat) return null;
+  const workspace = Array.isArray(chat.workspaces) && chat.workspaces.length
+    ? chat.workspaces.find(item => item.id === target.id && item.type === target.kind)
+    : legacyCanvas && chat.canvas ? { name: "Canvas", content: chat.canvas, updatedAt: chat.updatedAt } : undefined;
+  if (!workspace) return null;
+  const summary = documentSummary(workspace.content);
+  return preview(target, workspace.name, summary.description, [
+    ...(target.kind === "plan" && summary.tasks
+      ? [{ label: "Tasks", value: summary.completed + "/" + summary.tasks + " completed" }]
+      : target.kind === "plan" && summary.steps ? [{ label: "Steps", value: String(summary.steps) }] : []),
+    { label: "Chat", value: chat.title },
+    { label: "Updated", value: dateLabel(workspace.updatedAt) },
+  ]);
+}

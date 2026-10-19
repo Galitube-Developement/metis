@@ -194,23 +194,28 @@ export function assertSafeUserAccess(userId: string, workspaceRoot: string, iden
     assertExecutionUid(identity.uid, { allowRoot: config.allowRootAgents && admin, workspaceRoot, home: identity.home });
     if (!Number.isInteger(identity.gid) || Number(identity.gid) < 0) throw new Error("Invalid OS group mapping.");
   }
-  const others = getDatabase().prepare(
-    `SELECT u.id AS userId, a.workspace_root AS workspaceRoot, a.os_username AS osUsername, a.uid, a.gid
+  const others = (getDatabase().prepare(
+    `SELECT u.id AS userId, u.is_admin AS isAdmin, a.workspace_root AS workspaceRoot, a.os_username AS osUsername, a.uid, a.gid
      FROM users u LEFT JOIN user_workspace_access a ON a.user_id = u.id WHERE u.id <> ?`,
-  ).all(userId) as AccessRow[];
+  ).all(userId) as Array<AccessRow & { isAdmin: number }>).filter((other) => {
+    const otherIdentity = other.osUsername ? lookupHostOsUser(other.osUsername) : undefined;
+    // Accounts assigned to the same host identity intentionally share its file access.
+    return !((other.osUsername && other.osUsername.toLowerCase() === identity.username.toLowerCase())
+      || (identity.uid !== undefined && otherIdentity?.uid === identity.uid));
+  });
   let workspace = path.resolve(workspaceRoot);
   try { workspace = canonicalWorkspace(workspaceRoot); } catch (error) { if (!admin) throw error; }
+  const otherWorkspaces: string[] = [];
   for (const other of others) {
-    const otherIdentity = other.osUsername ? lookupHostOsUser(other.osUsername) : undefined;
-    if ((other.osUsername && other.osUsername.toLowerCase() === identity.username.toLowerCase())
-      || (identity.uid !== undefined && (other.uid === identity.uid || otherIdentity?.uid === identity.uid))) {
-      throw new Error("OS identity is already mapped to another account.");
-    }
     const otherWorkspace = other.workspaceRoot || config.agentCwd;
     let resolved = path.resolve(otherWorkspace);
     try { resolved = canonicalWorkspace(otherWorkspace); } catch { /* Still reject lexical overlap. */ }
+    // An admin's explicit filesystem-wide workspace can coexist with scoped accounts.
+    if ((admin && workspace === path.parse(workspace).root)
+      || (Number(other.isAdmin) === 1 && resolved === path.parse(resolved).root)) continue;
+    otherWorkspaces.push(resolved);
     if (isInsideWorkspace(resolved, workspace) || isInsideWorkspace(workspace, resolved)) {
-      throw new Error("Workspace must be distinct from every other account (including nested or symlink paths).");
+      throw new Error("Workspace must be distinct from accounts using another OS identity (including nested or symlink paths).");
     }
   }
   if (admin) return;
@@ -253,7 +258,7 @@ export function assertSafeUserAccess(userId: string, workspaceRoot: string, iden
   const protectedPaths = [...new Set([config.databasePath, config.dataDir, config.mcpStateDir,
     path.join(config.root, ".env"), path.join(config.root, ".env.local"),
     path.join(config.installDir, ".env"), currentHostOsUser()?.home,
-    ...others.map((other) => other.workspaceRoot || config.agentCwd)].filter((value): value is string => Boolean(value)))];
+    ...otherWorkspaces].filter((value): value is string => Boolean(value)))];
   try {
     const result = execFileSync(process.execPath, ["-e", `
       const fs = require('node:fs');
@@ -345,7 +350,7 @@ export function inferOsUsernameForWorkspace(workspaceRoot = config.agentCwd): st
 
 export function resolveManagedWorkspaceRoot(workspaceRoot?: string | null) {
   const resolved = path.resolve((workspaceRoot || "").trim() || config.agentCwd);
-  if (!path.isAbsolute(resolved) || resolved === path.sep) {
+  if (!path.isAbsolute(resolved)) {
     throw new Error("Workspace path must be an absolute directory.");
   }
   if (config.docker && !isInsideWorkspace(config.dockerWorkspace, resolved)) {

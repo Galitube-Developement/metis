@@ -12,6 +12,7 @@ import {
   remoteClientHostnameMap,
   todosFromToolPayload,
   toolCallHeadline,
+  toolSourceLabel,
   activityGroupLabel,
  memoryCardFromPayload,
  toolGroupLabel,
@@ -25,6 +26,37 @@ import {
   upsertToolMessagePart,
   type MessagePartLike,
 } from "../lib/message-parts";
+
+test("MCP badges show the requested server for wrapped and already-normalized calls", () => {
+  for (const name of ["call_mcp_tool", "get_issue", "mcp__metis_ai__call_mcp_tool"]) {
+    for (const kind of ["other", "read", "mcp"]) {
+      assert.equal(toolSourceLabel({name, kind, source:"mcp", input:JSON.stringify({server:"linear",tool:"get_issue",arguments:{id:"OMNI-5"}})}), "linear");
+    }
+  }
+  assert.equal(toolSourceLabel({name:"call_mcp_tool",source:"mcp",input:{server:"github",toolName:"list_issues",arguments:{}}}),"github");
+});
+
+test("routing envelopes keep priority over business arguments and retain serialized wrapper support", () => {
+  const route={server:"linear",tool:"get_issue",arguments:{server:"database",tool:"query"}};
+  assert.equal(toolSourceLabel({name:"call_mcp_tool",source:"mcp",input:route}),"linear");
+  assert.equal(route.server,"linear");
+  assert.equal(toolSourceLabel({name:"get_issue",source:"mcp",input:JSON.stringify({input:JSON.stringify(route)})}),"linear");
+  assert.equal(toolSourceLabel({name:"get_issue",source:"mcp",input:{CallMcpTool:route}}),"linear");
+});
+
+test("qualified MCP servers and existing Metis or CLI fallbacks stay distinguishable", () => {
+  assert.equal(toolSourceLabel({name:"mcp__linear__get_issue",source:"mcp",kind:"other",input:{server:"database",tool:"query"}}),"linear");
+  assert.equal(toolSourceLabel({name:"tools.mcp__github__list_issues",source:"mcp",kind:"read"}),"github");
+  assert.equal(toolSourceLabel({name:"mcp__metis_ai__read_file",source:"mcp",kind:"read"}),"Metis");
+  assert.equal(toolSourceLabel({name:"read_file",source:"mcp",kind:"read",input:{path:"/tmp/file"}}),"Metis");
+  assert.equal(toolSourceLabel({name:"execute_command",source:"native",kind:"shell",input:{server:"database"}}),"CLI");
+});
+
+test("ordinary server arguments and malformed input do not invent MCP destinations", () => {
+  assert.equal(toolSourceLabel({name:"execute_command",source:"mcp",kind:"shell",input:{server:"database",command:"pwd"}}),"Metis");
+  assert.equal(toolSourceLabel({name:"get_issue",input:{server:"linear",tool:"get_issue"}}),null);
+  assert.equal(toolSourceLabel({name:"call_mcp_tool",source:"mcp",kind:"mcp",input:'{"server":'}),null);
+});
 
 type LayoutTool = { id: string; callId?: string; name?: string; kind?: string; status?: string; input?: string; result?: string; todos?: Array<{ content: string }> };
 type ReconcileTool = {
