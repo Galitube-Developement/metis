@@ -6022,6 +6022,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     await fetch("/api/auth", { method: "DELETE" });
+    setAccountView(null);
+    setMobileNavOpen(false);
     authedRef.current = false;
     setAuthed(false);
     chatLoadRequestRef.current += 1;
@@ -9946,7 +9948,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           onSettings={() => openAccountPage("settings")}
           onAgentHub={() => openAccountPage("agent-hub")}
           onProfile={() => openAccountPage("profile")}
-          onUsage={() => openAccountPage("usage")} />
+          onUsage={() => openAccountPage("usage")}
+          onLogout={() => void logout()} />
       </div>
     </div>
   );
@@ -10301,7 +10304,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         onRefreshUsage={() => refreshPlanUsage(true)}
         onModelsChanged={() => void loadModels()}
         onModesChanged={() => void loadModes()}
-        onLogout={() => void logout()}
         onResetMetis={resetMetis}
         onUpdateMetis={updateMetis}
         isHostAdmin={Boolean(status?.isHostAdmin)}

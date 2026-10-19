@@ -16,9 +16,11 @@ function requireAccess(projectId:string,userId:string,manage=false) {
 export function projectMembers(projectId:string,userId:string) {
   const role=requireAccess(projectId,userId);
   const db=getDatabase();
-  const members=db.prepare(`SELECT u.id AS userId,u.username,'owner' AS role FROM users u JOIN projects p ON p.owner_id=u.id WHERE p.id=?
-    UNION ALL SELECT u.id AS userId,u.username,'member' AS role FROM users u JOIN project_members m ON m.user_id=u.id WHERE m.project_id=?`).all(projectId,projectId);
-  const invitations=role==="owner" ? db.prepare("SELECT i.id,u.username,i.status FROM project_invitations i JOIN users u ON u.id=i.invitee_id WHERE i.project_id=? AND i.status='pending' ORDER BY i.created_at DESC").all(projectId) : [];
+  // Project peers only receive the identity needed for member rows, never private profile details.
+  const identity="u.id AS userId,u.username,COALESCE(NULLIF(trim(json_extract(ap.data,'$.displayName')),''),u.username) AS displayName,json_extract(ap.data,'$.avatar') AS avatar";
+  const members=db.prepare(`SELECT ${identity},'owner' AS role FROM users u JOIN projects p ON p.owner_id=u.id LEFT JOIN account_profiles ap ON ap.owner_id=u.id WHERE p.id=?
+    UNION ALL SELECT ${identity},'member' AS role FROM users u JOIN project_members m ON m.user_id=u.id LEFT JOIN account_profiles ap ON ap.owner_id=u.id WHERE m.project_id=?`).all(projectId,projectId);
+  const invitations=role==="owner" ? db.prepare(`SELECT i.id,${identity},i.status FROM project_invitations i JOIN users u ON u.id=i.invitee_id LEFT JOIN account_profiles ap ON ap.owner_id=u.id WHERE i.project_id=? AND i.status='pending' ORDER BY i.created_at DESC`).all(projectId) : [];
   return {canManage:role==="owner",members,invitations};
 }
 export function inviteProjectMember(projectId:string,userId:string,username:string) {

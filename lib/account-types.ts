@@ -3,6 +3,8 @@ export type AccountProfile = {
   displayName: string; bio: string; avatar: string | null; links: ProfileLink[];
   shareId: string | null; shareActivity: boolean; handle: string | null;
 };
+export type AccountIdentity = Pick<AccountProfile, "displayName" | "avatar">;
+
 export type UsageTotals = {
   requests: number; inputTokens: number; outputTokens: number; tokens: number;
   uncachedInputTokens?: number; uncachedInputReports?: number;

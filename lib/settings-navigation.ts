@@ -9,7 +9,6 @@ export const SETTINGS_SECTIONS: Record<string, SettingsSection[]> = {
     { id: "settings-dictionary", label: "Dictionary", keywords: "voice words spellings worter wörter worterbuch wörterbuch" },
     { id: "settings-browser", label: "Browser", keywords: "realtime preview stream fps viewport width height echtzeit breite hohe höhe" },
     { id: "settings-browser-storage", label: "Browser storage", keywords: "cookies persistent website sessions localstorage sessionstorage speicher sitzungen" },
-    { id: "settings-session", label: "Session", keywords: "lock screen sign out logout sperren abmelden" },
     { id: "settings-links", label: "Links", keywords: "website github source code webseite quellcode" },
   ],
   models: [

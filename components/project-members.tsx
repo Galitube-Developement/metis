@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ProfileAvatar } from "@/components/account/account-menu";
+import type { AccountIdentity } from "@/lib/account-types";
 
 type MembersData = {
   canManage: boolean;
-  members: Array<{ userId: string; username: string; role: "owner" | "member" }>;
-  invitations: Array<{ id: string; username: string; status: "pending" }>;
+  members: Array<AccountIdentity & { userId: string; username: string; role: "owner" | "member" }>;
+  invitations: Array<AccountIdentity & { id: string; username: string; status: "pending" }>;
 };
 
 export function ProjectMembers({ projectId, membershipRole, open, onOpenChange, onLeft }: {
@@ -84,15 +86,17 @@ export function ProjectMembers({ projectId, membershipRole, open, onOpenChange, 
             <section aria-labelledby="project-members-heading">
               <h3 id="project-members-heading" className="mb-2 text-sm font-medium">Members</h3>
               {!data.members.length ? <p className="text-sm text-muted-foreground">No members to show.</p> : <ul className="divide-y divide-border">{data.members.map(member => <li key={member.userId} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1"><p className="break-words text-sm">{member.username}</p><p className="text-xs capitalize text-muted-foreground">{member.role}</p></div>
-                {data.canManage && member.role !== "owner" ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Remove ${member.username}`} onClick={() => void mutate("DELETE", { userId: member.userId })}>Remove</Button> : null}
+                <ProfileAvatar profile={member} name={member.username} className="size-9 shrink-0" />
+                <div className="min-w-0 flex-1"><p className="break-words text-sm">{member.displayName || member.username}</p><p className="text-xs capitalize text-muted-foreground">{member.role}</p></div>
+                {data.canManage && member.role !== "owner" ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Remove ${member.displayName || member.username}`} onClick={() => void mutate("DELETE", { userId: member.userId })}>Remove</Button> : null}
               </li>)}</ul>}
             </section>
             <section aria-labelledby="project-invitations-heading">
               <h3 id="project-invitations-heading" className="mb-2 text-sm font-medium">Pending invitations</h3>
               {!data.invitations.length ? <p className="text-sm text-muted-foreground">No pending invitations.</p> : <ul className="divide-y divide-border">{data.invitations.map(invitation => <li key={invitation.id} className="flex items-center gap-3 py-3">
-                <p className="min-w-0 flex-1 break-words text-sm">{invitation.username}</p>
-                {data.canManage ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Cancel invitation for ${invitation.username}`} onClick={() => void mutate("DELETE", { invitationId: invitation.id })}>Cancel invite</Button> : <span className="text-xs text-muted-foreground">Pending</span>}
+                <ProfileAvatar profile={invitation} name={invitation.username} className="size-9 shrink-0" />
+                <p className="min-w-0 flex-1 break-words text-sm">{invitation.displayName || invitation.username}</p>
+                {data.canManage ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Cancel invitation for ${invitation.displayName || invitation.username}`} onClick={() => void mutate("DELETE", { invitationId: invitation.id })}>Cancel invite</Button> : <span className="text-xs text-muted-foreground">Pending</span>}
               </li>)}</ul>}
             </section>
             {membershipRole === "member" ? <div className="border-t border-border pt-4"><Button variant="destructive" disabled={busy} onClick={() => setLeaveOpen(true)}>Leave project</Button></div> : null}

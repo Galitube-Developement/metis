@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChartNoAxesCombined, ChevronsUpDown, Settings, UserRound, Puzzle, Bell } from "lucide-react";
+import { ChartNoAxesCombined, ChevronsUpDown, Settings, UserRound, Puzzle, Bell, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import type { AccountProfile } from "@/lib/account-types";
+import type { AccountIdentity, AccountProfile } from "@/lib/account-types";
 export function useAccountProfile(enabled: boolean) {
   const [profile,setProfile]=useState<AccountProfile|null>(null);
   const [error,setError]=useState(false),[revision,setRevision]=useState(0);
@@ -19,15 +19,15 @@ export function useAccountProfile(enabled: boolean) {
   },[enabled,revision]);
   return {profile,setProfile,error,retry:()=>setRevision(value=>value+1)};
 }
-export function ProfileAvatar({profile,name,className}: {profile:AccountProfile|null;name:string;className?:string}) {
+export function ProfileAvatar({profile,name,className}: {profile:AccountIdentity|null;name:string;className?:string}) {
   return <Avatar className={className}>
     {profile?.avatar ? <AvatarImage src={profile.avatar} alt="" /> : null}
     <AvatarFallback className="bg-muted text-foreground">{(profile?.displayName || name).slice(0,2).toUpperCase()}</AvatarFallback>
   </Avatar>;
 }
-export function AccountMenu({profile,username,updateAvailable,onSettings,onProfile,onUsage,onAgentHub,unreadCount=0,onNotifications}: {
+export function AccountMenu({profile,username,updateAvailable,onSettings,onProfile,onUsage,onAgentHub,unreadCount=0,onNotifications,onLogout}: {
   profile:AccountProfile|null;username:string;updateAvailable:boolean;
-  onSettings:()=>void;onProfile:()=>void;onUsage:()=>void;onAgentHub?:()=>void;unreadCount?:number;onNotifications?:()=>void;
+  onSettings:()=>void;onProfile:()=>void;onUsage:()=>void;onLogout:()=>void;onAgentHub?:()=>void;unreadCount?:number;onNotifications?:()=>void;
 }) {
   return <DropdownMenu>
     <DropdownMenuTrigger asChild>
@@ -48,6 +48,8 @@ export function AccountMenu({profile,username,updateAvailable,onSettings,onProfi
       {onAgentHub ? <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onAgentHub}><Puzzle /> Agent Hub</DropdownMenuItem> : null}
       <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onSettings}><Settings /> Settings{updateAvailable ? <span className="ml-auto size-1.5 rounded-full bg-primary" /> : null}</DropdownMenuItem>
       <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onUsage}><ChartNoAxesCombined /> Usage</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem className="min-h-11 gap-2 px-2" onSelect={onLogout}><LogOut /> Logout</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
 }

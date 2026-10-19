@@ -16,7 +16,6 @@ import {
   Globe2,
   KeyRound,
   Link2,
-  Lock,
   Mic,
   Monitor,
   MoreHorizontal,
@@ -332,7 +331,6 @@ type Props = {
   onRefreshUsage: () => Promise<void>;
   onModelsChanged?: () => void;
   onModesChanged?: () => void;
-  onLogout: () => void;
   onResetMetis?: () => Promise<void>;
   onUpdateMetis?: () => Promise<void>;
   isHostAdmin?: boolean;
@@ -636,7 +634,6 @@ export function SettingsPanel({
   usageSnapshot,
   onRefreshUsage,
   onModelsChanged,
-  onLogout,
   onResetMetis,
   onUpdateMetis,
   isHostAdmin = false,
@@ -2349,27 +2346,6 @@ export function SettingsPanel({
  : "No persistent website data stored yet."}
  </p>
  </section>
-
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h3 id="settings-session" className="text-sm font-medium">Session</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Lock this chat and return to the sign-in screen.
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2"
-                  onClick={() => {
-                    onOpenChange(false);
-                    onLogout();
-                  }}
-                >
-                  <Lock className="size-4" />
-                  Lock screen
-                </Button>
-
-              </section>
 
               <section className="flex flex-col gap-3">
                 <div>

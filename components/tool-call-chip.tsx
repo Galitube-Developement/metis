@@ -49,6 +49,7 @@ import {
   planFromToolPayload,
   todosFromToolPayload,
   toolCallHeadline,
+  toolSourceLabel,
   activityGroupLabel,
  memoryCardFromPayload,
  toolGroupLabel,
@@ -400,7 +401,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   const searchResult = useMemo(() => /(?:^|__|[.:])(?:grep_search|file_search)$/.test(resolvedName) ? workspaceSearchResult(result) : undefined, [resolvedName, result]);
   const deleteTool = /(^|[._:/-])(delete|remove|unlink)(?=[._:/-]|$)/i.test(resolvedName);
   const headline = useMemo(() => toolCallHeadline({ name: resolvedName, kind: resolvedKind, input, detail, path, hostnames }), [resolvedName, resolvedKind, input, detail, path, hostnames]);
- const sourceLabel = source === "mcp" && resolvedKind !== "mcp" ? "Metis" : source === "native" ? "CLI" : null;
+  const sourceLabel = toolSourceLabel({ name, input, kind: resolvedKind, source });
   const Icon = deleteTool && (resolvedKind === "edit" || headline.icon === "edit")
     ? Trash2
     : ACTION_ICONS[headline.icon];
@@ -566,7 +567,7 @@ export const ToolCallChip = memo(function ToolCallChip({
             <RunStatus status={status} iconOnly decorative className="shrink-0 text-xs" />
           ) : null}
           <Icon className="size-3 shrink-0 opacity-70" />
-          <span className={cn("truncate", deleteTool && "text-rose-400/80")}>{headline.title}{sourceLabel ? <span className="ml-1 text-[10px] uppercase tracking-wide opacity-50">{sourceLabel}</span> : null}</span>
+          <span className={cn("truncate", deleteTool && "text-rose-400/80")}>{headline.title}{sourceLabel ? <span className="ml-1 text-[10px] uppercase tracking-wide opacity-50" title={sourceLabel}>{sourceLabel}</span> : null}</span>
           {searchResult ? <span className="shrink-0 text-[10px] text-muted-foreground">{workspaceSearchCount(searchResult)}</span> : null}
           {previewText ? (
             <span className="hidden truncate text-muted-foreground/45 sm:inline">· {previewText}</span>

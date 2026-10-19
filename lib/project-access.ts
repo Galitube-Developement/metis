@@ -9,6 +9,15 @@ export function projectRole(projectId: string | undefined, userId: string | unde
   if (row.owner_id === userId) return "owner";
   return getDatabase().prepare("SELECT 1 FROM project_members WHERE project_id=? AND user_id=?").get(projectId,userId) ? "member" : null;
 }
+/** Saved profile images are visible to project peers and owners managing a pending invite. */
+export function canViewProjectMemberProfile(subjectId: string, viewerId: string | undefined): boolean {
+  if (!viewerId) return false;
+  return !!getDatabase().prepare(`SELECT 1 FROM projects p WHERE
+    ((p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?))
+      AND (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?)))
+    OR (p.owner_id=? AND EXISTS(SELECT 1 FROM project_invitations i WHERE i.project_id=p.id AND i.invitee_id=? AND i.status='pending'))
+    LIMIT 1`).get(subjectId,subjectId,viewerId,viewerId,viewerId,subjectId);
+}
 export function canAccessChat(chatId: string, userId?: string) {
   if (!userId) return true; // Internal callers retain the existing unscoped contract.
   const row=getDatabase().prepare(`SELECT c.owner_id AS ownerId,json_extract(c.data,'$.projectId') AS projectId,

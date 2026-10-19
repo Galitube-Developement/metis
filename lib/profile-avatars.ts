@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import sharp from "sharp";
 import { config } from "@/lib/config";
 import { getDatabase } from "@/lib/sqlite";
+import { canViewProjectMemberProfile } from "@/lib/project-access";
 import { MAX_PROFILE_GIF_BYTES } from "@/lib/profile-avatar-limits";
 
 const root = path.join(config.dataDir, "profile-avatars");
@@ -78,12 +79,14 @@ export function profileAvatarResponse(id: string, viewerId?: string, ifNoneMatch
   const headers = {"Cache-Control":"private, no-store", "Vary":"Cookie", "X-Content-Type-Options":"nosniff"};
   if (!idPattern.test(id)) return new Response(null,{status:404,headers});
   const row = getDatabase().prepare("SELECT a.owner_id,a.size,p.share_id,p.data FROM profile_avatars a LEFT JOIN account_profiles p ON p.owner_id=a.owner_id WHERE a.id=?").get(id) as {owner_id:string;size:number;share_id:string|null;data:string|null}|undefined;
-  const publicAvatar = row?.share_id && row.data && JSON.parse(row.data).avatar === prefix + id;
-  if (!row || (viewerId !== row.owner_id && !publicAvatar)) return new Response(null,{status:404,headers});
+  const savedAvatar = !!row?.data && JSON.parse(row.data).avatar === prefix + id;
+  const publicAvatar = savedAvatar && !!row?.share_id;
+  const projectAvatar = savedAvatar && !!row && viewerId !== row.owner_id && canViewProjectMemberProfile(row.owner_id, viewerId);
+  if (!row || (viewerId !== row.owner_id && !publicAvatar && !projectAvatar)) return new Response(null,{status:404,headers});
   const file = path.join(root,id+".gif");
   if (!existsSync(file)) return new Response(null,{status:404,headers});
   // Upload IDs are immutable: a replacement always has a new URL. Keep owner
-  // images in the browser cache. Public viewers revalidate access before a 304,
+  // images in the browser cache. Other viewers revalidate access before a 304,
   // so revoking sharing still takes effect. Cookie variants separate sessions.
   const cacheHeaders={...headers,"Cache-Control":viewerId===row.owner_id ? "private, max-age=31536000, immutable" : "private, no-cache",ETag:'"'+id+'"'};
   if(ifNoneMatch?.split(",").some(tag=>tag.trim()==="*" || tag.trim().replace(/^W\//,"")===cacheHeaders.ETag))

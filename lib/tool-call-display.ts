@@ -1,5 +1,6 @@
 import { isSubagentControlName, isSubagentSpawnName } from "@/lib/subagent-bar";
 import { isMemoryScope } from "@/lib/memory-scopes.mjs";
+import { isMcpWrapperName } from "@/lib/tool-kind";
 
 function joinAssistantText(left: string, right: string): string {
   if (!left) return right;
@@ -181,6 +182,34 @@ export function innerToolName(name: string, input?: unknown, result?: unknown): 
   const nested = [record?.toolName, record?.tool_name, record?.name, record?.tool]
     .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
   return (nested || outer).trim();
+}
+
+function routedMcpServer(value: unknown, depth = 0): string | undefined {
+  if (depth > 5) return undefined;
+  const record = asRecord(parseToolValue(value));
+  if (!record) return undefined;
+  const server = nonEmptyString(record.server);
+  const tool = [record.tool, record.toolName, record.tool_name].some(nonEmptyString);
+  // Read the routing envelope before tool arguments, which can have their own server.
+  if (server && tool) return server;
+  const wrappers = Object.keys(record).filter(key => /ToolCall$/i.test(key) || isMcpWrapperName(key));
+  for (const key of [...wrappers, "input", "args", "arguments", "params", "value"]) {
+    const nested = routedMcpServer(record[key], depth + 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+export function toolSourceLabel(tool: {name: string; input?: unknown; kind?: string; source?: string}): string | null {
+  if (tool.source === "native") return "CLI";
+  const qualified = tool.name.match(/(?:^|\.)mcp__([^]+?)__(.+)$/);
+  if (qualified && !isMcpWrapperName(qualified[2])) return qualified[1] === "metis_ai" ? "Metis" : qualified[1];
+  if (tool.source === "mcp" || qualified || isMcpWrapperName(tool.name)) {
+    const server = routedMcpServer(tool.input);
+    if (server) return server;
+    if (qualified) return qualified[1] === "metis_ai" ? "Metis" : qualified[1];
+  }
+  return tool.source === "mcp" && tool.kind !== "mcp" ? "Metis" : null;
 }
 
 export function classifyToolKind(name: string, input?: unknown, result?: unknown): ToolKind {
