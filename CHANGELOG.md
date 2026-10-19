@@ -11,6 +11,10 @@ publish releases.
 - Preview internal chats, projects, notes and workspace links consistently from chat and workspace content.
 - Configure account attachment limits and keep background and queued uploads consistent with those settings.
 - Allow multiple Metis accounts to share an OS user and support `/` as an administrator workspace without changing the filesystem root's ownership.
+- Show Logout in the account menu, project members' display names and avatars, and the actual target MCP server in tool badges.
+- Refresh file trees and searches automatically while preserving unsaved editor changes. Preview media, Markdown and sandboxed HTML in the file editor, and inspect each recorded edit in an inline diff.
+- Restore clickable response suggestions across providers with shared prompt guidance, streaming delivery and persistence.
+- Let agent file attachments use the available message width on mobile, tablet and desktop.
 
 ## v1.0.14 — 2026-10-13 (updated 2026-10-16)
 

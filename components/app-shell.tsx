@@ -1676,7 +1676,7 @@ function AttachmentViewer({
 function FileShareEmbed({href}: {href:string;onOpen:(attachment:MsgAttachment)=>void}) {
   let name = href.includes("?") ? new URL(href,"http://localhost").searchParams.get("name") || "Shared file" : href.split("/").pop() || "Shared file";
   try {name=decodeURIComponent(name);} catch {}
-  return <FileEmbed file={{url:href,name,mimeType:mimeTypeFromFileName(name)}} className="mt-3 max-h-96 rounded-lg border border-border/40"/>;
+  return <FileEmbed file={{url:href,name,mimeType:mimeTypeFromFileName(name)}} className="mt-3 w-full max-w-full max-h-96 rounded-lg border border-border/40"/>;
 }
 
 function paintVoiceWaveform(root: HTMLDivElement | null, level: number) {
@@ -10904,14 +10904,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                             </div>
                           );
                         })}
-                        <EditedFiles files={editedFiles} streaming={m.id === composerEditedMessage?.id} />
+                        <EditedFiles files={editedFiles} streaming={m.id === composerEditedMessage?.id} chatId={activeChatId || undefined} messageId={m.id} tools={[...(m.parts?.filter(part => part.type === "tool") || []) as ToolPart[], ...(m.tools || [])]} />
                         {m.attachments?.some((att) => att.kind !== "image") ? (
-                          <div className="my-3 flex max-w-full flex-wrap gap-2">
+                          <div className="my-3 flex w-full min-w-0 flex-col gap-2">
                             {m.attachments.filter((att) => att.kind !== "image").map((att) => {
                               const href = att.storedName && activeChatId
                                 ? `/api/uploads/${activeChatId}/${encodeURIComponent(att.storedName)}`
                                 : att.previewUrl;
-                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-80 max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
+                                return href ? <FileEmbed key={att.id} file={{...att,url:href}} className="w-full max-w-full shrink-0 rounded-lg border border-border/40 bg-background/40 max-h-96"/> : null;
                             })}
                           </div>
                         ) : null}
@@ -11214,7 +11214,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ) : null}
                     </div>
                   ) : null}
-                  {composerEditedMessage ? <ComposerEditedFiles key={`${activeChatId}:${composerEditedMessage.id}`} files={composerEditedFiles} /> : null}
+                  {composerEditedMessage ? <ComposerEditedFiles key={`${activeChatId}:${composerEditedMessage.id}`} files={composerEditedFiles} chatId={activeChatId || undefined} messageId={composerEditedMessage.id} tools={[...(composerEditedMessage.parts?.filter(part => part.type === "tool") || []) as ToolPart[], ...(composerEditedMessage.tools || [])]} /> : null}
                   {composer}
                 </div>
               </div>

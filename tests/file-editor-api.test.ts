@@ -78,5 +78,14 @@ test("file editor API creates exclusively, reports conflicts, renames, saves and
     assert.equal((await call({ action:"delete", path:renamed, cwd:root })).status, 200);
     assert.equal(existsSync(renamed), false);
     assert.equal((await call({ action:"mkdir", path:path.join(root,"missing","child"), cwd:root })).status, 502);
+    const previewApi = await import("../app/api/remote/preview/route");
+    const media = path.join(root, "sample.mp4"); writeFileSync(media, Buffer.from([0,1,2,3,4,5]));
+    const preview = (auth = token, requested = media, headers = {}) => previewApi.GET(new Request("http://localhost/api/remote/preview?path="+encodeURIComponent(requested), {headers:{...headers,...(auth?{cookie:"ai_chat_auth="+auth}:{})}}));
+    assert.equal((await preview("")).status,401);
+    assert.equal((await preview(otherToken)).status,403);
+    assert.equal((await preview(token,"/etc/passwd")).status,403);
+    const playable=await preview(token,media,{range:"bytes=1-3"});
+    assert.equal(playable.status,206);assert.equal(playable.headers.get("content-type"),"video/mp4");
+    assert.deepEqual(Buffer.from(await playable.arrayBuffer()),Buffer.from([1,2,3]));
   } finally { db.close(); rmSync(root, { recursive:true, force:true }); }
 });

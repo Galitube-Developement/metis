@@ -7,6 +7,7 @@ import { editedFileHref } from "@/lib/edited-files";
 import type { FileChangeRange } from "@/lib/file-change-ranges";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { EditedFileDiff, type EditedFilesDiffProps } from "@/components/edited-file-diff";
 
 function openFile(file: EditedFile, changes = file.ranges) {
   const first = changes?.[0];
@@ -21,7 +22,8 @@ function rangeLabel(change: FileChangeRange) {
   return `${change.kind === "deleted" ? "Removed " : ""}L${start}${end > start ? "–" + end : ""}`;
 }
 
-function EditedFileRows({ files, compact = false, onOpen }: { files: EditedFile[]; compact?: boolean; onOpen?: () => void }) {
+function EditedFileRows({ files, compact = false, onOpen, active = true, ...diffProps }: EditedFilesDiffProps & { files: EditedFile[]; compact?: boolean; onOpen?: () => void; active?: boolean }) {
+  const [expanded, setExpanded] = useState<string[]>([]);
   let prefix = files[0]?.path.slice(0, files[0].path.lastIndexOf("/") + 1) || "";
   if (!files.every(file => file.target === files[0].target && file.path.startsWith("/"))) prefix = "";
   while (prefix && !files.every(file => file.path.startsWith(prefix))) {
@@ -43,12 +45,18 @@ function EditedFileRows({ files, compact = false, onOpen }: { files: EditedFile[
         <span className={file.deletions === undefined ? "text-muted-foreground" : "text-red-400"} aria-label={file.deletions === undefined ? "Removed lines unavailable" : `${file.deletions} lines removed`}>{file.deletions === undefined ? "-?" : `−${file.deletions}`}</span>
       </span>
     </>;
-    return <li key={file.target + ":" + file.path}>
+    const key = file.target + ":" + file.path;
+    const isExpanded = expanded.includes(key);
+    return <li key={key} className="min-w-0 max-w-full">
       {href ? <a href={href} title={file.path} aria-label={`Open ${file.path}`} className={cn("flex min-h-9 items-center gap-2 rounded-md px-2 py-1.5 text-foreground/85 hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", compact && "min-h-11")} onClick={event => {
         event.preventDefault();
         onOpen?.();
         openFile(file);
       }}>{label}</a> : <span className={cn("flex min-h-9 items-center gap-2 px-2 py-1.5 text-muted-foreground", compact && "min-h-11")} title={file.target === "server" ? "Absolute path unavailable" : "File on " + file.target}>{label}<span className="shrink-0 text-[10px]">{file.target}</span></span>}
+      <button type="button" aria-expanded={isExpanded} aria-label={`${isExpanded ? "Hide" : "Show"} diff for ${file.path}`} className="flex min-h-9 items-center gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setExpanded(current => isExpanded ? current.filter(value => value !== key) : [...current, key])}>
+        <ChevronRight aria-hidden="true" className={cn("size-3 motion-reduce:transition-none", isExpanded && "rotate-90")} />{isExpanded ? "Hide diff" : "Show diff"}
+      </button>
+      {isExpanded && active ? <EditedFileDiff key={`${diffProps.chatId}:${diffProps.messageId}:${key}`} file={file} {...diffProps} /> : null}
       {!compact && file.ranges?.length ? <div className="flex flex-wrap gap-x-2 pl-7" data-change-lines>
         {file.ranges.map((range,index) => <button key={index} type="button" disabled={!href} className="min-h-8 text-left text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default" title={range.kind === "deleted" ? "Jump to where these lines were removed" : "Open and select these changed lines"} onClick={() => openFile(file,[range])}>{rangeLabel(range)}</button>)}
       </div> : null}
@@ -56,23 +64,24 @@ function EditedFileRows({ files, compact = false, onOpen }: { files: EditedFile[
   })}</>;
 }
 
-export function EditedFiles({ files, streaming = false }: { files: EditedFile[]; streaming?: boolean }) {
+export function EditedFiles({ files, streaming = false, ...diffProps }: EditedFilesDiffProps & { files: EditedFile[]; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
   if (streaming || !files.length) return null;
   return (
-    <details className="group/edited-files my-3 min-w-0 max-w-full text-xs" data-edited-files>
+    <details className="group/edited-files my-3 min-w-0 max-w-full text-xs" data-edited-files onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="group/edited-summary flex min-h-9 w-fit cursor-pointer list-none items-center gap-1.5 rounded-md pr-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         <ChevronRight aria-hidden="true" className="size-3.5 transition-transform group-open/edited-files:rotate-90 motion-reduce:transition-none" />
         <FileCode2 aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="transition-colors group-hover/edited-summary:text-foreground">{files.length} {files.length === 1 ? "file" : "files"} edited</span>
       </summary>
       <ul className="mt-1 max-h-64 min-w-0 overflow-y-auto border-l border-border/60 pl-3">
-        <EditedFileRows files={files} />
+        <EditedFileRows files={files} active={open} {...diffProps} />
       </ul>
     </details>
   );
 }
 
-export function ComposerEditedFiles({ files }: { files: EditedFile[] }) {
+export function ComposerEditedFiles({ files, ...diffProps }: EditedFilesDiffProps & { files: EditedFile[] }) {
   const [open, setOpen] = useState(false);
   if (!files.length) return null;
   return <Popover open={open} onOpenChange={setOpen}>
@@ -85,7 +94,7 @@ export function ComposerEditedFiles({ files }: { files: EditedFile[] }) {
     </PopoverTrigger>
     <PopoverContent side="top" align="start" sideOffset={8} collisionPadding={12} aria-label="Edited files" className="max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] gap-0 overflow-hidden p-1.5">
       <ul className="min-h-0 overflow-y-auto overscroll-contain">
-        <EditedFileRows files={files} compact onOpen={() => setOpen(false)} />
+        {open ? <EditedFileRows files={files} compact {...diffProps} onOpen={() => setOpen(false)} /> : null}
       </ul>
     </PopoverContent>
   </Popover>;
