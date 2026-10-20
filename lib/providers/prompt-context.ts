@@ -150,6 +150,7 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     formatChatGoal(chat.sessionState, ownerId, chat.id, incognito),
     chatMetadataPrompt(chat, incognito),
     buildSkillContext(job.message, skillSettings, {
+      modeId: activeMode.id,
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
     "Working style: precise, technically fluent, proactive. Act with tools instead of narrating steps. Reply in the user's language. On clear orders decide and act; ask only when genuinely ambiguous or destructive.",

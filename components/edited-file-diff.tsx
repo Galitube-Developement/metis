@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { DiffEditor } from "@monaco-editor/react";
 import type { EditedFile } from "@/lib/edited-files";
 import type { ToolPart } from "@/lib/store";
-import { loadEditSnapshot, snapshotHunks, toolsForEditedFile, type EditSnapshot } from "@/lib/edited-file-diff";
+import { loadEditSnapshot, snapshotHunks, toolsForEditedFile, type EditSnapshot, type EditedFileDiffRequest } from "@/lib/edited-file-diff";
 
-export type EditedFilesDiffProps = { chatId?: string; messageId?: string; tools?: ToolPart[] };
+export type EditedFilesDiffProps = Omit<EditedFileDiffRequest, "file">;
 
 export function SnapshotDiff({ snapshot }: { snapshot: EditSnapshot }) {
   const result = useMemo(() => { try { return { hunks: snapshotHunks(snapshot) }; } catch (error) { return { error: error instanceof Error ? error.message : "Diff preview unavailable." }; } }, [snapshot]);
@@ -46,7 +47,7 @@ function HunkRows({ heading, rows }: { heading: string; rows: { line: string; ol
   })}</>;
 }
 
-function EditDiff({ tool, chatId, messageId }: EditedFilesDiffProps & { tool: ToolPart }) {
+function EditDiff({ tool, chatId, messageId, editorLanguage }: EditedFilesDiffProps & { tool: ToolPart; editorLanguage?: string }) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ status: "loading" | "ready" | "missing" | "error"; snapshot?: EditSnapshot }>({ status: "loading" });
   useEffect(() => {
@@ -59,10 +60,33 @@ function EditDiff({ tool, chatId, messageId }: EditedFilesDiffProps & { tool: To
     });
     return () => controller.abort();
   }, [tool, chatId, messageId, attempt]);
-  if (state.snapshot) return <SnapshotDiff snapshot={state.snapshot} />;
+  if (state.snapshot) {
+    if (editorLanguage === undefined) return <SnapshotDiff snapshot={state.snapshot} />;
+    if (state.snapshot.before.length + state.snapshot.after.length > 2_000_000) return <p role="status" className="p-4 text-xs text-muted-foreground">This diff exceeds the 2 MB preview limit. Open the original file to continue.</p>;
+    return <DiffEditor height="100%" language={editorLanguage} theme="vs-dark" original={state.snapshot.before} modified={state.snapshot.after}
+      options={{ readOnly: true, originalEditable: false, originalAriaLabel: "File before this edit", modifiedAriaLabel: "File after this edit", automaticLayout: true, renderSideBySide: true, useInlineViewWhenSpaceIsLimited: true, renderSideBySideInlineBreakpoint: 640, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false, padding: { top: 12 } }}
+      loading={<p role="status" className="p-4 text-xs text-muted-foreground">Loading diff editor…</p>} />;
+  }
   return <div className="px-2 py-3 text-xs text-muted-foreground" role={state.status === "error" ? "alert" : "status"}>
     {state.status === "loading" ? "Loading saved diff…" : state.status === "missing" ? "Historical snapshots unavailable for this edit." : "Could not load saved diff."}
     {state.status !== "loading" && <button type="button" className="ml-2 min-h-9 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setAttempt(value => value + 1)}>Retry</button>}
+  </div>;
+}
+
+export function EditedFileEditorDiff({ file, tools, chatId, messageId, language }: EditedFileDiffRequest & { language: string }) {
+  const edits = useMemo(() => toolsForEditedFile(file, tools), [file, tools]);
+  const [index, setIndex] = useState(0);
+  const tool = edits[index];
+  return <div data-editor-file-diff className="flex h-full min-h-0 flex-col">
+    <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-3 py-1 text-xs text-muted-foreground">
+      <span>Before → After</span>
+      {edits.length > 1 ? <select aria-label="Edit version" className="h-11 max-w-full rounded-md border border-border bg-background px-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={index} onChange={event => setIndex(Number(event.target.value))}>
+        {edits.map((edit, i) => <option key={edit.id} value={i}>Edit {i + 1} of {edits.length}</option>)}
+      </select> : null}
+    </div>
+    <div className="min-h-0 flex-1 overflow-hidden">
+      {tool ? <EditDiff key={`${chatId}:${messageId}:${tool.id}`} tool={tool} chatId={chatId} messageId={messageId} editorLanguage={language} /> : <p role="status" className="p-4 text-xs text-muted-foreground">Historical snapshots unavailable for this file.</p>}
+    </div>
   </div>;
 }
 

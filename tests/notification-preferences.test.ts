@@ -1,6 +1,6 @@
 import test from "node:test";import assert from "node:assert/strict";import {normalizeNotificationPrefs,remoteNotificationAllowed} from "../lib/notification-preferences";
 test("fresh defaults and legacy selection preserve explicit choices",()=>{
- assert.deepEqual(normalizeNotificationPrefs(undefined),{toastEnabled:true,browserEnabled:false,remoteEnabled:false,agentFinishedEnabled:true,remoteClientIds:[]});
+ assert.deepEqual(normalizeNotificationPrefs(undefined),{toastEnabled:true,browserEnabled:false,remoteEnabled:true,agentFinishedEnabled:true,remoteClientIds:[]});
  const legacy=normalizeNotificationPrefs({browserEnabled:true,remoteClientIds:["pc","pc",null]});assert.equal(legacy.browserEnabled,false);assert.equal(legacy.remoteEnabled,true);assert.deepEqual(legacy.remoteClientIds,["pc"]);
  const disabled=normalizeNotificationPrefs({...legacy,remoteEnabled:false});assert.equal(remoteNotificationAllowed(disabled,false,"pc"),false);assert.deepEqual(disabled.remoteClientIds,["pc"]);
 });

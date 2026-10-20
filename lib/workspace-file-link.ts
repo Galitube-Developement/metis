@@ -1,6 +1,6 @@
 /** Explicit workspace links and legacy absolute POSIX file links. Authorization stays in /api/remote. */
 export type WorkspaceFileLocation = { path: string; line?: number; column?: number; endLine?: number; endColumn?: number; changes?: import("./file-change-ranges").FileChangeRange[] };
-export type WorkspaceFileRequest = WorkspaceFileLocation & { id: number };
+export type WorkspaceFileRequest = WorkspaceFileLocation & { id: number; diff?: import("./edited-file-diff").EditedFileDiffRequest };
 
 const appRoute = /^\/(?:api|_next|chat|chats|p|share|login|register|setup|settings|automations|notes|projects|invite|auth)(?:\/|$)/i;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, MoreHorizontal } from "lucide-react";
+import { Check, ChevronDown, MoreHorizontal, Telescope } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -123,7 +123,7 @@ export function ModelOptionsMenu({
                 >
                   <span className="text-xs text-muted-foreground">Mode</span>
                   <span className="ml-auto min-w-0 truncate text-xs font-medium text-foreground/90">
-                    {selectedMobileMode?.name}
+                    {selectedMobileMode?.id === "deep-research" ? <Telescope className="mr-1 inline size-3.5" aria-hidden="true" /> : null}{selectedMobileMode?.name}
                   </span>
                   <ChevronDown
                     className={cn(
@@ -153,6 +153,7 @@ export function ModelOptionsMenu({
                             setMobileModeOpen(false);
                           }}
                         >
+                          {mode.id === "deep-research" ? <Telescope className="size-4 shrink-0" aria-hidden="true" /> : null}
                           <span className="min-w-0 flex-1">
                             <span className="block truncate">{mode.name}</span>
                             {mode.description ? (

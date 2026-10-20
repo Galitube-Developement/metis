@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import test, { before, after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const root = mkdtempSync(path.join(os.tmpdir(), "metis-references-test-"));
+Object.assign(process.env, { AI_CHAT_ROOT:root, CHAT_DATA_DIR:root, CHAT_DB_PATH:path.join(root,"chat.sqlite"), AGENT_CWD:root,
+  CHAT_PASSWORD:"", METIS_AI_BOOTSTRAP_PASSWORD:"", CHAT_LEGACY_HEADER_AUTH:"false" });
+const imports = Promise.all([import("../lib/auth"),import("../lib/db-store"),import("../lib/shared-context"),import("../lib/sqlite"),import("../app/api/references/route"),import("../lib/projects"),import("../lib/project-sharing")]);
+let modules: Awaited<typeof imports>;
+let owner: string, foreign: string, token: string, chatId: string;
+before(async () => {
+  modules=await imports;
+  const [auth,db,notes]=modules;
+  owner=auth.createUser("refs-owner","test-password").id;
+  foreign=auth.createUser("refs-foreign","test-password").id;
+  token=auth.authenticateUser("refs-owner","test-password")!.token;
+  const now=new Date().toISOString();
+  const chat=db.createChat("Reference source",undefined,owner);
+  chatId=chat.id;
+  chat.workspaces=[
+    {id:"canvas",type:"canvas",name:"Architecture canvas",content:"Diagram",createdAt:now,updatedAt:now},
+    {id:"plan",type:"plan",name:"Launch plan",content:"Checklist",createdAt:now,updatedAt:now},
+  ];
+  chat.browserContext={tabs:[{id:"tab",title:"Docs",url:"https://example.org/docs"}],activeTabId:"tab",sessionKey:"fixture",updatedAt:now};
+  chat.sessionState={terminalTabs:[{id:"term",title:"Build terminal",cwd:"/fixture"}]};
+  chat.messages=[{id:"msg",role:"assistant",content:"Saved output",createdAt:now,tools:[
+    {id:"edited",name:"edit_file",status:"completed",editedFile:{path:"/fixture/report.md",target:"server",additions:1,deletions:0}},
+    {id:"duplicate",name:"edit_file",status:"completed",path:"/fixture/report.md",result:"Updated"},
+    {id:"read",name:"read_file",status:"completed",input:JSON.stringify({path:"/fixture/instructions.txt"}),result:"Read"},
+  ]}];
+  db.saveChat(chat);
+  notes.createNote({ownerId:owner,chatId:chat.id,scope:"chat",title:"Straße März",content:"Launch checklist"});
+  notes.createNote({ownerId:owner,title:"Standalone note",content:"No chat required"});
+  notes.createNote({ownerId:owner,chatId:chat.id,scope:"chat",kind:"learned_fact",title:"Remembered context",content:"A scoped remembered fact"});
+  const privateChat=db.createChat("Private foreign",undefined,foreign);
+  notes.createNote({ownerId:foreign,chatId:privateChat.id,scope:"chat",title:"FOREIGN_SECRET",content:"FOREIGN_SECRET"});
+});
+after(()=>{modules[3].getDatabase().close();rmSync(root,{recursive:true,force:true});});
+async function get(kind?:string,q="",session=token,current=chatId) {
+  const query=new URLSearchParams({q,chatId:current}); if(kind)query.set("kind",kind);
+  return modules[4].GET(new Request("http://localhost/api/references?"+query,{headers:session?{cookie:"ai_chat_auth="+session}:{}}));
+}
+test("all reference categories return their own accessible data",async()=>{
+ for(const [kind,label] of [["chat","Reference source"],["canvas","Architecture canvas"],["plan","Launch plan"],["note","Straße März"],["memory","Remembered context"],["browser","Docs"],["terminal","Build terminal"],["file","report.md"]]){
+   const response=await get(kind);
+   assert.equal(response.status,200,kind);
+   const data=await response.json();
+   assert.ok(data.results.some((r:{label:string})=>r.label===label),kind);
+   assert.ok(data.results.every((r:{kind:string})=>r.kind===kind),kind);
+   assert.equal(response.headers.get("Cache-Control"),"private, no-store");
+ }
+});
+test("search includes standalone notes, canonical edited paths, independent words and spelling variants",async()=>{
+ const notes=await (await get("note","marz strasse")).json();
+ assert.equal(notes.results.length,1);
+ assert.equal(notes.results[0].label,"Straße März");
+ assert.equal((await (await get("note","standalone")).json()).results[0].label,"Standalone note");
+ const files=await (await get("file")).json();
+ assert.equal(files.results.filter((r:{path:string})=>r.path==="/fixture/report.md").length,1);
+ assert.ok(files.results.some((r:{label:string})=>r.label==="instructions.txt"));
+ assert.ok(!(await (await get("note")).json()).results.some((r:{label:string})=>r.label==="Remembered context"));
+});
+test("auth, invalid categories and cross-account content stay protected",async()=>{
+ assert.equal((await get("note","","")).status,401);
+ assert.equal((await get("unknown")).status,400);
+ for(const kind of [undefined,"note","chat","memory"]){
+   const data=await (await get(kind,"FOREIGN_SECRET",token,"foreign-chat")).json();
+   assert.deepEqual(data.results,[]);
+ }
+});
+test("accepted project content is discoverable and disappears after membership removal",async()=>{
+ const [auth,db,notes,,,projects,sharing]=modules;
+ const member=auth.createUser("refs-member","test-password").id;
+ const memberToken=auth.authenticateUser("refs-member","test-password")!.token;
+ const project=projects.createProject({ownerId:owner,name:"Reference project"});
+ const shared=db.createChat("Shared ref chat",undefined,owner,undefined,{projectId:project.id});
+ notes.createNote({ownerId:owner,projectId:project.id,title:"Shared project note",content:"Shared reference"});
+ assert.deepEqual((await (await get("note","Shared",memberToken)).json()).results,[]);
+ const invitation=sharing.inviteProjectMember(project.id,owner,"refs-member");
+ sharing.respondProjectInvitation(invitation.id,member,"accept");
+ assert.ok((await (await get("note","Shared",memberToken,shared.id)).json()).results.some((r:{label:string})=>r.label==="Shared project note"));
+ sharing.removeProjectMember(project.id,owner,{userId:member});
+ assert.deepEqual((await (await get("note","Shared",memberToken)).json()).results,[]);
+});

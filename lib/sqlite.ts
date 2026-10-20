@@ -687,6 +687,7 @@ export function getDatabase(): DatabaseSync {
     "ALTER TABLE automation_runs ADD COLUMN manual INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE chat_list ADD COLUMN agent_title_locked INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE chat_list ADD COLUMN queued_message_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE chat_list ADD COLUMN note_pins TEXT",
   ]) {
     try {
       database.exec(statement);
@@ -724,6 +725,7 @@ export function getDatabase(): DatabaseSync {
       run_updated_at TEXT,
       queue_message TEXT,
       queued_message_count INTEGER NOT NULL DEFAULT 0,
+      note_pins TEXT,
       pending_question TEXT,
       pending_approval TEXT,
       badge TEXT,
@@ -796,6 +798,16 @@ export function getDatabase(): DatabaseSync {
       json_extract(chats.data, '$.expiresAt')
     FROM chats
     WHERE NOT EXISTS (SELECT 1 FROM chat_list WHERE chat_list.id = chats.id);
+  `);
+  // NULL marks legacy rows, and also rows created by an older worker during a
+  // rolling deploy. Each row is projected once rather than rescanned on reads.
+  database.exec(`
+    UPDATE chat_list SET note_pins = (
+      SELECT json_object(
+        'pinnedNoteIds', json_extract(chats.data, '$.sessionState.pinnedNoteIds'),
+        'unpinnedGlobalNoteIds', json_extract(chats.data, '$.sessionState.unpinnedGlobalNoteIds'))
+      FROM chats WHERE chats.id = chat_list.id
+    ) WHERE note_pins IS NULL;
   `);
   // Existing queues are backfilled once; sidebar reads never parse full transcripts.
   const queueCountMigration = "chat_list_queued_message_count_v1";

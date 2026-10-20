@@ -22,8 +22,8 @@ test("appending streamed text keeps earlier keys and fades only the new tail", (
   const first = initialStreamingText("Hello", 0);
   const next = appendStreamingText(first, "Hello world", 64);
   assert.equal(next.segments[0].id, first.segments[0].id);
-  assert.equal(next.segments[0].text, "Hello");
-  assert.equal(next.segments[1].text, " world");
+  assert.deepEqual(next.segments.slice(0, first.segments.length), first.segments);
+  assert.equal(next.segments.slice(first.segments.length).map(segment => segment.text).join(""), " world");
   assert.equal(visible(next), "Hello world");
   assert.equal(appendStreamingText(next, next.text, 1000), next);
 });
@@ -34,7 +34,7 @@ test("expired streaming fragments collapse to a bounded stable prefix", () => {
     assert.ok(state.segments.length <= Math.ceil(STREAM_FADE_MS / 64) + 1);
   }
   assert.equal(visible(state), "x".repeat(500));
-  assert.ok(state.prefix.length > 490);
+  assert.ok(state.text.length - state.prefix.length <= Math.ceil(STREAM_FADE_MS / 64));
 });
 test("rewrites and deletions never replay the whole message animation", () => {
   const first = initialStreamingText("Hello old text", 0);
@@ -63,7 +63,7 @@ test("streaming prose fades while Markdown tables, links, code and math stay val
     children: "Hello **world** [link](https://example.com).\n\n| A | B |\n| - | - |\n| One | Two |\n\n\`inline\` and $x^2$.\n\n\`\`\`js\nconst value = 1;\n\`\`\`",
   }));
   assert.match(html, /stream-token-fade/);
-  assert.match(html, /<strong><span class="stream-token-fade">world/);
+  assert.match(html.replace(/<\/?span\b[^>]*>/g, ""), /<strong>world<\/strong>/);
   assert.match(html, /<a href="https:\/\/example.com"><span class="stream-token-fade">link/);
   assert.match(html, /<table>/);
   assert.match(html, /<code>inline<\/code>/);

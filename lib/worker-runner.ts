@@ -974,6 +974,7 @@ export async function runQueuedJob(job: AgentJob) {
     project ? projectContextBlock(project, job.userId) : "",
     projectTeamContextBlock(chat.id, job.userId),
     buildSkillContext(job.message, skillSettings, {
+      modeId: activeMode.id,
       hasVisualReference: Boolean(job.attachments?.some((attachment) => attachment.kind === "image")),
     }),
       `Current agent mode: ${activeMode.name}\n${activeMode.instructions}`,
@@ -1008,7 +1009,6 @@ export async function runQueuedJob(job: AgentJob) {
       "When referring to an existing or newly created note, include its exact Markdown link using note://<id>, for example [Note title](note://note-id). Notes must be clickable links, not only bold text.",
       "Use list_notes or search_notes when you need note IDs before linking them.",
       "To create an automation, call create_automation with name, prompt, and schedule (kind: once | interval | days | monthly). Recurring minute schedules must be at least 60. Use list_automations, update_automation, pause_automation, resume_automation, and delete_automation for existing ones. Do not claim an automation was created without a completed tool call. When referring to an automation, include its exact Markdown link using automation://<id>, for example [Name](automation://id).",
-      "When you use browser results, selected references, or other verifiable web sources, cite the exact URL immediately after the sentence it supports using the format [Source: Website title](URL). At the end, put every source used in exactly one fenced block starting with ```sources, with one Markdown link per line. Never invent URLs; if no verifiable source is available, do not create a sources block.",
       "Workspace rule: create or edit a plan/canvas only when the active mode and user request allow it. Never claim a workspace exists until the tool result or persisted workspace confirms it.",
       "Memories are not auto-filled from every prompt. Use list_memories only when a task genuinely needs memory inspection; use add_memory/edit_memory only when the user explicitly asks to remember something, or for a durable fact learned outside the chat. Never bulk-load memories into context.",
       "To edit an existing workspace, call edit_plan or edit_canvas with its exact id and the changed title/content. Do not create a duplicate when the user asked to edit.",

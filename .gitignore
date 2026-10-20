@@ -32,3 +32,29 @@ data/artifacts/
 config.yaml.bak*
 .research/
 .venv*/
+
+# Local skill installations (existing tracked files remain versioned).
+/.agents/skills/*
+!/.agents/skills/ui-ux-pro-max/
+!/.agents/skills/ui-ux-pro-max/**
+/.agents/skills/ui-ux-pro-max/**/__pycache__/
+/.agents/skills/ui-ux-pro-max/**/*.py[cod]
+/.cursor/skills/
+/.claude/skills/
+/.codex/skills/
+/.gemini/skills/
+/skills/
+/skills-lock.json
+
+# Local MCP installations and client configuration; keep application gateway source.
+/.mcp/
+/mcp/
+/mcps/
+/mcp-servers/
+/.mcp-servers/
+/.mcp.json
+/mcp.json
+/mcp-config.json
+/.cursor/mcp.json
+/.claude/mcp.json
+/.vscode/mcp.json

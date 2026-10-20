@@ -70,6 +70,7 @@ test("acceptance shares project chats, notes, files and memories with actor-spec
  projects.createProjectMemory(projectId,"Member fact",[],member);
  assert.equal(projects.getProject(projectId,owner)?.memories.length,2);
  assert.equal(sharing.notificationInbox(member).unreadCount,0);
+ assert.deepEqual(sharing.notificationInbox(member).notifications,[]);
  assert.equal(sharing.notificationInbox(owner).unreadCount,1);
  memberChatId=chats.createChat("Member-created chat",undefined,member,undefined,{projectId}).id;
  assert.ok(chats.getChat(memberChatId,owner));
@@ -114,7 +115,7 @@ test("authenticated project and inbox APIs enforce membership and target identit
  assert.ok(body.notes.some((n:{id:string})=>n.id===noteId));
  assert.ok(body.chats.some((c:{id:string})=>c.id===chatId));
  assert.equal((await projectRoute.GET(req("/api/projects/"+projectId,tokens.stranger),context)).status,404);
- const notification=(sharing.notificationInbox(member).notifications[0] as {id:string}).id;
+ const notification=(await import("../lib/notification-store")).createNotification(member,{title:"Member update"}).id;
  const read=await inboxRoute.POST(req("/api/notifications/inbox",tokens.stranger,{ids:[notification]}));
  assert.equal(read.status,200);
  assert.equal((await inboxRoute.GET(req("/api/notifications/inbox"))).status,401);

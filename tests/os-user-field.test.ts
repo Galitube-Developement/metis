@@ -14,5 +14,5 @@ test("OS user fields are a dropdown plus free text", () => {
   assert.match(field, /Select or type an OS user/);
   assert.match(panel, /os-user-field/);
   assert.match(wizard, /os-user-field/);
-  assert.match(config, /allowRootAgents: booleanEnv\("AI_CHAT_ALLOW_ROOT_AGENTS"\)/);
+  assert.match(config, /allowRootAgents: booleanEnv\("AI_CHAT_ALLOW_ROOT_AGENTS", true\)/);
 });

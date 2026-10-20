@@ -48,8 +48,13 @@ export function notificationDatabase() {
 }
 export function getNotificationPrefs(ownerId: string): NotificationPrefs {
   const row = notificationDatabase().prepare("SELECT data FROM notification_prefs WHERE owner_id=?").get(ownerId) as { data: string } | undefined;
-  try { return normalizeNotificationPrefs(row ? JSON.parse(row.data) : undefined); }
-  catch { return normalizeNotificationPrefs(undefined); }
+  let saved: Partial<NotificationPrefs> | undefined;
+  try { saved = row ? JSON.parse(row.data) : undefined; } catch {}
+  // Missing choices use the default; an explicitly saved empty list stays off.
+  const defaults = Array.isArray(saved?.remoteClientIds) ? [] : notificationDatabase().prepare(
+    "SELECT id FROM remote_clients WHERE owner_id=? AND revoked_at IS NULL ORDER BY created_at,id LIMIT 50",
+  ).all(ownerId) as Array<{ id: string }>;
+  return normalizeNotificationPrefs(saved, defaults.map(client => client.id));
 }
 export function setNotificationPrefs(ownerId: string, input: unknown) {
   const patch = notificationPrefsInput.parse(input);

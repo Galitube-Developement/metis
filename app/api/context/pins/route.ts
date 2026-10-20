@@ -1,5 +1,5 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { getChat, getGlobalModelSettings, listChatsForUser, saveGlobalModelSettings, updateChat } from "@/lib/db-store";
+import { getChat, getChatNotePins, getGlobalModelSettings, listChatsForUser, saveGlobalModelSettings, updateChat } from "@/lib/db-store";
 import { listNotes } from "@/lib/shared-context";
 import { getPinnedNoteIds } from "@/lib/context";
 
@@ -18,15 +18,16 @@ export async function GET(req: Request) {
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
   const chatId = new URL(req.url).searchParams.get("chatId")?.trim() || "";
   const noteId = new URL(req.url).searchParams.get("noteId")?.trim() || "";
-  if (chatId && !getChat(chatId, ownerId)) return Response.json({ error: "Chat not found" }, { status: 404 });
+  const chatPins = chatId ? getChatNotePins(chatId, ownerId) : null;
+  if (chatId && !chatPins) return Response.json({ error: "Chat not found" }, { status: 404 });
   const globalNoteIds = getGlobalModelSettings(ownerId).pinnedNoteIds || [];
-  const chatNoteIds = chatId ? getChat(chatId, ownerId)?.sessionState?.pinnedNoteIds || [] : [];
+  const chatNoteIds = chatPins?.pinnedNoteIds || [];
   const notes = listNotes({ ownerId, chatId: chatId || undefined });
   const chats = listChatsForUser(ownerId);
   const configuredChatIds = noteId
     ? chats.filter((chat) => getPinnedNoteIds(ownerId, chat.id).includes(noteId)).map((chat) => chat.id)
     : [];
-  const configuredNoteIds = [...new Set(chats.flatMap((chat) => getChat(chat.id, ownerId)?.sessionState?.pinnedNoteIds || []))];
+  const configuredNoteIds = [...new Set(chats.flatMap((chat) => getChatNotePins(chat.id, ownerId)?.pinnedNoteIds || []))];
   return Response.json({
     globalNoteIds,
     chatNoteIds,

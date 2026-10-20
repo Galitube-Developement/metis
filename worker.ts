@@ -13,6 +13,7 @@ import {
   queueAutomationRun,
 } from "@/lib/automations";
 import { parseWorkerConcurrency, waitForSchedulerTick } from "@/lib/worker-scheduler";
+import { countStartingJobs, readWorkerMemoryState, workerMemoryAdmission } from "@/lib/worker-memory";
 import { logError } from "@/lib/error-logs";
 import { persistWorkerFailureMessage } from "@/lib/worker-failure";
 import { checkGatewayHealth } from "@/lib/mcp";
@@ -371,8 +372,10 @@ async function main() {
   console.log(`[ai-chat-worker] started (concurrency: ${Number.isFinite(concurrency) ? concurrency : "unlimited"})`);
   void warmLiveMcp();
   const active = new Set<Promise<void>>();
+  const starting = new Map<Promise<void>, number>();
   let lastHandoffExpiry = 0;
   let lastQueueDrain = 0;
+  let waitingForMemory = false;
   while (!stopping) {
     enqueueDueAutomations();
     if (Date.now() - lastQueueDrain > 1_000) {
@@ -384,7 +387,16 @@ async function main() {
       expireProjectHandoffs();
 
     }
-    while (!stopping && active.size < concurrency) {
+    const memory = await readWorkerMemoryState();
+    let admission = workerMemoryAdmission(memory, countStartingJobs(starting.values()));
+    const memoryBlocked = admission.additionalJobs === 0;
+    if (memoryBlocked !== waitingForMemory) {
+      console.log(memoryBlocked
+        ? "[ai-chat-worker] memory reserve reached; queued jobs remain pending"
+        : "[ai-chat-worker] memory available; accepting queued jobs");
+      waitingForMemory = memoryBlocked;
+    }
+    while (!stopping && active.size < concurrency && admission.additionalJobs > 0) {
       const job = claimNextJob({
         // Keep one slot available for a normal interactive chat while
         // background automation/MCP work is already occupying the pool.
@@ -400,6 +412,7 @@ async function main() {
         })
         .finally(() => {
           active.delete(task);
+          starting.delete(task);
           const current = getJob(job.id);
           if (current?.status === "switching") {
             requeueSwitchingJob(job.id);
@@ -415,6 +428,8 @@ async function main() {
           }
         });
       active.add(task);
+      starting.set(task, Date.now());
+      admission = workerMemoryAdmission(memory, countStartingJobs(starting.values()));
     }
     await waitForSchedulerTick(active, concurrency, pollMs);
   }

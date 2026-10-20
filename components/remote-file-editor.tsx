@@ -19,6 +19,9 @@ import { FileSyncError, requestFileSnapshot } from "@/lib/file-sync-client";
 import { FileEditorPreview } from "@/components/file-editor-preview";
 import { filePreviewKind, isBinaryFilePreview } from "@/lib/file-editor-preview";
 import { applyFileSyncContent, resolveFileHighlight } from "@/lib/file-editor-highlights";
+import { EditedFileEditorDiff } from "@/components/edited-file-diff";
+import type { EditedFileDiffRequest } from "@/lib/edited-file-diff";
+import { editedFileHref } from "@/lib/edited-files";
 
 type RemoteFileEditorProps = {
   cwd: string;
@@ -39,6 +42,8 @@ function languageForPath(path: string): string {
 export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEditorProps) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
+  const [diffReview, setDiffReview] = useState<(EditedFileDiffRequest & { id: number }) | null>(null);
+  const displayPath = diffReview?.file.path || selectedPath;
   const [fileView, setFileView] = useState<"code" | "preview">("code");
   const [fileTextError, setFileTextError] = useState("");
   const previewKind = filePreviewKind(selectedPath);
@@ -166,7 +171,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
       onCwdChange(nextPath); setDirectoryInput(nextPath);
       setSearchRevision(value => value + 1);
       if (!preserveFile) {
-        setSelectedPath(""); setFileTextError(""); setFileView("code"); loadSnapshot("", { content: "", revision: "" }); setFileLocation(null); setFilter(""); setExplorerOpen(true);
+        setDiffReview(null); setSelectedPath(""); setFileTextError(""); setFileView("code"); loadSnapshot("", { content: "", revision: "" }); setFileLocation(null); setFilter(""); setExplorerOpen(true);
       }
       return true;
     } catch (cause) {
@@ -176,7 +181,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   }
 
   useEffect(() => {
-    if (loadedDirectoryRef.current !== cwd) void loadDirectory(cwd);
+    if (!fileRequest?.diff && !diffReview && loadedDirectoryRef.current !== cwd) void loadDirectory(cwd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd]);
 
@@ -206,7 +211,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
         setEntries(parseFileListing(listing.output || "", parent));
         onCwdChange(parent); setDirectoryInput(parent); setFilter("");
       }
-      setSelectedPath(location.path); setFileTextError(textError);
+      setDiffReview(null); setSelectedPath(location.path); setFileTextError(textError);
       setFileView(kind && (!file || (!location.line && !location.changes?.length)) ? "preview" : "code");
       loadSnapshot(location.path, file || { content: "", revision: "" }); setFileLocation({ ...location });
       if ((containerRef.current?.clientWidth || 0) < 640) setExplorerOpen(false);
@@ -218,6 +223,16 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   useEffect(() => {
     if (!fileRequest || handledFileRequestRef.current === fileRequest.id) return;
     handledFileRequestRef.current = fileRequest.id;
+    if (fileRequest.diff) {
+      runAfterUnsavedCheck(() => {
+        ++loadVersionRef.current;
+        setLoading(false); setError(""); setSelectedPath(""); setFileTextError(""); setFileLocation(null);
+        editorRef.current = null; decorationRef.current = null; diffListenerRef.current?.dispose();
+        loadSnapshot("", { content: "", revision: "" });
+        setDiffReview({ ...fileRequest.diff!, id: fileRequest.id }); setExplorerOpen(false);
+      });
+      return;
+    }
     if (fileRequest.path === selectedPath) { setExplorerOpen(false); if (canEditFile) setFileView("code"); setFileLocation({ ...fileRequest }); return; }
     runAfterUnsavedCheck(() => void readFile(fileRequest, true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -375,22 +390,23 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
         </aside>
         <div hidden={!explorerOpen} role="separator" aria-orientation="vertical" aria-label="Resize file explorer" aria-valuemin={160} aria-valuemax={420} aria-valuenow={explorerWidth} tabIndex={0} onPointerDown={startDragging} onKeyDown={onResizeKeyDown} className="file-explorer-resize w-2 shrink-0 cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <section className="file-editor-pane flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-border/50 px-2">
-            <Button size="icon-sm" variant="ghost" aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"} title="Toggle file explorer" aria-expanded={explorerOpen} onClick={() => setExplorerOpen(open => !open)}><PanelLeft className="size-4" /></Button>
+          <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-2 py-1">
+            <Button size="icon-sm" variant="ghost" aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"} title="Toggle file explorer" aria-expanded={explorerOpen} onClick={() => { if (!explorerOpen && loadedDirectoryRef.current !== cwd) void loadDirectory(cwd, true); setExplorerOpen(open => !open); }}><PanelLeft className="size-4" /></Button>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium" title={selectedPath}>{selectedPath.split("/").pop() || "Editor"}</p>
-              {selectedPath ? <p role="status" className="text-[11px] text-muted-foreground">{!canEditFile ? "Preview" : saving ? "Saving…" : conflict ? "Conflict on disk" : dirty ? "Unsaved changes" : "Synced with disk"}</p> : null}
+              <p className="truncate text-xs font-medium" title={displayPath}>{displayPath.split(/[\\/]/).pop() || "Editor"}</p>
+              {diffReview ? <p className="text-[11px] text-muted-foreground">Saved changes · Read only</p> : selectedPath ? <p role="status" className="text-[11px] text-muted-foreground">{!canEditFile ? "Preview" : saving ? "Saving…" : conflict ? "Conflict on disk" : dirty ? "Unsaved changes" : "Synced with disk"}</p> : null}
             </div>
-            {selectedPath && previewKind && canEditFile ? <div role="group" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
+            {diffReview ? <Button size="sm" variant="outline" className="min-h-11 shrink-0 text-xs" disabled={busy || !editedFileHref(diffReview.file)} title={editedFileHref(diffReview.file) ? "Open the current file for editing" : "This file cannot be opened in the server editor"} onClick={() => void readFile({ path: diffReview.file.path, changes: diffReview.file.ranges }, true)}><File aria-hidden="true" className="size-3.5" />{loading ? "Opening…" : "Open original file"}</Button> : null}
+            {!diffReview && selectedPath && previewKind && canEditFile ? <div role="group" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
               <Button size="sm" variant={fileView === "code" ? "secondary" : "ghost"} aria-pressed={fileView === "code"} onClick={() => setFileView("code")}>Code</Button>
               <Button size="sm" variant={fileView === "preview" ? "secondary" : "ghost"} aria-pressed={fileView === "preview"} onClick={() => setFileView("preview")}>Preview</Button>
             </div> : null}
-            <Button asChild size="icon-sm" variant="ghost" aria-label="Download file" title={dirty ? "Download saved file (save changes first to include them)" : "Download file"}>
+            {!diffReview ? <><Button asChild size="icon-sm" variant="ghost" aria-label="Download file" title={dirty ? "Download saved file (save changes first to include them)" : "Download file"}>
               <a href={selectedPath && !busy ? "/api/remote/download?path=" + encodeURIComponent(selectedPath) : undefined} download={selectedPath.split("/").pop()} aria-disabled={!selectedPath || busy} tabIndex={!selectedPath || busy ? -1 : undefined} className={!selectedPath || busy ? "pointer-events-none opacity-50" : undefined}><Download className="size-4" /></a>
             </Button>
             <Button size="sm" className="file-toolbar-button" disabled={!selectedPath || !canEditFile || busy || !dirty || Boolean(conflict) || Boolean(syncError)} onClick={() => void save()} aria-label="Save file" title="Save (Ctrl/⌘ S)">
               {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}<span className="file-toolbar-label">Save</span>
-            </Button>
+            </Button></> : null}
           </div>
           {conflict ? <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2 text-xs">
             <span className="min-w-0 flex-1">Changes overlap with the disk version. Your edits are preserved.</span>
@@ -402,7 +418,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
           {syncMessage && !conflict ? <p role="status" className="shrink-0 px-3 py-1 text-[11px] text-muted-foreground">{syncMessage}</p> : null}
           {highlightMessage ? <p role="status" className="shrink-0 px-3 py-1 text-[11px] text-muted-foreground">{highlightMessage}</p> : null}
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {selectedPath && fileTextError ? <div role="alert" className="p-5 text-sm text-muted-foreground"><p>{fileTextError}</p><p className="mt-2">Download the original file to open it.</p></div> : selectedPath && fileView === "preview" && previewKind ? <FileEditorPreview key={selectedPath} path={selectedPath} kind={previewKind} content={content} /> : selectedPath && reviewing && conflict ? <DiffEditor height="100%" language={languageForPath(selectedPath)} theme="vs-dark" original={conflict.content} modified={content} onMount={instance => {
+            {diffReview ? <EditedFileEditorDiff key={diffReview.id} {...diffReview} language={languageForPath(diffReview.file.path)} /> : selectedPath && fileTextError ? <div role="alert" className="p-5 text-sm text-muted-foreground"><p>{fileTextError}</p><p className="mt-2">Download the original file to open it.</p></div> : selectedPath && fileView === "preview" && previewKind ? <FileEditorPreview key={selectedPath} path={selectedPath} kind={previewKind} content={content} /> : selectedPath && reviewing && conflict ? <DiffEditor height="100%" language={languageForPath(selectedPath)} theme="vs-dark" original={conflict.content} modified={content} onMount={instance => {
               diffListenerRef.current?.dispose(); editorRef.current = instance.getModifiedEditor();
               diffListenerRef.current = instance.getModifiedEditor().onDidChangeModelContent(() => setContent(instance.getModifiedEditor().getModel()?.getValue(undefined,true) || ""));
             }} options={{ originalEditable:false,readOnly:busy,renderSideBySide:(containerRef.current?.clientWidth || 0)>=640,automaticLayout:true,minimap:{enabled:false},wordWrap:"on" }} /> : selectedPath ? <Editor onMount={editor => { diffListenerRef.current?.dispose(); editorRef.current = editor; revealLocation(fileLocationRef.current); }}
@@ -414,7 +430,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
           </div>
         </section>
       </div>
-      {selectedPath ? <p data-open-file={selectedPath} className="shrink-0 truncate border-t border-border/50 pt-2 text-[11px] text-muted-foreground" title={selectedPath}>{selectedPath}</p> : null}
+      {displayPath ? <p data-open-file={displayPath} className="shrink-0 truncate border-t border-border/50 pt-2 text-[11px] text-muted-foreground" title={displayPath}>{displayPath}</p> : null}
       <Dialog open={entryDialogMode !== null} onOpenChange={open => { if (!open) closeEntryDialog(); }}>
         <DialogContent className="sm:max-w-sm"><form onSubmit={submitEntryDialog} className="space-y-4">
           <DialogHeader><DialogTitle>{entryDialogTitle}</DialogTitle><DialogDescription>{entryDialogMode === "rename" ? "Choose a new name for this file or folder." : "Create it in the current folder."}<span className="mt-2 block break-all font-mono text-[11px]">{entryDialogMode === "rename" ? renameTarget : cwd}</span></DialogDescription></DialogHeader>

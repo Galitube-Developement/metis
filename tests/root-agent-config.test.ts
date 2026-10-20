@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 
-test("root agent execution is opt-in even when uid=0 and cwd is under /root", () => {
-  for (const [flag, expected] of [[undefined, false], ["", false], ["false", false], ["0", false],
+test("root agent execution uses the released default and respects explicit overrides", () => {
+  for (const [flag, expected] of [[undefined, true], ["", true], ["false", false], ["0", false],
     ["no", false], ["garbage", false], ["true", true], ["1", true]] as const) {
     const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
       "process.getuid = () => 0; const module = await import('./lib/config.ts'); const config = module.config ?? module.default.config; console.log('ROOT_ALLOWED=' + config.allowRootAgents);"], {

@@ -85,7 +85,7 @@ test("AI SDK error-stream wrapping preserves real Retry-After evidence", async t
   t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-10T10:00:00Z") });
   const { consumeAiStream } = await import("../lib/providers/adapters/provider-support");
   const { providerRateLimit } = await import("../lib/provider-rate-limit");
-  const stream = { stream: (async function* () {
+  const stream = { fullStream: (async function* () {
     yield { type: "error", error: Object.assign(new Error("API limit"), { statusCode: 429, responseHeaders: { "retry-after": "18000" } }) };
   })(), usage: Promise.resolve({}) } as unknown as Parameters<typeof consumeAiStream>[0];
   const context = { onText() {}, onStream() {}, onTool() {} } as unknown as ProviderContext;
