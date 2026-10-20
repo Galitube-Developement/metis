@@ -4,7 +4,7 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## v1.0.16 — 2026-10-20
+## v1.0.17 — 2026-10-20
 
 - Open recorded file changes directly in the workspace diff editor, switch between edits, and open the current original file while preserving unsaved drafts.
 - Add a Deep Research mode with source search, opening, finding and auditing tools, plus a composer shortcut for switching modes.

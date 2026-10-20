@@ -71,8 +71,9 @@ test("CSV follows selected cost view, includes estimate rates and removes all co
 test("public activity rendering removes all monetary estimates",()=>{
  const source=readFileSync(path.join(import.meta.dirname,"../app/p/[shareId]/page.tsx"),"utf8");
  assert.match(source, /publicTokenActivity\(getAccountUsage/);
- const privateDay = {date:"2026-10-20",tokens:123,costUsd:9,estimatedCostUsd:12,ownerId:"private"};
- assert.deepEqual(publicTokenActivity([privateDay as Parameters<typeof publicTokenActivity>[0][number]]), [{date:"2026-10-20",tokens:123}]);
+ const privateDay = {date:"2026-10-20",tokens:123,costUsd:9,estimatedCostUsd:12,ownerId:"private",
+   requests:1,inputTokens:100,outputTokens:23,tokenReports:1,costReports:1,inputReports:1,outputReports:1};
+ assert.deepEqual(publicTokenActivity([privateDay]), [{date:"2026-10-20",tokens:123}]);
 });
 test("authenticated estimate endpoint uses cached price catalog without touching provider costs",async()=>{
  const {writeFileSync}=await import("node:fs"),auth=await import("../lib/auth"),{recordAccountUsage}=await import("../lib/account-usage");
