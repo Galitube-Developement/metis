@@ -3,6 +3,7 @@ import { editedFileFromTool, type EditedFile } from "@/lib/edited-files";
 import type { ToolPart } from "@/lib/store";
 
 export type EditSnapshot = { before: string; after: string };
+export type EditedFileDiffRequest = { file: EditedFile; chatId?: string; messageId?: string; tools?: ToolPart[] };
 
 export function snapshotFromDiff(value: unknown, savedSnapshot = false): EditSnapshot | undefined {
   if (!value || typeof value !== "object") return undefined;

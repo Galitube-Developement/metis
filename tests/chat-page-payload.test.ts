@@ -115,7 +115,7 @@ test("pagination preserves order and refreshes caches on external revisions with
   assert.deepEqual(last.chat.messages.map(m => m.content), ["message-5", "message-6", "message-7"]);
   assert.equal(last.totalMessages, 8);
   assert.equal(last.hasEarlierMessages, true);
-  assert.equal(store.getChatPage(chat.id, owner, 3, 0), last);
+  assert.deepEqual(store.getChatPage(chat.id, owner, 3, 0), last);
   assert.deepEqual(store.getChatPage(chat.id, owner, 3, 3)!.chat.messages.map(m => m.content), ["message-2", "message-3", "message-4"]);
   assert.deepEqual(store.getChatPage(chat.id, owner, 3, 20)!.chat.messages, []);
   store.getChat(chat.id, owner);

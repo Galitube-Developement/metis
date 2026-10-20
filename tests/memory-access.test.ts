@@ -87,7 +87,10 @@ test("invalid, foreign, missing-project, incognito and forged run contexts fail 
  assert.equal((await call(chat.id,{action:"list"},other)).status,404);
  assert.equal((await call("",{action:"list"})).status,404);
  assert.equal((await call(chat.id,{action:"list",scope:"all"})).status,400);
- const orphan = m[0].createChat("Missing project",undefined,owner,undefined,{projectId:"missing"});
+ assert.throws(() => m[0].createChat("Missing project",undefined,owner,undefined,{projectId:"missing"}), /Project not found/);
+ const orphan = m[0].createChat("Legacy orphan",undefined,owner);
+ m[6].getDatabase().prepare("UPDATE chats SET data=json_set(data,'$.projectId','missing') WHERE id=?").run(orphan.id);
+ m[0].clearStoreCaches();
  assert.equal((await call(orphan.id,{action:"list"})).status,404);
  assert.deepEqual(m[3].globalFactsForScope({chatId:orphan.id,ownerId:owner}),[]);
  const incognito = m[0].createChat("Private",undefined,owner,undefined,{incognito:true});

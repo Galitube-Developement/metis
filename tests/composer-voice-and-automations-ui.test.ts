@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { internalLinkNavigation, parseInternalLink } from "../lib/internal-link";
 
 const shellSource = readFileSync(
   new URL("../components/app-shell.tsx", import.meta.url),
@@ -36,8 +37,11 @@ const quotaSource = readFileSync(
 );
 
 test("automation markdown links dispatch open-automations and the shell opens the tab", () => {
-  assert.match(markdownSource, /ai-chat:open-automations/);
-  assert.match(markdownSource, /automationMatch/);
+  const target = parseInternalLink("automation://linked-automation")!;
+  assert.deepEqual(internalLinkNavigation(target), {
+    href: "#automation-linked-automation", event: "ai-chat:open-automations", detail: { id: "linked-automation" },
+  });
+  assert.match(markdownSource, /internalLinkNavigation/);
   assert.match(chipSource, /ai-chat:open-automations/);
   assert.match(shellSource, /ai-chat:open-automations/);
   assert.match(shellSource, /const openLinkedAutomation/);

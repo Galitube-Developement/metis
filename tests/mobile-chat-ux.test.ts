@@ -39,7 +39,7 @@ test("mobile composer footer always shows context and provider usage beside comp
 
 test("running tool activity replaces the redundant generic agent-running row", () => {
   assert.match(shell, /const latestAssistantHasRunningTool = Boolean\([\s\S]*?isLiveTool\(part\)/);
-  const guardedStatuses = shell.match(/activeChatIsRunning && !latestAssistantHasRunningTool/g) || [];
+  const guardedStatuses = shell.match(/activeChatIsRunning && \(!latestAssistantHasRunningTool \|\| Boolean\(latestAssistantPreparingTool\)\)/g) || [];
   assert.equal(guardedStatuses.length >= 2, true);
 });
 

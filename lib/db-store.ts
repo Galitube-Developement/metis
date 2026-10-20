@@ -25,6 +25,7 @@ import type {
   WorkspaceItem,
 } from "@/lib/store";
 import { chatUploadDir, resolveUploadPath } from "@/lib/uploads";
+import { BoundedSnapshotCache } from "@/lib/snapshot-cache";
 import { RUNTIME_MODES } from "@/lib/runtime-mode";
 import { currentChatTodos, type ChatTodoState } from "@/lib/chat-todos";
 import { recordChatSyncEvent, type ChatSyncEventKind } from "@/lib/chat-sync";
@@ -48,7 +49,8 @@ function workerProjectionLeaseValid(chatId?: string) {
        AND l.worker_id = ? AND l.lease_token = ? AND l.expires_at > ?`,
   ).get(...params));
 }
-const chatCache = new Map<string, { updatedAt: string; chat: Chat }>();
+// These are optional copies of durable data, bounded independently in every process.
+const chatCache = new BoundedSnapshotCache<string, { updatedAt: string; chat: Chat }>(() => [], 16, 128 * 1024 * 1024);
 const MAX_CHAT_KEYWORDS = 24;
 const MAX_CHAT_KEYWORD_LENGTH = 80;
 const MAX_CHAT_TITLE_LENGTH = 48;
@@ -59,13 +61,12 @@ type ChatPageResult = {
   hasEarlierMessages: boolean;
   totalMessages: number;
 };
-const chatPageCache = new Map<string, { updatedAt: string; page: ChatPageResult }>();
+const chatPageCache = new BoundedSnapshotCache<string, { updatedAt: string; page: ChatPageResult }>(() => [], 128, 32 * 1024 * 1024);
 
 export function clearStoreCaches() {
   chatCache.clear();
   chatPageCache.clear();
 }
-const CHAT_PAGE_CACHE_MAX = 128;
 let chatIndexCache: { key: string; expiresAt: number; chats: ChatIndexEntry[] } | null = null;
 
 function hashSharePassword(password: string, salt = randomBytes(16).toString("hex")) {
@@ -183,8 +184,8 @@ function syncChatList(chat: Chat) {
         id, owner_id, title, keywords, last_message_sent, created_at, updated_at,
         agent_id, model_id, run_status, run_updated_at, queue_message, queued_message_count,
         pending_question, pending_approval, badge, pinned, archived, share,
-        automation_run_id, incognito, project_id, agent_title_locked, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        automation_run_id, incognito, project_id, agent_title_locked, expires_at, note_pins
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         owner_id=excluded.owner_id,
         title=excluded.title,
@@ -208,7 +209,8 @@ function syncChatList(chat: Chat) {
         incognito=excluded.incognito,
         project_id=excluded.project_id,
         agent_title_locked=excluded.agent_title_locked,
-        expires_at=excluded.expires_at`,
+        expires_at=excluded.expires_at,
+        note_pins=excluded.note_pins`,
     )
     .run(
       chat.id,
@@ -235,6 +237,7 @@ function syncChatList(chat: Chat) {
       chat.projectId ?? null,
       chat.agentTitleLocked ? 1 : 0,
       chat.expiresAt ?? null,
+      JSON.stringify({ pinnedNoteIds: chat.sessionState?.pinnedNoteIds, unpinnedGlobalNoteIds: chat.sessionState?.unpinnedGlobalNoteIds }),
     );
 }
 
@@ -289,6 +292,28 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
     chatUpdatedAt: updatedAt,
   });
   return persisted;
+}
+
+/** Small, account-scoped pin settings; never loads message history. */
+export function getChatNotePins(chatId: string, userId?: string): Pick<ChatSessionState, "pinnedNoteIds" | "unpinnedGlobalNoteIds"> | null {
+  if (!canAccessChat(chatId, userId)) return null;
+  const db = getDatabase();
+  const row = db.prepare("SELECT owner_id AS ownerId, project_id AS projectId, note_pins AS pins, expires_at AS expiresAt, incognito FROM chat_list WHERE id=?").get(chatId) as
+    { ownerId: string; projectId: string | null; pins: string | null; expiresAt: string | null; incognito: number } | undefined;
+  if (!row || (row.incognito && row.expiresAt && Date.parse(row.expiresAt) <= Date.now())) return null;
+  let pins: Record<string, unknown> = {};
+  // A legacy worker can create a row without the new column during rolling deploys.
+  // Read only its pins on demand, without hydrating or caching the transcript.
+  const raw = row.pins ?? (db.prepare(`SELECT json_object('pinnedNoteIds', json_extract(data, '$.sessionState.pinnedNoteIds'),
+    'unpinnedGlobalNoteIds', json_extract(data, '$.sessionState.unpinnedGlobalNoteIds')) AS pins FROM chats WHERE id=?`).get(chatId) as { pins: string } | undefined)?.pins;
+  try { pins = JSON.parse(raw || "{}"); } catch {}
+  if (userId && row.projectId) {
+    if (row.ownerId !== userId) pins = {};
+    const own = parseData<{ sessionState?: Record<string, unknown> }>(db.prepare("SELECT data FROM chat_user_settings WHERE chat_id=? AND user_id=?").get(chatId, userId));
+    if (own?.sessionState) pins = own.sessionState;
+  }
+  const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+  return { pinnedNoteIds: ids(pins.pinnedNoteIds), unpinnedGlobalNoteIds: ids(pins.unpinnedGlobalNoteIds) };
 }
 
 export function listChatsForUser(
@@ -513,10 +538,6 @@ export function getChatPage(
       totalMessages,
     };
     chatPageCache.set(pageKey, { updatedAt: identity.updatedAt, page });
-    if (chatPageCache.size > CHAT_PAGE_CACHE_MAX) {
-      const oldestKey = chatPageCache.keys().next().value;
-      if (oldestKey) chatPageCache.delete(oldestKey);
-    }
     return page;
   } catch {
     return null;

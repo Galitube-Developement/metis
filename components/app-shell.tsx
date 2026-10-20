@@ -1,4 +1,9 @@
 "use client";
+import { useReferenceSearch } from "@/components/use-reference-search";
+import { REFERENCE_KINDS } from "@/lib/reference-search";
+import { ResearchModeOption } from "@/components/research-mode-option";
+import { consumeModeMention, showDeepResearchAction } from "@/lib/composer-mode-actions";
+import { DEEP_RESEARCH_MODE_ID } from "@/lib/deep-research";
 import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { WorkspaceExportMenu } from "@/components/workspace-export-menu";
 import { createClientId } from "@/lib/client-id";
@@ -45,6 +50,7 @@ import {
   ArrowDown,
   Activity,
   Repeat2,
+  Telescope,
   CalendarClock,
   Cpu,
   Gauge,
@@ -726,6 +732,7 @@ type TerminalTab = {
 };
 
 function ModeIcon({ mode, className }: { mode: AgentMode; className?: string }) {
+  if (mode.id === DEEP_RESEARCH_MODE_ID || mode.icon === "telescope") return <Telescope className={className} />;
   if (mode.id === "plan") return <ClipboardList className={className} />;
   if (mode.id === "ask") return <MessageSquare className={className} />;
   if (mode.id === "agent") return <Bot className={className} />;
@@ -2017,10 +2024,17 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [referenceMenu, setReferenceMenu] = useState<{
     query: string;
     kind: ReferenceKind | null;
+    search?: string;
     start: number;
     end: number;
   } | null>(null);
-  const [referenceResults, setReferenceResults] = useState<ReferenceItem[]>([]);
+  const referenceSearchInputRef = useRef<HTMLInputElement>(null);
+  const referenceSearchQuery = referenceMenu?.search ?? referenceMenu?.query ?? "";
+  const referenceCategoriesVisible = Boolean(referenceMenu && !referenceMenu.kind && !referenceSearchQuery.trim());
+  const { results: referenceResults, loading: referenceLoading, error: referenceError, retry: retryReferenceSearch } = useReferenceSearch<ReferenceItem>({
+    enabled: Boolean(referenceMenu && !referenceCategoriesVisible),
+    chatId: activeChatId, kind: referenceMenu?.kind, query: referenceSearchQuery,
+  });
   const [referenceIndex, setReferenceIndex] = useState(0);
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -2343,35 +2357,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [pendingFiles]);
 
   useEffect(() => {
-    if (!referenceMenu) {
-      setReferenceResults([]);
-      return;
-    }
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: referenceMenu.query,
-          chatId: activeChatId || "",
-        });
-        if (referenceMenu.kind) params.set("kind", referenceMenu.kind);
-        const response = await fetch(`/api/references?${params}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) return;
-        const data = (await response.json()) as { results?: ReferenceItem[] };
-        setReferenceResults(data.results || []);
-        setReferenceIndex(0);
-      } catch (error) {
-        if ((error as Error).name !== "AbortError") setReferenceResults([]);
-      }
-    }, 120);
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [activeChatId, referenceMenu]);
+    if (!referenceMenu) return;
+    const menu = document.getElementById("composer-reference-popover");
+    const option = document.getElementById(`composer-reference-option-${referenceIndex}`);
+    if (!menu || !option) return;
+    const bounds = menu.getBoundingClientRect();
+    const item = option.getBoundingClientRect();
+    const top = bounds.top + (menu.firstElementChild?.getBoundingClientRect().height || 0);
+    if (item.bottom > bounds.bottom) menu.scrollTop += item.bottom - bounds.bottom;
+    else if (item.top < top) menu.scrollTop -= top - item.top;
+  }, [referenceMenu, referenceIndex, referenceResults.length]);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
@@ -5372,9 +5367,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const openLinkedFile = (event: Event) => {
       const detail = (event as CustomEvent<WorkspaceFileRequest>).detail;
       if (!detail || typeof detail.path !== "string") return;
-      const location = parseWorkspaceFileLink(workspaceFileHref(detail));
+      const diff = detail.diff?.file?.path === detail.path ? detail.diff : undefined;
+      const location = diff ? { path: detail.path } : parseWorkspaceFileLink(workspaceFileHref(detail));
       if (!location) return;
-      setWorkspaceFileRequest((previous) => ({ ...location, changes: parseFileChangeRanges(detail.changes), id: (previous?.id || 0) + 1 }));
+      setWorkspaceFileRequest((previous) => ({ ...location, diff, changes: parseFileChangeRanges(detail.changes), id: (previous?.id || 0) + 1 }));
       setWorkspaceTab("files");
       setWorkspaceOpen(true);
     };
@@ -6633,6 +6629,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         if (pendingQuestionIdRef.current === submittingQuestion.questionId) setQuestionFieldErrors(data.fieldErrors || {});
         throw new Error(data.error || `HTTP ${res.status}`);
       }
+      window.dispatchEvent(new Event("metis:notifications-changed"));
       if (data.summary && submittingChatId === activeChatIdRef.current) {
         const messageId = `question-answer-${submittingQuestion.questionId}`;
         const answerMessage = data.message ? mapApiMessages([data.message])[0] : { id: messageId, role: "user" as const, content: data.summary!, createdAt: new Date().toISOString() };
@@ -6680,6 +6677,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not cancel the question.");
+      window.dispatchEvent(new Event("metis:notifications-changed"));
       pendingQuestionIdRef.current = null;
       setPendingQuestion(null);
       setBusySynced(false);
@@ -8456,24 +8454,21 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     const mention = composerMentionQuery(value, cursorPosition, selectionEnd, references.map(reference => reference.label));
-    if (!mention || referenceAutocompleteDismissedRef.current === mention.start) {
-      if (referenceMenu) setReferenceMenu(null);
+    if (!mention) {
+      referenceAutocompleteDismissedRef.current = null;
+      setReferenceMenu(null);
+      return;
+    }
+    if (referenceAutocompleteDismissedRef.current === mention.start) {
+      setReferenceMenu(null);
       return;
     }
     referenceAutocompleteDismissedRef.current = null;
-    const sameToken = referenceMenu?.start === mention.start;
-    const nextMenu = {
-      ...mention,
-      kind: sameToken ? referenceMenu.kind : null as ReferenceKind | null,
-    };
-    if (
-      !referenceMenu
-      || referenceMenu.query !== nextMenu.query
-      || referenceMenu.start !== nextMenu.start
-      || referenceMenu.end !== nextMenu.end
-    ) {
-      setReferenceMenu(nextMenu);
-    }
+    setReferenceMenu(current => {
+      if (current?.start === mention.start && current.query === mention.query && current.end === mention.end) return current;
+      return { ...mention, kind: current?.start === mention.start ? current.kind : null };
+    });
+    if (referenceMenu?.query !== mention.query) setReferenceIndex(0);
   }
 
   function openSlashModelPicker() {
@@ -8495,8 +8490,61 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  async function selectReference(reference: ReferenceItem) {
+  const researchActionVisible = showDeepResearchAction(referenceMenu ? { ...referenceMenu, query: referenceSearchQuery } : null) && modes.some(mode => mode.id === DEEP_RESEARCH_MODE_ID);
+  const referenceActionOffset = researchActionVisible ? 1 : 0;
+
+  function selectReferenceCategory(kind: ReferenceKind | null) {
+    setReferenceIndex(0);
+    setReferenceMenu(current => current ? { ...current, kind, search: "" } : current);
+    window.requestAnimationFrame(() => referenceSearchInputRef.current?.focus());
+  }
+
+  function handleReferenceKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!referenceMenu || composerIsComposing(event.nativeEvent)) return false;
+    if (event.key === "Backspace" && referenceMenu.kind && !referenceSearchQuery && event.target === referenceSearchInputRef.current) {
+      event.preventDefault(); selectReferenceCategory(null); return true;
+    }
+    const action = composerReferenceKeyAction({
+      key: event.key, shiftKey: event.shiftKey, repeat: event.repeat,
+      count: (referenceCategoriesVisible ? REFERENCE_KINDS.length : referenceResults.length) + referenceActionOffset,
+      index: referenceIndex,
+    });
+    if (action) {
+      event.preventDefault();
+      if (action.type === "move") setReferenceIndex(action.index);
+      else if (action.type === "dismiss") {
+        referenceAutocompleteDismissedRef.current = referenceMenu.start;
+        setReferenceMenu(null);
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
+      } else if (researchActionVisible && action.index === 0) selectResearchMode();
+      else if (referenceCategoriesVisible) selectReferenceCategory(REFERENCE_KINDS[action.index - referenceActionOffset]);
+      else if (!referenceLoading && !referenceError) void selectReference(referenceResults[action.index - referenceActionOffset]);
+      return true;
+    }
+    // A picker with no results must never turn Enter into a chat submission.
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); return true; }
+    return false;
+  }
+
+  function selectResearchMode() {
     if (!referenceMenu) return;
+    const replacement = consumeModeMention(textareaRef.current?.value ?? draftInputRef.current, referenceMenu);
+    if (!replacement) return;
+    const chatId = activeChatIdRef.current;
+    setInput(replacement.value);
+    setComposerSyncNonce(current => current + 1);
+    setReferenceMenu(null);
+    setReferenceIndex(0);
+    void selectMode(replacement.modeId).catch(() => toast.error("Could not save agent mode"));
+    window.requestAnimationFrame(() => {
+      if (activeChatIdRef.current !== chatId) return;
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(replacement.cursor, replacement.cursor);
+    });
+  }
+
+  async function selectReference(reference: ReferenceItem) {
+    if (!referenceMenu || !reference) return;
     const chatId = activeChatIdRef.current;
     const live = textareaRef.current?.value ?? draftInputRef.current;
     const replacement = replaceComposerMention(live, referenceMenu, reference.label);
@@ -9065,22 +9113,39 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           </div>
         ) : null}
         {referenceMenu ? (
-          <div id="composer-reference-list" role="listbox" aria-label="Context references" className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
-            {!referenceMenu.kind && !referenceMenu.query ? (
+          <div id="composer-reference-popover" className="absolute bottom-full left-2 right-2 z-40 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1.5 text-sm shadow-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200">
+            <div className="sticky top-0 z-10 -mx-1.5 -mt-1.5 mb-1 flex items-center gap-1 border-b border-border/50 bg-popover px-2 py-1.5">
+              {!referenceCategoriesVisible ? <button type="button" aria-label="All categories" title="All categories"
+                className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => selectReferenceCategory(null)}><ArrowLeft className="size-4" /></button> : <Search className="mx-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+              <input ref={referenceSearchInputRef} type="search" role="combobox" aria-expanded={true}
+                aria-label={referenceMenu.kind ? `Search ${referenceLabel(referenceMenu.kind).toLowerCase()}` : "Search context"}
+                placeholder={referenceMenu.kind ? `Search ${referenceLabel(referenceMenu.kind).toLowerCase()}…` : "Search context…"}
+                value={referenceSearchQuery} aria-autocomplete="list" aria-controls="composer-reference-list"
+                aria-activedescendant={`composer-reference-option-${referenceIndex}`}
+                className="h-9 min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
+                onKeyDown={event => { if (handleReferenceKeyDown(event)) event.stopPropagation(); else if (event.key === "Enter" && !composerIsComposing(event.nativeEvent)) event.preventDefault(); }}
+                onChange={event => { const search = event.target.value; setReferenceIndex(0); setReferenceMenu(current => current ? { ...current, search } : current); }}
+              />
+              {referenceMenu.kind ? <span className="pr-1 text-[11px] text-muted-foreground">{referenceLabel(referenceMenu.kind)}</span> : null}
+            </div>
+            <div id="composer-reference-list" role="listbox" aria-label="Context references" aria-busy={referenceLoading}>
+            {researchActionVisible ? <ResearchModeOption index={0} selected={referenceIndex === 0} onHighlight={() => setReferenceIndex(0)} onSelect={selectResearchMode} /> : null}
+            {referenceCategoriesVisible ? (
               <div className="flex flex-col gap-0.5">
-                {(["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as ReferenceKind[]).map((kind, index) => (
+                {REFERENCE_KINDS.map((kind, index) => (
                   <button
                     key={kind}
-                    id={`composer-reference-option-${index}`}
+                    id={`composer-reference-option-${index + referenceActionOffset}`}
                     role="option"
-                    aria-selected={referenceIndex === index}
-                    onMouseEnter={() => setReferenceIndex(index)}
+                    aria-selected={referenceIndex === index + referenceActionOffset}
+                    onMouseEnter={() => setReferenceIndex(index + referenceActionOffset)}
                     type="button"
                     aria-label={referenceLabel(kind)}
                     title={referenceLabel(kind)}
-                    className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground", referenceIndex === index && "bg-muted text-foreground")}
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground", referenceIndex === index + referenceActionOffset && "bg-muted text-foreground")}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => { setReferenceIndex(0); setReferenceMenu((current) => current ? { ...current, kind } : current); }}
+                    onClick={() => selectReferenceCategory(kind)}
                   >
                     {(() => {
                       const Icon = referenceIcon(kind);
@@ -9096,30 +9161,22 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </div>
             ) : (
               <>
-                <button
-                  type="button"
-                  aria-label="All categories"
-                  title="All categories"
-                  className="mb-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setReferenceMenu((current) => current ? { ...current, kind: null } : current)}
-                >
-                  <ArrowLeft className="size-4" />
-                </button>
-                {referenceResults.length > 0 ? (
+                {referenceLoading ? <p role="status" className="px-2.5 py-4 text-center text-xs text-muted-foreground">Searching…</p>
+                  : referenceError ? <div role="alert" className="px-2.5 py-3 text-xs"><p>{referenceError}</p><button type="button" className="mt-2 underline underline-offset-2" onClick={retryReferenceSearch}>Try again</button></div>
+                  : referenceResults.length > 0 ? (
                   referenceResults.map((reference, index) => (
                     <button
                       key={`${reference.kind}-${reference.id}`}
                       type="button"
                       className={cn(
                         "flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left",
-                        index === referenceIndex ? "bg-muted" : "hover:bg-muted/60",
+                        index + referenceActionOffset === referenceIndex ? "bg-muted" : "hover:bg-muted/60",
                       )}
                       onMouseDown={(event) => event.preventDefault()}
-                      id={`composer-reference-option-${index}`}
+                      id={`composer-reference-option-${index + referenceActionOffset}`}
                       role="option"
-                      aria-selected={referenceIndex === index}
-                      onMouseEnter={() => setReferenceIndex(index)}
+                      aria-selected={referenceIndex === index + referenceActionOffset}
+                      onMouseEnter={() => setReferenceIndex(index + referenceActionOffset)}
                       onClick={() => selectReference(reference)}
                     >
                       {(() => {
@@ -9140,10 +9197,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     </button>
                   ))
                 ) : (
-                  <p className="px-2.5 py-4 text-center text-xs text-muted-foreground">No references found.</p>
+                  researchActionVisible ? null : <p role="status" className="px-2.5 py-4 text-center text-xs text-muted-foreground">{referenceSearchQuery ? "No matching references." : `No ${referenceLabel(referenceMenu.kind || "file").toLowerCase()} available.`}</p>
                 )}
               </>
             )}
+            </div>
           </div>
         ) : null}
         <input
@@ -9303,21 +9361,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               return;
             }
             if (composerIsComposing(e.nativeEvent)) return;
-            if (referenceMenu) {
-              const categories = !referenceMenu.kind && !referenceMenu.query;
-              const kinds: ReferenceKind[] = ["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"];
-              const action = composerReferenceKeyAction({ key: e.key, shiftKey: e.shiftKey, repeat: e.repeat,
-                count: categories ? kinds.length : referenceResults.length, index: referenceIndex });
-              if (action) {
-                e.preventDefault();
-                if (action.type === "move") setReferenceIndex(action.index);
-                else if (action.type === "select") {
-                  if (categories) { setReferenceMenu({ ...referenceMenu, kind: kinds[action.index] }); setReferenceIndex(0); }
-                  else void selectReference(referenceResults[action.index]);
-                } else { setReferenceMenu(null); referenceAutocompleteDismissedRef.current = referenceMenu.start; }
-                return;
-              }
-            }
+            if (handleReferenceKeyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey) {
               if (
                 shouldIgnoreComposerEnter({
@@ -10253,6 +10297,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         {accountView ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} onNotificationsChanged={() => void refreshNotificationInbox()} onOpenProject={(id) => {setAccountView(null);openProjectHome(id);}} onOpenChat={(id)=>{setAccountView(null);void loadChat(id);}}>
           {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
         setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
+        if (skill.id === DEEP_RESEARCH_MODE_ID) { void selectMode(DEEP_RESEARCH_MODE_ID).catch(() => toast.error("Could not save agent mode")); return; }
         setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
         setComposerSyncNonce(current => current + 1);
       }} /> : accountView === "settings" ? <SettingsPanel

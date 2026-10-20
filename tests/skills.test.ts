@@ -55,32 +55,32 @@ test("manual skills reject unsafe ids", () => {
 
 test("skills resolve CLI installs through the canonical .agents directory", () => {
   const skills = listInstalledSkills();
-  const design = skills.find((skill) => skill.id === "frontend-design");
-  assert.ok(design, "frontend-design should be installed");
-  assert.match(design.skillPath, /\.agents\/skills\/frontend-design\/SKILL\.md$/);
+  const design = skills.find((skill) => skill.id === "ui-ux-pro-max");
+  assert.ok(design, "ui-ux-pro-max should be installed");
+  assert.match(design.skillPath, /\.agents\/skills\/ui-ux-pro-max\/SKILL\.md$/);
   assert.equal(existsSync(path.resolve(process.cwd(), design.skillPath)), true);
 });
 
-test("visual design work auto-activates the design bundle only for the matching task", () => {
-  const message = "Mache die Handy UI overall cleaner, weniger AI look und fixe Farben";
-  assert.equal(isVisualDesignTask(message), true);
-  const prompt = autoSkillActivationPrompt(message);
-  assert.match(prompt, /DESIGN bundle is active/);
-  assert.match(prompt, /metis-design-director/);
-  assert.match(prompt, /frontend-design/);
-  assert.match(prompt, /design-taste-frontend/);
-  assert.match(prompt, /design-system/);
-  assert.match(prompt, /web-design-guidelines/);
-  assert.match(prompt, /web-design-reviewer/);
+test("visual work routes exclusively to UI UX Pro Max for matching tasks", () => {
+  for (const message of ["Mache die Handy UI overall cleaner, weniger AI look und fixe Farben", "Review the UI accessibility", "Change the button spacing"]) {
+    assert.equal(isVisualDesignTask(message), true);
+    const prompt = autoSkillActivationPrompt(message);
+    assert.match(prompt, /UI UX Pro Max is active/);
+    assert.match(prompt, /- ui-ux-pro-max: .*SKILL\.md/);
+    assert.equal(prompt.split("\n").filter(line => line.startsWith("- ")).length, 1);
+  }
+  for (const id of ["metis-design-director", "frontend-design", "design-taste-frontend", "design-system", "web-design-guidelines", "web-design-reviewer"]) {
+    assert.equal(listInstalledSkills().some(skill => skill.id === id), false, `${id} must be replaced`);
+  }
   assert.equal(autoSkillActivationPrompt("Erkläre mir prepared statements"), "");
 });
 
 test("auto skill routing respects manual skill disable switches", () => {
-  const prompt = autoSkillActivationPrompt("Redesign the mobile UI and audit the layout", {
-    enabledSkills: { "web-design-guidelines": false },
-  });
-  assert.doesNotMatch(prompt, /- web-design-guidelines:/);
-  assert.match(prompt, /- web-design-reviewer:/);
+  const message = "Redesign the mobile UI and audit the layout";
+  assert.equal(autoSkillActivationPrompt(message, {
+    enabledSkills: { "ui-ux-pro-max": false },
+  }), "");
+  assert.equal(autoSkillActivationPrompt(message, undefined, { installedSkills: [] }), "");
 });
 
 
@@ -113,12 +113,12 @@ test("skill settings expose frontmatter titles and extra metadata", () => {
   assert.equal(adhd.category, "productivity");
   assert.deepEqual(adhd.tags, ["ADHD", "Output Style", "Productivity"]);
   const listed = listSkillSettings();
-  const frontend = listed.find((skill) => skill.id === "frontend-design");
-  assert.ok(frontend);
-  assert.equal(frontend.title, "frontend-design");
-  assert.ok(frontend.description.length > 20);
-  assert.equal(frontend.alwaysOn, false);
-  assert.ok(frontend.skillPath);
+  const design = listed.find((skill) => skill.id === "ui-ux-pro-max");
+  assert.ok(design);
+  assert.equal(design.title, "ui-ux-pro-max");
+  assert.ok(design.description.length > 20);
+  assert.equal(design.alwaysOn, false);
+  assert.ok(design.skillPath);
   const alwaysOn = listed.find((skill) => skill.id === "i-have-adhd");
   assert.equal(alwaysOn?.alwaysOn, true);
   assert.equal(alwaysOn?.title, "i-have-adhd");

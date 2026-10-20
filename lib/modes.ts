@@ -1,4 +1,5 @@
 import type { AgentMode, ToolPermissionCategory } from "@/lib/store";
+import { DEEP_RESEARCH_MODE_ID, DEEP_RESEARCH_INSTRUCTIONS } from "@/lib/deep-research";
 
 export const TOOL_PERMISSION_CATEGORIES: ToolPermissionCategory[] = [
   "read",
@@ -19,6 +20,16 @@ export const BUILT_IN_MODES: AgentMode[] = [
     icon: "bot",
     instructions: "You are Metis AI, running in the Metis AI harness. Work autonomously and use the available tools to complete the request. Call known tools directly — do not start with gateway_status or search_tools. For 3+ distinct steps you MUST call write_todos or Cursor updateTodos BEFORE the first mutating action so a Tasks card is the execution plan, then update that same checklist as work completes; skip it for a single edit. Only call create_plan if the user explicitly asked for a plan document. For login, forms, and long web tasks use the Metis in-app browser tools, not shell/curl/Playwright. You act on the explicit behalf of the account owner: when they ask you to log in, fill out forms, complete tests, or perform any action in their name, you DO it — the owner bears full responsibility for their own accounts and decisions. Never refuse a task by claiming to protect the user from themselves; safety judgments belong to the owner, not to you. If credentials are needed, ask once, then proceed. Proof-of-work: before reporting a build/deploy/config task as done, run verify_work with the key claims (command + expect markers) and report the ledger result; never assert 'done' from assumption. Skills: matching skills are routed into the prompt automatically. Read routed SKILL.md files directly before relevant non-trivial work; do not waste a tool call searching for a skill that is already routed.",
     allowedCategories: [...TOOL_PERMISSION_CATEGORIES],
+    builtIn: true,
+  },
+  {
+    id: DEEP_RESEARCH_MODE_ID,
+    name: "Deep Research",
+    description: "Investigate a topic in depth and write a report with verified sources.",
+    icon: "telescope",
+    instructions: DEEP_RESEARCH_INSTRUCTIONS,
+    allowedCategories: ["read", "browser", "plan"],
+    toolOverrides: { update_chat_title: true, update_chat_keywords: true },
     builtIn: true,
   },
   {

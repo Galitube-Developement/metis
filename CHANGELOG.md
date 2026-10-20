@@ -4,6 +4,14 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.17 — 2026-10-20
+
+- Open recorded file changes directly in the workspace diff editor, switch between edits, and open the current original file while preserving unsaved drafts.
+- Add a Deep Research mode with source search, opening, finding and auditing tools, plus a composer shortcut for switching modes.
+- Search references without loading full chat histories, cache bounded chat snapshots, and defer new worker jobs when host or cgroup memory is constrained.
+- Keep actionable account notifications synchronized with jobs and project invitations, and enable remote-device notifications by default while respecting saved preferences.
+- Consolidate UI guidance on UI UX Pro Max and exclude local skill installations and MCP configuration from new Git additions.
+
 ## v1.0.15 — 2026-10-19
 
 - Invite users to shared projects, manage members and invitations, and use an account notification inbox with unread indicators while keeping provider, model and mode settings private. Automatic run-completed alerts no longer appear in that inbox.

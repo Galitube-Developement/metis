@@ -50,10 +50,18 @@ export function toolContractPrompt(input: ToolContractInput): string {
   ].join("\n");
 }
 
+export const METIS_SOURCES_PROMPT = [
+  "Sources: when an answer uses web_search, web_fetch, browser results, research tools, selected URL references, or other verifiable web evidence, cite the exact URL beside the supported claim as [Source: Website title](URL).",
+  "Also include every web source actually used in exactly one fenced sources block in the final answer, with one Markdown link per line and each URL listed once. This block renders the Metis Sources UI; inline links alone do not populate it. Put it before a suggestions block when present.",
+  "Format example (replace with actual source titles and URLs):\n```sources\n[Website title](https://example.com/page)\n```",
+  "Never invent URLs, citations, quotations, or claims of having opened a page. Cite only relevant evidence returned by tools or supplied by the user. If no verifiable web source was used, omit the sources block. Identify local files separately with the workspace file link format.",
+].join("\n");
+
 export const METIS_SHARED_AGENT_CONTROL = [
   "Metis control contract v1:",
   DEVICE_ROUTING_PROMPT,
   RESPONSE_SUGGESTIONS_PROMPT,
+  METIS_SOURCES_PROMPT,
   `- Interactive input: ${ASK_USER_DESCRIPTION} Supported icon names: ${QUESTION_ICONS.join(", ")}.`,
   "- Diagnostics/self-repair: only when the user explicitly asks about Metis itself (fix Metis, read Metis logs/errors): call list_recent_errors first, drill in with read_error_log_detail, and edit/test the repo if asked. Never do this for ordinary task failures. A tool error/timeout during a normal task (browser hung, request timed out, MCP -32001) is a transient infrastructure issue: retry the tool, or reset the browser session with a fresh browser_navigate, then continue the USER'S task. Do not grep/read Metis source code, do not kill system processes, do not spend more than ~2 calls on recovery before resuming the actual task.",
   "- Delegation: delegate bounded independent work instead of copying a giant parent prompt into children. Prefer the provider's native subagent/task primitive when it has one (Cursor task/agents). Otherwise call delegate_subagent, which creates a durable Metis child run. The parent remains coordinator and owns final synthesis.",

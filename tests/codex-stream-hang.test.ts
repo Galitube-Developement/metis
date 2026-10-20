@@ -95,7 +95,7 @@ test("Codex adapter and OpenAI factory wire the hang guards", () => {
   assert.match(codex, /service_tier: serviceTier/);
   assert.match(support, /return openai\.responses\(modelId\)/);
   assert.doesNotMatch(support, /openai\.chat\(modelId\)/);
-  assert.match(support, /iterateUntilAborted\(\s*streamResult\.stream/);
+  assert.match(support, /iterateUntilAborted\(\s*streamResult\.fullStream/);
   assert.match(runner, /activeInFlightTool\(tools\)/);
   assert.match(runner, /providerIdleTimeouts\(\s*adapter\.capabilities\.progressDelivery/);
   assert.match(codex, /progressDelivery: "buffered"/);

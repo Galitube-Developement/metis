@@ -19,18 +19,6 @@
       "skillPath": "skills/manual/computer-use/SKILL.md",
       "computedHash": "5252ecc1583083378d101630e9428cccf4b0cf8263a0540c61a1f27c2b07884e"
     },
-    "design-system": {
-      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
-      "sourceType": "github",
-      "skillPath": ".claude/skills/design-system/SKILL.md",
-      "computedHash": "a05715299135276628f53519484e1267ec8ad111e6355a09c2da1cf66aee2cc3"
-    },
-    "design-taste-frontend": {
-      "source": "leonxlnx/taste-skill",
-      "sourceType": "github",
-      "skillPath": "skills/taste-skill/SKILL.md",
-      "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
-    },
     "docx": {
       "source": "anthropics/skills",
       "sourceType": "github",
@@ -43,23 +31,11 @@
       "skillPath": "skills/find-skills/SKILL.md",
       "computedHash": "b146008599c31057cef1c145774cea5d5afb30e8f43fa802e47a4b461419aaaf"
     },
-    "frontend-design": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "skillPath": "skills/frontend-design/SKILL.md",
-      "computedHash": "4eabc66183767153e404b39d1b839b1c37f2d82d86f0a0d7e880a579d8d62336"
-    },
     "i-have-adhd": {
       "source": "ayghri/i-have-adhd",
       "sourceType": "github",
       "skillPath": "skills/i-have-adhd/SKILL.md",
       "computedHash": "938d0e350a0c2b0e2e6c3a9032542e062846d108e0f89dd27c798ba5b436397e"
-    },
-    "metis-design-director": {
-      "source": "manual",
-      "sourceType": "local",
-      "skillPath": "skills/manual/metis-design-director/SKILL.md",
-      "computedHash": "c3bddcfde555ad0b656efd609aef874a90bdbf053103b52561de1b3a6334806f"
     },
     "metis-development": {
       "source": "custom",
@@ -91,23 +67,17 @@
       "skillPath": "skills/bundled/skill-creator/SKILL.md",
       "computedHash": "4ee426f1c45139912942835882d8cc212cc873a6cfaeaf71da335abc8f3af3a9"
     },
-    "web-design-guidelines": {
-      "source": "vercel-labs/agent-skills",
-      "sourceType": "github",
-      "skillPath": "skills/web-design-guidelines/SKILL.md",
-      "computedHash": "f3bc47f890f42a44db1007ab390709ec368e4b8c089baee6b0007182236ac474"
-    },
-    "web-design-reviewer": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "skillPath": "skills/web-design-reviewer/SKILL.md",
-      "computedHash": "4a05e32553a1dc916ee4f68f709d478c17de6b8ce184932f56f2b8646f3d4986"
-    },
     "xlsx": {
       "source": "anthropics/skills",
       "sourceType": "github",
       "skillPath": "skills/xlsx/SKILL.md",
       "computedHash": "f5945e6e76dc7c178375e5cdf3140959b30cbcd4570ec3dc62296812259fc38d"
+    },
+    "ui-ux-pro-max": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/ui-ux-pro-max/SKILL.md",
+      "computedHash": "f025d825ee60125a46c9299ffa32aba80ec26e4318902fcaca2f69462a7dd26c"
     }
   }
 }

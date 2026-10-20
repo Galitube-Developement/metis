@@ -1,5 +1,5 @@
 import { projectRole } from "@/lib/project-access";
-import { getChat, getGlobalModelSettings } from "@/lib/db-store";
+import { getChat, getChatNotePins, getGlobalModelSettings } from "@/lib/db-store";
 import { listNotes, getNote } from "@/lib/shared-context";
 
 export type ReferenceKind = "file" | "canvas" | "plan" | "note" | "browser" | "memory" | "chat" | "terminal";
@@ -17,7 +17,7 @@ export type ContextReference = {
 
 export function getPinnedNoteIds(ownerId: string | undefined, chatId: string) {
   const global = getGlobalModelSettings(ownerId).pinnedNoteIds || [];
-  const session = getChat(chatId, ownerId)?.sessionState;
+  const session = getChatNotePins(chatId, ownerId);
   const excluded = new Set(session?.unpinnedGlobalNoteIds || []);
   const chat = session?.pinnedNoteIds || [];
   return [...new Set([...global.filter((id) => !excluded.has(id)), ...chat])].slice(0, 20);

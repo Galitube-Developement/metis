@@ -33,7 +33,7 @@ test("notification backend: owner boundaries, durable replay, ACK and API authen
   const event = (owner:string,kind:string,data:unknown={}) => db.prepare("INSERT INTO run_events(job_id,chat_id,user_id,event,data,created_at) VALUES (?,?,?,?,?,?)")
     .run(owner+"-job",owner+"-chat",owner,kind,JSON.stringify(data),now);
   await t.test("preferences reject foreign and revoked clients and default safely", () => {
-    assert.deepEqual(store.getNotificationPrefs("alice"),{toastEnabled:true,browserEnabled:false,remoteEnabled:false,agentFinishedEnabled:true,remoteClientIds:[]});
+    assert.deepEqual(store.getNotificationPrefs("alice"),{toastEnabled:true,browserEnabled:false,remoteEnabled:true,agentFinishedEnabled:true,remoteClientIds:["alice-pc"]});
     assert.throws(()=>store.setNotificationPrefs("alice",{remoteClientIds:["bob-pc"]}));
     assert.throws(()=>store.setNotificationPrefs("alice",{toastEnabled:"yes"}));
     assert.throws(()=>store.setNotificationPrefs("alice",{execute_command:"anything"}));
@@ -135,6 +135,8 @@ test("notification backend: owner boundaries, durable replay, ACK and API authen
     fresh.emit("close");
   });
   await t.test("outbox retries negative ACK, records positive ACK and honors disabled selection", async () => {
+    // Keep this retry fixture below one batch; default enrollment is tested separately.
+    store.setNotificationPrefs("bob",{remoteEnabled:false});
     let sends=0;
     await observer.deliverPendingNotifications(async()=>{sends++;return false;});
     assert.ok(sends>0);

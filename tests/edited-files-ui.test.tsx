@@ -40,7 +40,7 @@ test("successful edits move from composer to the same reply at completion, even 
   const completed=renderPlacement([{...reply,streaming:false}],{running:true});
   assertLocations(completed,0,1);
   assert.match(completed,/data-message-id="reply"/);
-  assert.match(completed,/Open \/workspace\/src\/main.ts/);
+  assert.match(completed,/View changes for \/workspace\/src\/main.ts/);
   assert.match(completed,/2 lines added/);
 });
 
@@ -90,8 +90,8 @@ test("loading or switching chats cannot keep a previous chat's composer file lis
 test("closed transcript and composer stay lazy with snapshot props", () => {
   const tools = [{ ...tool, diff: { before: "private before snapshot", after: "private after snapshot" } }];
   const html = renderPlacement([{ ...reply, streaming: false, tools }]);
-  assert.match(html, /Show diff/);
-  assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /Show diff|Hide diff/);
+  assert.match(html, /View changes for/);
   assert.doesNotMatch(html, /private before snapshot|private after snapshot|data-edited-file-diff/);
   const remote = renderToStaticMarkup(<EditedFiles files={[{path:"C:\\project\\a.ts",target:"client:pc"}]} tools={tools} chatId="chat" messageId="reply"/>);
   assert.doesNotMatch(remote, /workspace:\/\/file/);

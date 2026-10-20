@@ -2,6 +2,10 @@ import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { getChat, listChatsForUser, listMemories } from "@/lib/db-store";
 import { config } from "@/lib/config";
 import { listNotes } from "@/lib/shared-context";
+import { referenceMatches, REFERENCE_KINDS } from "@/lib/reference-search";
+import { editedFilesForMessage } from "@/lib/edited-files";
+import { unwrapToolRecord } from "@/lib/tool-call-display";
+import { canAccessChat } from "@/lib/project-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,12 +24,6 @@ type ReferenceResult = {
   sessionId?: string;
 };
 
-function matches(query: string, ...values: Array<string | undefined>) {
-  if (!query) return true;
-  const haystack = values.filter(Boolean).join(" ").toLowerCase();
-  return haystack.includes(query);
-}
-
 export async function GET(req: Request) {
   if (!(await isAuthenticated(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -36,15 +34,22 @@ export async function GET(req: Request) {
   const kind = url.searchParams.get("kind") as ReferenceKind | null;
   const currentChatId = url.searchParams.get("chatId") || "";
   const ownerId = (await getAuthenticatedUserId(req)) ?? undefined;
+  if (!ownerId) return Response.json({ error: "Account context required" }, { status: 401 });
+  if (kind && !(REFERENCE_KINDS as readonly string[]).includes(kind)) return Response.json({ error: "Unknown reference category" }, { status: 400 });
   const results: ReferenceResult[] = [];
 
   const push = (item: ReferenceResult) => {
-    if ((!kind || item.kind === kind) && matches(query, item.label, item.detail, item.path, item.content)) {
+    if ((!kind || item.kind === kind) && referenceMatches(query, item.label, item.detail, item.path, item.content)) {
       results.push(item);
     }
   };
 
-  for (const entry of listChatsForUser(ownerId)) {
+  const chatEntries = kind === "note" || kind === "memory" ? [] : listChatsForUser(ownerId);
+  for (const entry of chatEntries) {
+    if (kind === "chat") {
+      push({ kind: "chat", id: entry.id, label: entry.title || "Untitled chat", detail: entry.keywords?.join(" · "), chatId: entry.id, isCurrentChat: entry.id === currentChatId });
+      continue;
+    }
     const chat = getChat(entry.id, ownerId);
     if (!chat) continue;
     push({
@@ -65,20 +70,6 @@ export async function GET(req: Request) {
         chatId: chat.id,
         isCurrentChat: chat.id === currentChatId,
         content: workspace.content.slice(0, 6_000),
-      });
-    }
-
-    for (const note of listNotes({ ownerId, chatId: chat.id }).filter(
-      (item) => item.scope === "chat" || chat.id === currentChatId,
-    )) {
-      push({
-        kind: "note",
-        id: note.id,
-        label: note.title || note.content.slice(0, 80) || "Untitled note",
-        detail: `in ${chat.title || "Untitled chat"}`,
-        chatId: chat.id,
-        isCurrentChat: chat.id === currentChatId,
-        content: note.content.slice(0, 6_000),
       });
     }
 
@@ -120,7 +111,12 @@ export async function GET(req: Request) {
       });
     }
 
+    if (kind && kind !== "file") continue;
     for (const message of chat.messages) {
+      for (const edited of editedFilesForMessage(message)) push({
+        kind: "file", id: `${chat.id}:${edited.target}:${edited.path}`, label: edited.path.split(/[\\\\/]/).pop() || edited.path,
+        detail: `${edited.target} · in ${chat.title || "Untitled chat"}`, chatId: chat.id, isCurrentChat: chat.id === currentChatId, path: edited.path,
+      });
       for (const attachment of message.attachments || []) {
         push({
           kind: "file",
@@ -133,16 +129,18 @@ export async function GET(req: Request) {
         });
       }
       for (const tool of message.tools || []) {
-        if (!tool.path) continue;
+        const args = unwrapToolRecord(tool.input);
+        const path = tool.path || [args?.path, args?.filePath, args?.file_path].find((value): value is string => typeof value === "string");
+        if (!path) continue;
         push({
           kind: "file",
           id: `${chat.id}:${tool.id}`,
-          label: tool.path.split("/").pop() || tool.path,
+          label: path.split(/[\\\\/]/).pop() || path,
           detail: tool.name,
           chatId: chat.id,
           isCurrentChat: chat.id === currentChatId,
-          path: tool.path,
-          content: (tool.result || tool.detail || "").slice(0, 6_000),
+          path,
+          content: (typeof tool.result === "string" ? tool.result : tool.detail || "").slice(0, 6_000),
         });
       }
     }
@@ -160,17 +158,26 @@ export async function GET(req: Request) {
     }
   }
 
-  if (!kind || kind === "note") {
-    for (const note of listNotes({ ownerId, scope: "global" })) {
+  if (!kind || kind === "note" || kind === "memory") {
+    for (const note of listNotes({ ownerId })) {
+      if (note.chatId && !canAccessChat(note.chatId, ownerId)) continue;
       push({
-        kind: "note",
+        kind: note.kind === "learned_fact" ? "memory" : "note",
         id: note.id,
         label: note.title || note.content.slice(0, 80) || "Untitled note",
-        detail: "Global note",
+        detail: note.projectId ? "Project context" : note.chatId ? "Chat context" : note.scope === "workspace" ? "Workspace context" : "Global context",
+        ...(note.chatId ? { chatId: note.chatId, isCurrentChat: note.chatId === currentChatId } : {}),
         content: note.content.slice(0, 6_000),
       });
     }
   }
 
-  return Response.json({ results: results.slice(0, 80), currentChatId });
+  const seen = new Set<string>();
+  const unique = results.sort((a, b) => Number(Boolean(b.isCurrentChat)) - Number(Boolean(a.isCurrentChat))).filter(item => {
+    const key = item.kind === "file" ? [item.kind, item.chatId, item.path].join(":") : [item.kind, item.id, item.chatId || ""].join(":");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return Response.json({ results: unique.slice(0, 80), currentChatId }, { headers: { "Cache-Control": "private, no-store" } });
 }

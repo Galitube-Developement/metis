@@ -86,9 +86,26 @@ export function removeProjectMember(projectId:string,userId:string,input:{userId
 }
 export function notificationInbox(userId:string) {
   const db=notificationDatabase();
-  // Routine run completions belong to the delivery feed, not the account inbox.
-  // Filter before LIMIT and use the same rule for the unread badge, including history.
-  const visible="instr(COALESCE(n.source_key,''),'run:' || n.owner_id || ':done:') != 1";
+  // Derive actionability from durable state, including historical and delayed alerts.
+  // Keep records/source keys for deduplication and delivery history. Apply this rule
+  // before LIMIT and to the unread badge so resolved alerts cannot crowd out new ones.
+  const visible=`CASE
+    WHEN instr(n.source_key,'run:' || n.owner_id || ':done:')=1 THEN 0
+    WHEN instr(n.source_key,'run:' || n.owner_id || ':question:')=1 THEN EXISTS(
+      SELECT 1 FROM pending_questions q
+      LEFT JOIN jobs j ON j.id=q.job_id AND j.user_id=q.user_id AND j.chat_id=q.chat_id
+      WHERE q.question_id=substr(n.source_key,length('run:' || n.owner_id || ':question:')+1)
+        AND q.user_id=n.owner_id AND q.chat_id=n.chat_id AND q.status='waiting_for_user'
+        AND (q.job_id IS NULL OR j.status IN ('queued','running','switching','waiting_input','waiting_for_user')))
+    WHEN instr(n.source_key,'run:' || n.owner_id || ':provider-limit:')=1 THEN EXISTS(
+      SELECT 1 FROM jobs j WHERE j.user_id=n.owner_id AND j.chat_id=n.chat_id AND j.status='queued'
+        AND CASE WHEN json_valid(j.data) THEN n.source_key='run:' || n.owner_id || ':provider-limit:' ||
+          j.id || ':' || json_extract(j.data,'$.providerRateLimit.resetAt') ELSE 0 END)
+    WHEN instr(n.source_key,'project-invitation:')=1 THEN EXISTS(
+      SELECT 1 FROM project_invitations i JOIN projects p ON p.id=i.project_id
+      WHERE i.id=substr(n.source_key,length('project-invitation:')+1)
+        AND i.invitee_id=n.owner_id AND i.status='pending' AND p.owner_id=i.inviter_id)
+    ELSE 1 END`;
   const notifications=db.prepare(`SELECT n.id,n.title,n.body,n.chat_id AS chatId,n.created_at AS createdAt,r.read_at AS readAt,
     COALESCE(c.kind,'notice') AS kind,c.project_id AS projectId,c.invitation_id AS invitationId,i.status AS invitationStatus
     FROM notification_records n LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=n.owner_id

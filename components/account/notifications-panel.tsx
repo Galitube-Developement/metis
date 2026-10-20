@@ -71,10 +71,7 @@ export function NotificationsPanel({ onOpenProject, onOpenChat, onNotificationsC
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Could not respond to this invitation. Try again.");
-      setNotifications(items => items.map(value => value.id === item.id ? {
-        ...value, invitationStatus: action === "accept" ? "accepted" : "declined",
-        projectId: body.projectId || value.projectId, readAt: new Date().toISOString(),
-      } : value));
+      setNotifications(items => items.filter(value => value.id !== item.id));
       changed();
       if (action === "accept") {
         window.dispatchEvent(new Event("metis:projects-changed"));
