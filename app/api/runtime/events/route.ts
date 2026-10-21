@@ -1,6 +1,6 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import { listRunEvents } from "@/lib/db-jobs";
-import { getChat } from "@/lib/db-store";
+import { canAccessChat } from "@/lib/project-access";
 import { captureApiError } from "@/lib/error-logs";
 import { runtimeEventFromRunEvent, type DurableRunEvent } from "@/lib/runtime/from-run-event";
 import { encodeRuntimeSseEvent, SSE_HEADERS } from "@/lib/sse";
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   if (!ownerId) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    if (!getChat(chatId, ownerId)) {
+    if (!canAccessChat(chatId, ownerId)) {
       return Response.json({ error: "Chat not found" }, { status: 404 });
     }
 

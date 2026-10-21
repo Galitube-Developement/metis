@@ -25,11 +25,11 @@ export const BUILT_IN_MODES: AgentMode[] = [
   {
     id: DEEP_RESEARCH_MODE_ID,
     name: "Deep Research",
-    description: "Investigate a topic in depth and write a report with verified sources.",
+    description: "Approve an editable research plan, investigate verified sources, and receive a report file.",
     icon: "telescope",
     instructions: DEEP_RESEARCH_INSTRUCTIONS,
     allowedCategories: ["read", "browser", "plan"],
-    toolOverrides: { update_chat_title: true, update_chat_keywords: true },
+    toolOverrides: { update_chat_title: true, update_chat_keywords: true, research_report: true },
     builtIn: true,
   },
   {

@@ -12,6 +12,7 @@ export type HandoffActivity = {
   prompt?: string;
   result?: string;
   error?: string;
+  detailsUrl?: string;
 };
 /** Durable identity wins over display names; ambiguous legacy names cannot select a chat. */
 export function handoffRecipientAgent<T extends { id: string; projectId: string; name: string; chatId: string }>(activity: HandoffActivity, agents: T[]): T | undefined {

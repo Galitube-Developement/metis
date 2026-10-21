@@ -126,7 +126,7 @@ export function listChatSyncEvents(ownerId: string, after = 0, limit = 500): Cha
     `SELECT id, owner_id AS ownerId, chat_id AS chatId, kind,
             chat_updated_at AS chatUpdatedAt, created_at AS createdAt
      FROM chat_sync_events
-     WHERE (owner_id = ? OR EXISTS(SELECT 1 FROM chats c JOIN projects p ON p.id=json_extract(c.data,'$.projectId')
+     WHERE (owner_id = ? OR EXISTS(SELECT 1 FROM chat_list c JOIN projects p ON p.id=c.project_id
        WHERE c.id=chat_sync_events.chat_id AND (p.owner_id=? OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=?)))) AND id > ?
      ORDER BY id ASC
      LIMIT ?`,

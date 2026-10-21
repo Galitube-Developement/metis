@@ -21,8 +21,9 @@ import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
 import { parseWorkspaceFileLink } from "@/lib/workspace-file-link";
 import { internalLinkNavigation, parseInternalLink } from "@/lib/internal-link";
-import { ChatIcon } from "@/components/chat-icon";
+import { MarkdownSpan } from "@/components/markdown-span";
 import { remarkChatIcons } from "@/lib/markdown-icons";
+import { markdownSourceTitle } from "@/lib/markdown-source-title";
 import { FileEmbed } from "@/components/file-embed";
 import { FileLink } from "@/components/file-link";
 import { parseFileEmbed, isFileUrl, mimeTypeFromFileName } from "@/lib/file-types";
@@ -31,7 +32,7 @@ import { LinkPreview } from "@/components/link-preview";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { GraphBoard } from "@/components/graph-board";
 import rehypeStreamingText from "@/lib/rehype-streaming-text";
-import { StreamingSpan, StreamingText } from "@/components/streaming-text";
+import { StreamingText } from "@/components/streaming-text";
 import { appendStreamingArrival, initialStreamingArrival } from "@/lib/streaming-text";
 import type { PluggableList } from "unified";
 import { ChartBoard } from "@/components/chart-board";
@@ -73,16 +74,12 @@ function MarkdownLink({
   const isSubagentUrl = Boolean(href && /^subagent:\/\//i.test(href));
   const internalTarget = parseInternalLink(href);
   const navigation = internalTarget ? internalLinkNavigation(internalTarget) : null;
-  const childText = typeof children === "string"
-    ? children
-    : Array.isArray(children)
-      ? children.filter((child): child is string => typeof child === "string").join("")
-      : "";
-  const sourceTitle = childText.match(/^(?:source|quelle)\s*[:\-]\s*(.+)$/i)?.[1]?.trim();
+  const sourceTitle = markdownSourceTitle(children);
   const link = (
     <a
       {...props}
       href={navigation?.href || href}
+      data-source-citation={sourceTitle ? "" : undefined}
       className={cn(
         props.className,
         sourceTitle && "inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/60 px-1.5 py-0.5 text-[11px] font-medium no-underline hover:bg-secondary",
@@ -140,9 +137,7 @@ function MarkdownLink({
 
 const markdownComponents = {
   a: MarkdownLink,
-  span: ({ children, ...props }: HTMLAttributes<HTMLSpanElement> & { "data-metis-icon"?: string }) => props["data-metis-icon"]
-    ? <ChatIcon name={props["data-metis-icon"]} className="mr-1.5 inline-block size-[1.1em] align-[-0.15em] text-current" />
-    : <span {...props}>{children}</span>,
+  span: MarkdownSpan,
 };
 
 export interface ThinkingSegment {
@@ -311,7 +306,6 @@ export const Markdown = memo(function Markdown({
 }) {
   const markdownComponentsWithCode = useMemo(() => ({
     ...markdownComponents,
-    span: StreamingSpan,
     pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
     code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
     img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,

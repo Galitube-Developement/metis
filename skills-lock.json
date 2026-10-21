@@ -78,6 +78,12 @@
       "sourceType": "github",
       "skillPath": ".agents/skills/ui-ux-pro-max/SKILL.md",
       "computedHash": "f025d825ee60125a46c9299ffa32aba80ec26e4318902fcaca2f69462a7dd26c"
+    },
+    "deep-research": {
+      "source": "custom",
+      "sourceType": "local",
+      "skillPath": "skills/manual/deep-research/SKILL.md",
+      "computedHash": "616ac36bf773025b20334a89756e9121f0531670c1d327fea3376b93870c4e05"
     }
   }
 }

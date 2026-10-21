@@ -12,15 +12,17 @@ export type GatewayTool = {
 };
 
 export type GatewayToolResult = {
+  isError?: boolean;
   content: Array<{ type: string; text: string }>;
 };
 
 export declare const tools: GatewayTool[];
+export declare function modeToolCategory(name: string): string | undefined;
 
 export declare function visibleToolsForContext(...args: unknown[]): unknown;
 
 export declare function dispatchGatewayTool(
   name: string,
   args: Record<string, unknown>,
-  options?: { context?: Record<string, unknown>; auditCall?: boolean },
+  options?: { context?: Record<string, unknown>; auditCall?: boolean; signal?: AbortSignal },
 ): Promise<GatewayToolResult>;

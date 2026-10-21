@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
+import { CHAT_PAGE_SCHEMA } from "@/lib/chat-page-store";
 
 const dataDir = config.dataDir;
 export const databasePath = config.databasePath;
@@ -272,6 +273,7 @@ export function getDatabase(): DatabaseSync {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    ${CHAT_PAGE_SCHEMA}
     CREATE INDEX IF NOT EXISTS chats_owner_updated ON chats(owner_id, updated_at DESC);
     -- The worker checks this queue every second. Do not reparse every transcript.
     CREATE INDEX IF NOT EXISTS chats_pending_queue ON chats(updated_at)

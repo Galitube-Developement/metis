@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { ASK_USER_INPUT_SCHEMA } from "./mcp-core/question-schema.mjs";
+import { normalizeTaskList } from "./mcp-core/task-list.mjs";
 
 export type QuestionScalar = string | number | boolean;
 export type QuestionValue = QuestionScalar | QuestionScalar[] | null;
-export type QuestionType = "text" | "textarea" | "number" | "select" | "radio" | "multiselect" | "checkbox" | "toggle" | "slider" | "date" | "time";
+export type QuestionType = "text" | "textarea" | "number" | "select" | "radio" | "multiselect" | "checkbox" | "toggle" | "slider" | "date" | "time" | "task_list";
 export type QuestionOption = { label: string; value?: QuestionScalar; description?: string; icon?: string };
 export type QuestionInput = {
   question: string; key?: string; type?: QuestionType; multiple?: boolean;
@@ -14,7 +15,7 @@ export type QuestionInput = {
   showWhen?: { key: string; equals: QuestionScalar };
 };
 export type AgentQuestion = Omit<QuestionInput, "options"> & { id: string; options?: QuestionOption[] };
-export type QuestionForm = { title?: string; description?: string; submitLabel?: string; responseTemplate?: string; columns?: 1 | 2 };
+export type QuestionForm = { language?: string; title?: string; description?: string; submitLabel?: string; responseTemplate?: string; columns?: 1 | 2 };
 export type AskUserInput = QuestionForm & { questions: QuestionInput[] };
 export type PendingChatQuestion = QuestionForm & {
   questionId: string; runId?: string; jobId?: string; version?: number; expiresAt?: string;
@@ -105,6 +106,10 @@ function decode(question: AgentQuestion, raw: unknown): QuestionValue {
     if (raw === false || raw === "false") return false;
     throw new Error("Choose yes or no.");
   }
+  if (type === "task_list") {
+    try { return normalizeTaskList(typeof raw === "string" ? JSON.parse(raw) : raw); }
+    catch (error) { throw new Error(error instanceof Error ? error.message : "Enter valid research steps."); }
+  }
   if (type === "multiselect") {
     let values: unknown = raw;
     if (typeof raw === "string") {
@@ -134,6 +139,7 @@ function validateValue(question: AgentQuestion, value: QuestionValue) {
   if (number && (typeof value !== "number" || !Number.isFinite(value))) throw new Error("Enter a valid number.");
   if ((type === "checkbox" || type === "toggle") && typeof value !== "boolean") throw new Error("Choose yes or no.");
   if (type === "multiselect" && !Array.isArray(value)) throw new Error("Select one or more options.");
+  if (type === "task_list") { normalizeTaskList(value); return; }
   if (Array.isArray(value) && (value.length > 100 || new Set(value.map(v => JSON.stringify(v))).size !== value.length)) throw new Error("Select each option once.");
   if (typeof value === "number" && number) {
     if (question.min !== undefined && value < question.min) throw new Error(`Minimum: ${question.min}.`);
@@ -183,7 +189,7 @@ export function normalizeQuestionAnswers(questions: AgentQuestion[], input: unkn
     try {
       const value = decode(q, Array.isArray(input) ? input[i] : (input as Record<string, unknown>)[key]);
       validateValue(q, value);
-      if (encodeQuestionValue(value).length > 4000) throw new Error("Keep this answer under 4,000 characters.");
+      if (questionType(q) !== "task_list" && encodeQuestionValue(value).length > 4000) throw new Error("Keep this answer under 4,000 characters.");
       values[key] = value;
       return encodeQuestionValue(value);
     } catch (error) {
@@ -195,6 +201,7 @@ export function normalizeQuestionAnswers(questions: AgentQuestion[], input: unkn
 }
 export function readableQuestionValue(question: AgentQuestion, value: QuestionValue): string {
   if (value === null) return "";
+  if (questionType(question) === "task_list" && Array.isArray(value)) return value.map((item, index) => `${index + 1}. ${item}`).join("\n");
   const display = (v: QuestionScalar) => question.options?.find(o => optionValue(o) === v)?.label ?? (typeof v === "boolean" ? v ? "Yes" : "No" : String(v));
   const text = Array.isArray(value) ? value.map(display).join(", ") : display(value);
   return text && question.unit ? `${text} ${question.unit}` : text;

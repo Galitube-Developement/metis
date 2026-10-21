@@ -1,10 +1,12 @@
 "use client";
 
 import { RunStatus } from "@/components/run-status";
+import { loadToolPayload } from "@/lib/tool-result-client";
+import { MessageHistoryControl } from "@/components/message-history-control";
 
 import { ArrowLeft, CircleStop, Clock3, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { ToolPart } from "@/lib/store";
+import type { ToolPart, ChatMessage } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown";
@@ -29,6 +31,19 @@ function promptText(tool: ToolPart): string {
 
 export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, sidebarWidth = 0 }: Props) {
   const [liveTool, setLiveTool] = useState<ToolPart | null>(null);
+  const [historyLimit,setHistoryLimit]=useState(24);
+  const [childHistory,setChildHistory]=useState<ChatMessage[]>([]);
+  const [childBefore,setChildBefore]=useState<number|null>(null);
+  const childCursorInitialized=useRef(false);
+  const [detailError,setDetailError]=useState(false);
+  useEffect(()=>{
+    if(toolRef.current.subagent?.chatId || !(toolRef.current.inputUrl || toolRef.current.resultUrl))return;
+    const controller=new AbortController();setReady(false);setDetailError(false);
+    void loadToolPayload((toolRef.current.inputUrl || toolRef.current.resultUrl)!,controller.signal).then(payload=>{
+      if(!controller.signal.aborted){setLiveTool({...toolRef.current,...payload});setReady(true);}
+    }).catch(()=>{if(!controller.signal.aborted){setDetailError(true);setReady(true);}});
+    return()=>controller.abort();
+  },[tool.id,tool.inputUrl,tool.resultUrl,tool.subagent?.chatId]);
   const [leaving, setLeaving] = useState(false);
   const [ready, setReady] = useState(!tool.subagent?.chatId);
   const onBackRef = useRef(onBack);
@@ -50,12 +65,14 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
   useEffect(() => {
     const childChatId = tool.subagent?.chatId;
     if (!childChatId) {
-      setLiveTool(null);
-      setReady(true);
+      if(!(toolRef.current.inputUrl || toolRef.current.resultUrl)){setLiveTool(null);setReady(true);}
       return;
     }
     let cancelled = false;
     let timer: number | undefined;
+    let etag="";
+    const controller=new AbortController();
+    setChildHistory([]);setChildBefore(null);childCursorInitialized.current=false;
     setReady(false);
     const poll = async () => {
       try {
@@ -63,17 +80,20 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
           timer = window.setTimeout(() => void poll(), 1600);
           return;
         }
-        const response = await fetch(`/api/chats/${encodeURIComponent(childChatId)}?messageLimit=50`, { cache: "no-store" });
-        if (!response.ok || cancelled) return;
+        const response = await fetch(`/api/chats/${encodeURIComponent(childChatId)}?messageLimit=10`, { cache: "no-store", signal:controller.signal, headers:etag?{"If-None-Match":etag}:undefined });
+        if(cancelled)return;
+        if(response.status===304){timer=window.setTimeout(()=>void poll(),1600);return;}
+        if(!response.ok)throw new Error("Child history unavailable");
+        etag=response.headers.get("etag") || "";
         const data = await response.json() as {
-          chat?: {
-            runStatus?: string;
-            messages?: Array<{ role?: string; content?: string; createdAt?: string; tools?: ToolPart[] }>;
-          };
+          chat?: { runStatus?: string; messages?: ChatMessage[] };
+          hasEarlierMessages?:boolean; nextMessageBefore?:number;
         };
         const chat = data.chat;
         if (!chat || cancelled) return;
         setReady(true);
+        setChildHistory(previous=>[...new Map([...previous,...(chat.messages || [])].map(message=>[message.id,message])).values()].sort((a,b)=>(a.historyPosition ?? 0)-(b.historyPosition ?? 0)));
+        if(!childCursorInitialized.current){childCursorInitialized.current=true;setChildBefore(data.hasEarlierMessages?data.nextMessageBefore ?? null:null);}
         const active = ["running", "paused", "waiting_for_user", "waiting_input"].includes(chat.runStatus || "");
         const childMessages = (chat.messages || []).flatMap((message, index) => {
           const role = message.role || "assistant";
@@ -100,11 +120,13 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
     void poll();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer) window.clearTimeout(timer);
     };
   }, [tool.subagent?.chatId]);
 
-  const displayedTool = liveTool || tool;
+  const baseTool=liveTool || tool;
+  const displayedTool = childHistory.length ? {...baseTool,subagent:{...baseTool.subagent,messages:childHistory.filter(message=>message.content).map(message=>({role:message.role,text:message.content,timestamp:message.createdAt})),tools:childHistory.flatMap(message=>message.tools || [])}} : baseTool;
   const title = displayedTool.subagent?.title || displayedTool.subagent?.prompt || "Subagent chat";
   const transcript = transcriptFromToolPart(displayedTool as Parameters<typeof transcriptFromToolPart>[0]);
   const prompt = promptText(displayedTool);
@@ -115,7 +137,7 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
     | { type: "message"; role: string; text: string }
     | { type: "tools"; tools: NonNullable<ToolPart["subagent"]>["tools"] }
   > = [];
-  for (const part of transcript.parts) {
+  for (const part of transcript.parts.slice(-historyLimit)) {
     if (part.type === "thinking") {
       viewBlocks.push({ type: "thinking", text: part.text });
       continue;
@@ -171,6 +193,9 @@ export function SubagentChatView({ tool, onBack, onCancel, cancelling = false, s
               </div>
             </div>
           ) : null}
+          <MessageHistoryControl<{chat:{messages:ChatMessage[]};hasEarlierMessages?:boolean;nextMessageBefore?:number}> url={childBefore!==null && tool.subagent?.chatId ? `/api/chats/${encodeURIComponent(tool.subagent.chatId)}?messageLimit=10&messageBefore=${childBefore}` : undefined} label="Load older subagent messages" onLoad={page=>{setChildHistory(previous=>[...page.chat.messages,...previous].filter((message,index,all)=>all.findIndex(item=>item.id===message.id)===index));setChildBefore(page.hasEarlierMessages?page.nextMessageBefore ?? null:null);setHistoryLimit(value=>value+24);}}/>
+          {detailError ? <p role="alert" className="text-sm text-destructive">Could not load subagent history. Close and reopen to retry.</p> : null}
+          {transcript.parts.length>historyLimit ? <button type="button" className="text-xs text-muted-foreground underline" onClick={()=>setHistoryLimit(value=>value+24)}>Load earlier subagent activity</button> : null}
           {viewBlocks.map((block, index) => {
             if (block.type === "thinking") {
               return (

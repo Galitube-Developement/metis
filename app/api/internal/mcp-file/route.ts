@@ -6,6 +6,8 @@ import { getUserAgentCwd } from "@/lib/mcp";
 import { resolveAgentPath } from "@/lib/revert";
 import { saveAttachments } from "@/lib/uploads";
 import { registerProvidedFile } from "@/lib/provided-files";
+import { researchReportAttachment } from "@/lib/research-report";
+import type { StoredAttachment } from "@/lib/uploads";
 import { bearerTokenMatches } from "@/lib/security";
 
 export const runtime = "nodejs";
@@ -47,6 +49,12 @@ function mimeFromName(name: string) {
   } as Record<string, string>)[extension] || "application/octet-stream";
 }
 
+function providedFileResponse(chatId: string, attachment: StoredAttachment) {
+  const url = `/api/uploads/${encodeURIComponent(chatId)}/${encodeURIComponent(attachment.storedName)}`;
+  return Response.json({ attachment, downloadUrl: url, markdown: attachment.mimeType.startsWith("image/")
+    ? `![${attachment.name}](${url})` : `[Download ${attachment.name}](${url})` });
+}
+
 export async function POST(req: Request) {
   if (!authorized(req)) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -61,6 +69,16 @@ export async function POST(req: Request) {
   if (!chat) return Response.json({ error: "Chat not found" }, { status: 404 });
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (body.researchReport !== undefined) {
+    try {
+      const attachment = saveAttachments(chatId, [researchReportAttachment(body.researchReport)], userId).stored[0];
+      if (!attachment) throw new Error("Could not store research report.");
+      registerProvidedFile(chatId, jobId, userId, attachment);
+      return providedFileResponse(chatId, attachment);
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "Could not attach research report." }, { status: 400 });
+    }
+  }
   const requestedPath = typeof body.path === "string" ? body.path.trim() : "";
   if (!requestedPath) return Response.json({ error: "path is required" }, { status: 400 });
 
@@ -90,14 +108,7 @@ export async function POST(req: Request) {
     const attachment = saved.stored[0];
     if (!attachment) throw new Error("Could not store the file.");
     registerProvidedFile(chatId, jobId, userId, attachment);
-    const url = `/api/uploads/${encodeURIComponent(chatId)}/${encodeURIComponent(attachment.storedName)}`;
-    return Response.json({
-      attachment,
-      downloadUrl: url,
-      markdown: attachment.mimeType.startsWith("image/")
-        ? `![${attachment.name}](${url})`
-        : `[Download ${attachment.name}](${url})`,
-    });
+    return providedFileResponse(chatId, attachment);
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not provide file." },

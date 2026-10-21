@@ -4,6 +4,17 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.18 — 2026-10-21
+
+- Open large chats through indexed message and activity pages, load tool results and subagent histories on demand, and keep unrelated requests responsive during legacy history preparation.
+- Speed up note pinning with batched metadata reads, changed-only writes, inherited global pins and a searchable chat picker with fifty choices per page.
+- Collect server metrics in the background, retain fifteen minutes across restarts, and add detailed tooltips and one-, five- and fifteen-minute chart ranges.
+- Review, edit and reorder Deep Research plan steps before approval, then receive the completed report as an attached file.
+- Render inline source badges and Lucide chat icons consistently during streaming, including aligned wrapped text after leading icons.
+- Keep durable global memory guidance consistent across providers and distinguish project message authors.
+- Bound updater log decoding, retained output and legacy update history to avoid loading complete logs into memory.
+- Capture and preserve file-edit snapshots across gateway and remote-client execution for accurate diffs and rollback.
+
 ## v1.0.17 — 2026-10-20
 
 - Open recorded file changes directly in the workspace diff editor, switch between edits, and open the current original file while preserving unsaved drafts.

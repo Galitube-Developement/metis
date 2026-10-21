@@ -1,4 +1,5 @@
-export type FullToolPayload = { input?: string; result?: string };
+import type { ToolPart } from "@/lib/store";
+export type FullToolPayload = Pick<ToolPart,"input"|"result"|"subagent"|"diff">;
 
 /** Fetch only after the user opens a tool. The server enforces chat ownership. */
 export async function loadToolPayload(url: string, signal?: AbortSignal): Promise<FullToolPayload> {
@@ -6,10 +7,12 @@ export async function loadToolPayload(url: string, signal?: AbortSignal): Promis
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) throw new Error("Could not load full tool details");
   const payload = await response.json() as FullToolPayload;
-  if (typeof payload.result !== "string" && typeof payload.input !== "string") throw new Error("Tool details are unavailable");
+  if (typeof payload.result !== "string" && typeof payload.input !== "string" && !payload.subagent && !payload.diff) throw new Error("Tool details are unavailable");
   return {
     ...(typeof payload.input === "string" ? { input: payload.input } : {}),
     ...(typeof payload.result === "string" ? { result: payload.result } : {}),
+    ...(payload.subagent ? { subagent: payload.subagent } : {}),
+    ...(payload.diff ? { diff: payload.diff } : {}),
   };
 }
 

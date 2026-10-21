@@ -203,6 +203,24 @@
   height: auto !important;
 }
 
+/* An icon reserves its own gutter; continuation lines align with the text. */
+.markdown-body .metis-icon-line {
+  display: block;
+  min-width: 0;
+  min-block-size: 1lh;
+}
+
+.markdown-body .metis-icon-indent {
+  position: relative;
+  padding-inline-start: calc(1.1em + 0.375rem);
+}
+
+.markdown-body .metis-leading-icon {
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc((1lh - 1.1em) / 2);
+}
+
 .markdown-body p {
   @apply my-3;
 }
@@ -342,6 +360,10 @@
 
 .markdown-body a {
   @apply underline underline-offset-2;
+}
+
+.markdown-body a[data-source-citation] {
+  text-decoration: none;
 }
 
 .markdown-body blockquote {

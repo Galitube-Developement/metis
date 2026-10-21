@@ -43,7 +43,10 @@ config.yaml.bak*
 /.claude/skills/
 /.codex/skills/
 /.gemini/skills/
-/skills/
+/skills/*
+!/skills/manual/
+/skills/manual/*
+!/skills/manual/deep-research/
 /skills-lock.json
 
 # Local MCP installations and client configuration; keep application gateway source.

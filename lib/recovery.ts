@@ -1,4 +1,4 @@
-import { listJobs } from "@/lib/db-jobs";
+import { getDatabase } from "@/lib/sqlite";
 import { createSnapshot, getLatestSnapshot, SNAPSHOT_SCHEMA_VERSION } from "@/lib/shared-context";
 import type { AgentJob } from "@/lib/jobs";
 import type { SessionSnapshot } from "@/lib/store";
@@ -45,7 +45,17 @@ export function snapshotInterruptedJob(job: AgentJob) {
 
 export function resolveRecoverySnapshot(chatId: string, ownerId?: string): SessionSnapshot | null {
   const snapshot = getLatestSnapshot(chatId, ownerId);
-  const jobs = listJobs(chatId, ownerId);
+  // Only the latest, live and stale-running candidates affect recovery. Do not
+  // deserialize every completed job (and its embedded prompts/tool payloads).
+  const db=getDatabase(),scope=ownerId?"AND user_id=?":"",args=ownerId?[chatId,ownerId]:[chatId];
+  const cutoff=new Date(Date.now()-STALE_RUNNING_MS).toISOString();
+  const select=`SELECT id,chat_id AS chatId,user_id AS userId,status,updated_at AS updatedAt,
+    json_extract(data,\'$.runId\') AS runId,json_extract(data,\'$.agentId\') AS agentId,
+    json_extract(data,\'$.error\') AS error FROM jobs WHERE chat_id=? ${scope}`;
+  const latest=db.prepare(select+" ORDER BY updated_at DESC LIMIT 1").get(...args) as AgentJob|undefined;
+  const live=db.prepare(select+" AND (status IN (\'queued\',\'waiting_input\',\'waiting_for_user\') OR (status=\'running\' AND updated_at>=?)) ORDER BY updated_at DESC LIMIT 1").get(...args,cutoff) as AgentJob|undefined;
+  const stale=db.prepare(select+" AND status=\'running\' AND updated_at<? ORDER BY updated_at DESC LIMIT 1").get(...args,cutoff) as AgentJob|undefined;
+  const jobs=[...new Map([latest,live,stale].filter((job):job is AgentJob=>!!job).map(job=>[job.id,job])).values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
   const latestJob = jobs[0] ?? null;
   const liveJob = jobs.find((job) => {
     if (!LIVE_JOB_STATUSES.has(job.status)) return false;

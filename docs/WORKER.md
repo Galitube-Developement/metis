@@ -47,6 +47,10 @@ assuming the template is active. Worker admission uses the limits actually
 applied to its cgroup, including ancestor limits. Budget shared application,
 worker, gateway/command, and unrelated server workloads together.
 
-Full chat copies are capped per process at 16 entries / 128 MiB of estimated
-snapshot memory; page copies at 128 entries / 32 MiB. Oversized copies are not
-cached, and evicted history remains available from the durable store.
+Full chat copies are capped per process at 8 entries / 64 MiB of estimated
+snapshot memory. Indexed page previews replace the full-history page cache;
+HTTP reads transfer only the selected preview rows. Oversized copies are not
+cached, and evicted history remains available from the durable store. Large
+legacy histories are prepared by one bounded background thread. See
+[LONG-CHAT-PERFORMANCE.md](./LONG-CHAT-PERFORMANCE.md) for the migration and
+performance evidence.

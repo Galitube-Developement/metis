@@ -46,6 +46,7 @@ test("agent memory is private to each agent chat with shared project and owned g
  }});
  assert.match(prompt, /Agent working memory/);
  assert.match(prompt, /scope chat/);
+ assert.match(prompt, /proactively save new, confirmed and durable owner facts/);
  assert.doesNotMatch(prompt, /Chat working memory|Planner private decision/);
  projects.updateProject(project.id, {memoryMode: "project_only"}, owner);
  const isolated = views.loadChatMemoryView(agent.id, owner)!;
@@ -69,6 +70,34 @@ test("ordinary chats retain Chat Memory and Incognito exposes no durable memory"
  assert.deepEqual(views.loadChatMemoryView(incognito.id, owner), {
   chatId: incognito.id, label: "Chat Memory", incognito: true, groups: [],
  });
+});
+
+test("provider prompts route lasting facts globally across ordinary and project chats and honor privacy", () => {
+ const [auth, store, projects, , , prompts] = modules;
+ const owner = auth.createUser("memory-routing-owner", "test-password").id;
+ const project = projects.createProject({name: "Routing project", ownerId: owner});
+ const chats = [
+  store.createChat("Ordinary routing", undefined, owner),
+  store.createChat("Project routing", undefined, owner, undefined, {projectId: project.id}),
+ ];
+ const promptFor = (chatId: string) => prompts.buildProviderPrompt({job: {
+  id: "routing-job", chatId, userId: owner, message: "continue", status: "running",
+  attempts: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+ }});
+ for (const chat of chats) {
+  const prompt = promptFor(chat.id);
+  assert.match(prompt, /proactively save new, confirmed and durable owner facts/);
+  assert.match(prompt, /Specify scope global even inside a project chat/);
+  assert.match(prompt, /explicit opt-out or narrower scope takes precedence/);
+  assert.match(prompt, /Do not save secrets/);
+  assert.doesNotMatch(prompt, /Do not automatically create global memories|global memories only when explicitly requested/);
+ }
+ projects.updateProject(project.id, {memoryMode: "project_only"}, owner);
+ const isolated = promptFor(chats[1].id);
+ assert.match(isolated, /Include global memory is OFF/);
+ assert.doesNotMatch(isolated, /proactively save new, confirmed and durable owner facts/);
+ const incognito = store.createChat("Incognito routing", undefined, owner, undefined, {incognito: true});
+ assert.doesNotMatch(promptFor(incognito.id), /proactively save new, confirmed and durable owner facts|At meaningful milestones or before finishing/);
 });
 
 test("memory endpoint requires an owned authenticated chat and never caches its response", async () => {

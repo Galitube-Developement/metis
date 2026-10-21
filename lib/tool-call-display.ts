@@ -1112,6 +1112,8 @@ export type MergeableChatMessage = {
   tools?: unknown[];
   serverSequence?: number;
   createdAt?: string;
+  eventsUrl?: string;
+  eventOffset?: number;
 };
 
 export function messageLiveWeight(message: MergeableChatMessage) {
@@ -1167,7 +1169,12 @@ export function mergeChatMessages<T extends MergeableChatMessage>(current: T[], 
       );
       return;
     }
-    byId.set(message.id, message);
+    // Retain explicitly loaded earlier activity when a checkpoint supplies only
+    // the compact tail. An older offset is stable while new events append.
+    if(existing.eventOffset!==undefined && message.eventOffset!==undefined && existing.eventOffset<message.eventOffset && message.eventOffset-existing.eventOffset<=(existing.parts?.length || 0)){
+      const count=message.eventOffset-existing.eventOffset;
+      byId.set(message.id,{...message,parts:[...(existing.parts || []).slice(0,count),...(message.parts || [])],tools:[...new Map([...(existing.tools || []),...(message.tools || [])].map(tool=>[(tool as {id:string}).id,tool])).values()],eventsUrl:existing.eventsUrl,eventOffset:existing.eventOffset});
+    }else byId.set(message.id, message);
   });
   return [...byId.values()].sort((a, b) => {
     const sequenceOrder = (a.serverSequence || 0) - (b.serverSequence || 0);

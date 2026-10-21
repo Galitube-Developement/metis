@@ -57,6 +57,11 @@ export type ChatMessage = {
   authorName?: string;
   /** UI-only estimate from the full transcript before deferring raw outputs. */
   contextTokenEstimate?: number;
+  /** UI-only cursors for deferred activity and unusually long message text. */
+  eventsUrl?: string;
+  eventOffset?: number;
+  historyPosition?: number;
+  contentUrl?: string;
   /** UI-only program activity; the agent still receives the original transcript. */
   programEvent?: import("./chat-program-events").ChatProgramEvent;
   questionAnswer?: import("./question-transcript").QuestionAnswerReference;

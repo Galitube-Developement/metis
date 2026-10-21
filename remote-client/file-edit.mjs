@@ -1,3 +1,5 @@
+import path from "node:path";
+
 // Shared by the gateway, its mapped-identity child process and native clients.
 export function normalizeFileEdit(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("File edit arguments must be an object");
@@ -45,7 +47,7 @@ export function applyFileEdits(content, edits) {
   return { content: next, edits: results, replacements: results.reduce((n, edit) => n + edit.replacements, 0) };
 }
 
-export function executeFileEdit(fs, input) {
+export function executeFileEdit(fs, input, captureSnapshot = false) {
   const request = normalizeFileEdit(input);
   const file = fs.realpathSync(request.path);
   const stat = fs.statSync(file);
@@ -78,14 +80,47 @@ export function executeFileEdit(fs, input) {
     }
   }
   return { path: file, replacements: plan.replacements, bytes: Buffer.byteLength(plan.content, "utf8"),
-    changed: wouldChange && !request.dryRun, wouldChange, dryRun: request.dryRun, edits: plan.edits };
+    changed: wouldChange && !request.dryRun, wouldChange, dryRun: request.dryRun, edits: plan.edits,
+    ...(captureSnapshot && wouldChange && !request.dryRun && content.length + plan.content.length <= 2_000_000
+      ? { fileSnapshot: { before: content, after: plan.content } } : {}) };
 }
 
-export function buildFileEditProgram(input) {
+export function buildFileEditProgram(input, captureSnapshot = false) {
   const request = normalizeFileEdit(input);
   return "const fs=require('node:fs');\n" + normalizeFileEdit.toString() + "\n" + applyFileEdits.toString() + "\n" +
     executeFileEdit.toString() + "\nconsole.log(JSON.stringify(executeFileEdit(fs,JSON.parse(Buffer.from('" +
-    Buffer.from(JSON.stringify(request), "utf8").toString("base64") + "','base64').toString('utf8')))));";
+    Buffer.from(JSON.stringify(request), "utf8").toString("base64") + "','base64').toString('utf8'))," + JSON.stringify(captureSnapshot) + ")));";
+}
+
+export function executeFileWrite(fs, input, captureSnapshot = false) {
+  if (typeof input.path !== "string" || !input.path.trim()) throw new Error("Path is required");
+  if (typeof input.content !== "string") throw new Error("Content is required");
+  let before;
+  if (captureSnapshot) {
+    try {
+      const stat = fs.statSync(input.path);
+      if (stat.isFile() && stat.size <= 8_000_000) {
+        const bytes = fs.readFileSync(input.path), text = bytes.toString("utf8");
+        if (!text.includes("\0") && Buffer.from(text, "utf8").equals(bytes)) before = text;
+      }
+    } catch (error) {
+      if (error.code === "ENOENT") before = null;
+    }
+  }
+  fs.mkdirSync(path.dirname(input.path), { recursive: true });
+  fs.writeFileSync(input.path, input.content, "utf8");
+  const changed = before === undefined || before !== input.content;
+  return { path: input.path, bytes: Buffer.byteLength(input.content, "utf8"), changed,
+    ...(captureSnapshot && changed && before !== undefined && !input.content.includes("\0")
+      && (before?.length || 0) + input.content.length <= 2_000_000
+      ? { fileSnapshot: { before, after: input.content } } : {}) };
+}
+
+export function buildFileWriteProgram(input, captureSnapshot = false) {
+  return "const fs=require('node:fs'),path=require('node:path');\n" + executeFileWrite.toString()
+    + "\nconsole.log(JSON.stringify(executeFileWrite(fs,JSON.parse(Buffer.from('"
+    + Buffer.from(JSON.stringify(input), "utf8").toString("base64")
+    + "','base64').toString('utf8'))," + JSON.stringify(captureSnapshot) + ")));";
 }
 
 export const FILE_EDIT_PROPERTIES = {

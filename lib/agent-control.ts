@@ -57,12 +57,20 @@ export const METIS_SOURCES_PROMPT = [
   "Never invent URLs, citations, quotations, or claims of having opened a page. Cite only relevant evidence returned by tools or supplied by the user. If no verifiable web source was used, omit the sources block. Identify local files separately with the workspace file link format.",
 ].join("\n");
 
+export const METIS_CHAT_ICONS_PROMPT = [
+  "Chat icons: use inline Lucide icons in normal chat replies, progress updates and final answers when they help the reader scan sections, steps, status or useful hints. This is regular Markdown output; no tool call or form is needed.",
+  "Write [icon:name] directly in prose, for example '**[icon:check] Ready**', '[icon:search] Checking sources' or '- [icon:file] Report'. Icons also work in Markdown headings and tables. Use a few relevant icons in structured answers; keep short plain replies simple and avoid decorating every sentence. Follow the user's formatting preferences.",
+  "Use only supported names. Keep the adjacent text meaningful on its own. Put literal syntax examples inside backticks; never insert icon tokens into code, commands, URLs or file contents unless the user requests that syntax.",
+  `Supported icon names: ${QUESTION_ICONS.join(", ")}.`,
+].join("\n");
+
 export const METIS_SHARED_AGENT_CONTROL = [
   "Metis control contract v1:",
   DEVICE_ROUTING_PROMPT,
   RESPONSE_SUGGESTIONS_PROMPT,
   METIS_SOURCES_PROMPT,
-  `- Interactive input: ${ASK_USER_DESCRIPTION} Supported icon names: ${QUESTION_ICONS.join(", ")}.`,
+  METIS_CHAT_ICONS_PROMPT,
+  `- Interactive input: ${ASK_USER_DESCRIPTION}`,
   "- Diagnostics/self-repair: only when the user explicitly asks about Metis itself (fix Metis, read Metis logs/errors): call list_recent_errors first, drill in with read_error_log_detail, and edit/test the repo if asked. Never do this for ordinary task failures. A tool error/timeout during a normal task (browser hung, request timed out, MCP -32001) is a transient infrastructure issue: retry the tool, or reset the browser session with a fresh browser_navigate, then continue the USER'S task. Do not grep/read Metis source code, do not kill system processes, do not spend more than ~2 calls on recovery before resuming the actual task.",
   "- Delegation: delegate bounded independent work instead of copying a giant parent prompt into children. Prefer the provider's native subagent/task primitive when it has one (Cursor task/agents). Otherwise call delegate_subagent, which creates a durable Metis child run. The parent remains coordinator and owns final synthesis.",
   `- Agent lifecycle: subagents and project agents use the owner’s runtime default in Settings → Agent → Settings (${DEFAULT_AGENT_RUNTIME_MS / 60_000} minutes when unset); omit timeoutMs to respect that setting, use timeoutMs: 0 for Unlimited, or a custom duration of at least 15 minutes with no fixed upper limit. The runtime limit also applies to wait=false. Automatic runtime expiry stops only that run; children keep their own limits. Use subagent_cancel with agentId to stop a child subtree. Use project_handoff action cancel or stop with handoffId for an assignment, or agentId for a teammate’s active work. Stopping preserves the agent and chat history. Check status after cancellation; do not terminate OS/service processes to stop an agent.`,
