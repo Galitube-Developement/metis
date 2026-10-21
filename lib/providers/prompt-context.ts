@@ -1,4 +1,5 @@
 import { modeById } from "@/lib/modes";
+import { memoryWorkingPrompt } from "@/lib/mcp-core/memory-instructions.mjs";
 import { agentRulesPrompt } from "@/lib/agent-rules";
 import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { projectTeamContextBlock } from "@/lib/project-team";
@@ -169,10 +170,10 @@ export function buildProviderPrompt(input: ProviderPromptContext): string {
     // Layer 3 — Repo Map is metadata/tool-driven, never a repository dump.
     "Repository map: the filesystem/repository is durable external memory. Search/index first, then read only relevant files and symbols; never replay a whole repository into model context.",
     // Layers 4/5 — Retrieved Context + Working Memory.
-    job.incognito || chat?.incognito ? "" : `Keep a small ${agentMemory ? "agent" : "chat"} working memory for decisions, constraints and corrections needed to continue this task. Use add_memory/edit_memory with scope chat at milestones; replace obsolete facts instead of accumulating transcripts. These facts belong only to this ${agentMemory ? "agent’s own chat" : "chat"}. Use global memories only when explicitly requested by the user.`,
+    memoryWorkingPrompt({ agentMemory, incognito, includeGlobal: project?.memoryMode !== "project_only" }),
     pinned ? `Pinned chat context:\n${pinned}` : "",
     projectBlock ? `Project context:\n${projectBlock}` : "",
-    workingBlock ? `${workingBlock}\nThis bounded context belongs only to the current ${agentMemory ? "agent’s own chat" : "chat"} and is reloaded from durable storage. Preserve it across compaction/resume; newer user corrections take precedence. Do not automatically create global memories from normal chat prompts.` : "",
+    workingBlock ? `${workingBlock}\nThis bounded context belongs only to the current ${agentMemory ? "agent’s own chat" : "chat"} and is reloaded from durable storage. Preserve it across compaction/resume; newer user corrections take precedence. This task state is not an account profile and must not be promoted wholesale into global memory.` : "",
     globalBlock,
     // Layer 6 — Checkpoints are injected only by recovery/compaction code.
     // Layer 7 — Raw History stays provider-owned for native sessions; custom

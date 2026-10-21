@@ -1,6 +1,8 @@
 import type { MessagePart, ToolPart } from "@/lib/store";
 import { getDatabase } from "@/lib/sqlite";
 import { editedFileFromTool } from "@/lib/edited-files";
+import { unwrapToolRecord } from "@/lib/tool-call-display";
+import { acknowledgeFileEditSnapshot } from "@/lib/mcp-core/file-edit-snapshots.mjs";
 
 const TOOL_INPUT_MAX_CHARS = 32_000;
 const TOOL_RESULT_MAX_CHARS = 64_000;
@@ -124,9 +126,9 @@ export function persistToolsForMessage(
       (chat_id, message_id, tool_id, path, before_text, after_text, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(chat_id, message_id, tool_id) DO UPDATE SET
-       path = excluded.path,
-       before_text = excluded.before_text,
-       after_text = excluded.after_text,
+       path = COALESCE(excluded.path, tool_revert_snapshots.path),
+       before_text = CASE WHEN ? THEN NULL ELSE COALESCE(excluded.before_text, tool_revert_snapshots.before_text) END,
+       after_text = COALESCE(excluded.after_text, tool_revert_snapshots.after_text),
        updated_at = excluded.updated_at`,
   );
   const now = new Date().toISOString();
@@ -142,7 +144,10 @@ export function persistToolsForMessage(
       snapshot.after ?? null,
       now,
       now,
+      tool.status === "completed" && snapshot.before === undefined
+        && Object.prototype.hasOwnProperty.call(tool.diff, "before") && typeof snapshot.after === "string" ? 1 : 0,
     );
+    acknowledgeFileEditSnapshot(unwrapToolRecord(tool.result)?.fileSnapshotRef, chatId, snapshot);
   }
   return tools.map((tool) => compactToolForPersistence(tool));
 }

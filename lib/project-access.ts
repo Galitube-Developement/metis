@@ -22,16 +22,16 @@ export function canAccessChat(chatId: string, userId?: string) {
   if (!userId) return true; // Internal callers retain the existing unscoped contract.
   // The projection is maintained in the same transaction as chat writes. Reading
   // transcript JSON here makes every sidebar refresh parse every conversation.
-  type AccessRow = {ownerId:string;projectId?:string;incognito:number;existingProject?:string};
+  type AccessRow = {ownerId:string;projectId?:string;incognito:number;existingProject?:string;expiresAt?:string};
   const db = getDatabase();
   const row = db.prepare(`SELECT c.owner_id AS ownerId,c.project_id AS projectId,
-    c.incognito,p.id AS existingProject
+    c.incognito,c.expires_at AS expiresAt,p.id AS existingProject
     FROM chat_list c LEFT JOIN projects p ON p.id=c.project_id WHERE c.id=?`).get(chatId) as AccessRow | undefined
     // Legacy/imported rows may not yet have a projection. Only those rows need JSON.
     ?? db.prepare(`SELECT c.owner_id AS ownerId,json_extract(c.data,'$.projectId') AS projectId,
-      COALESCE(json_extract(c.data,'$.incognito'),0) AS incognito,p.id AS existingProject
+      COALESCE(json_extract(c.data,'$.incognito'),0) AS incognito,json_extract(c.data,'$.expiresAt') AS expiresAt,p.id AS existingProject
       FROM chats c LEFT JOIN projects p ON p.id=json_extract(c.data,'$.projectId') WHERE c.id=?`).get(chatId) as AccessRow | undefined;
-  if(!row) return false;
+  if(!row || row.incognito && row.expiresAt && Date.parse(row.expiresAt)<=Date.now()) return false;
   if(row.existingProject) return !row.incognito && !!projectRole(row.projectId,userId);
   return row.ownerId===userId;
 }

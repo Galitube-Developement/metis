@@ -1,0 +1,32 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { BoundedChatSnapshotCache } from "../lib/client-chat-cache";
+import { chatNavigationSnapshot } from "../lib/chat-navigation-snapshot";
+import type { ChatMessage } from "../lib/store";
+test("reopening a cached long run starts with previews and retains links to every deferred event",()=>{
+ const large="full output".repeat(10000);
+ const tools=Array.from({length:400},(_,i)=>({id:"t"+i,name:"delegate_subagent",status:"completed",result:large,subagent:{agentId:"a"+i,messages:[{role:"assistant",text:large}]}}));
+ const message:ChatMessage={id:"run",role:"assistant",content:"Final result",createdAt:"",tools,parts:tools.map(tool=>({type:"tool",...tool}))};
+ const snapshot={messages:[message],hasEarlierMessages:false};
+ const cache=new BoundedChatSnapshotCache<string,typeof snapshot>();
+ cache.set("chat",snapshot);
+ const saved=cache.get("chat")!;
+ assert.ok(JSON.stringify(saved).length<64*1024);
+ assert.equal(saved.messages[0].tools?.length,24);
+ assert.equal(saved.messages[0].eventOffset,376);
+ assert.match(saved.messages[0].eventsUrl!,/before=376/);
+ assert.equal(saved.messages[0].tools![0].subagent!.messages,undefined);
+ assert.match(saved.messages[0].tools![0].resultUrl!,/tool-result/);
+ assert.equal(snapshot.messages[0].tools!.length,400);
+ assert.equal(snapshot.messages[0].tools![0].result,large);
+ assert.equal(chatNavigationSnapshot(saved,"chat").messages[0].eventOffset,376,"compacting a preview is idempotent");
+});
+test("browser navigation retains at most a small tail with stable history positions",()=>{
+ const messages:ChatMessage[]=Array.from({length:1000},(_,i)=>({id:"m"+i,role:"assistant",content:"x".repeat(30000),createdAt:"",historyPosition:i}));
+ const saved=chatNavigationSnapshot({messages},"chat");
+ assert.ok(saved.messages.length<=10);
+ assert.equal(saved.messages.at(-1)!.id,"m999");
+ assert.ok(saved.messages[0].contentUrl);
+ assert.ok(JSON.stringify(saved).length<256*1024);
+ assert.equal(messages[0].content.length,30000);
+});

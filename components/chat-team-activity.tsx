@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, ChevronRight, MoreHorizontal, MessageSquare, FileText } from "lucide-react";
 import { RunStatus } from "@/components/run-status";
 import { TeamAgentAvatar } from "@/components/team-agent-avatar";
@@ -24,7 +24,19 @@ export function ChatTeamActivity({ activities, agents = [], onOpenChat }: {
   activities: HandoffActivity[]; agents?: ProjectAgent[]; onOpenChat: (chatId: string) => void;
 }) {
   const [detail, setDetail] = useState<{ id: string; view: "prompt" | "reply" } | null>(null);
-  const selected = activities.find(activity => activity.id === detail?.id);
+  const preview = activities.find(activity => activity.id === detail?.id);
+  const [loaded,setLoaded]=useState<HandoffActivity|null>(null);
+  const [loadError,setLoadError]=useState(false);
+  useEffect(()=>{
+    if(!preview?.detailsUrl)return;
+    const controller=new AbortController();setLoaded(null);setLoadError(false);
+    void fetch(preview.detailsUrl,{cache:"no-store",signal:controller.signal}).then(async response=>{
+      if(!response.ok)throw new Error("Details unavailable");
+      const value=await response.json();if(!controller.signal.aborted)setLoaded(value);
+    }).catch(()=>{if(!controller.signal.aborted)setLoadError(true);});
+    return()=>controller.abort();
+  },[preview?.detailsUrl]);
+  const selected=loaded?.id===preview?.id?loaded:preview;
   const received = activities.filter(activity => activity.status === "completed").length;
   const working = activities.filter(activity => activity.status === "queued" || activity.status === "running").length;
   const failures = activities.filter(activity => activity.status === "error").length;
@@ -76,6 +88,7 @@ export function ChatTeamActivity({ activities, agents = [], onOpenChat }: {
           <DialogTitle className="pr-8">{detail?.view === "reply" ? "Reply from" : "Prompt for"} {selected?.recipient}</DialogTitle>
           <DialogDescription>Assigned by {selected?.sender} · {selected ? statuses[selected.status].label : ""}</DialogDescription>
         </DialogHeader>
+        {preview?.detailsUrl && !loaded ? <p role="status" className="text-sm text-muted-foreground">{loadError?"Could not load details. Reopen to retry.":"Loading details…"}</p> : null}
         {selected && detail?.view === "prompt" ? <div className="space-y-4 text-sm [overflow-wrap:anywhere]">
           <p className="whitespace-pre-wrap">{selected.prompt || selected.task}</p>
           {!selected.prompt && selected.context ? <div><p className="mb-1 text-xs font-medium text-muted-foreground">Context</p><p className="whitespace-pre-wrap">{selected.context}</p></div> : null}

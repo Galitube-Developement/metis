@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/lib/config";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/lib/installer-update";
 import { historyEntryFromJob, upsertUpdateHistoryEntry, type UpdateJobRange } from "@/lib/update-history";
 import { clearMaintenanceState, setMaintenanceState } from "@/lib/maintenance-state";
+import { boundInstallerLogLines, readBoundedUpdateJson } from "./installer-update-log";
 
 type UpdateJobResult = {
   tag: string;
@@ -49,7 +50,7 @@ let jobPersistence: Promise<void> = Promise.resolve();
 function persistJob(job: UpdateJob, required = false) {
   // Polling and installer completion may write concurrently. Serialize snapshots
   // so an older write cannot replace a terminal job or truncate the JSON file.
-  const snapshot = { ...job, logs: [...job.logs] };
+  const snapshot = { ...job, logs: boundInstallerLogLines(job.logs) };
   jobPersistence = jobPersistence.catch(() => {}).then(() => writeJobSnapshot(snapshot, required));
   return jobPersistence;
 }
@@ -86,7 +87,7 @@ function parseStoredJob(raw: string): UpdateJob | null {
       ...(parsed.fromCommit !== undefined ? { fromCommit: parsed.fromCommit } : {}),
       ...(parsed.toTag !== undefined ? { toTag: parsed.toTag } : {}),
       ...(parsed.toCommit !== undefined ? { toCommit: parsed.toCommit } : {}),
-      logs: Array.isArray(parsed.logs) ? parsed.logs.map(String) : [],
+      logs: Array.isArray(parsed.logs) ? boundInstallerLogLines(parsed.logs) : [],
     };
   } catch {
     return null;
@@ -95,7 +96,7 @@ function parseStoredJob(raw: string): UpdateJob | null {
 
 async function readPersistedJob(): Promise<UpdateJob | null> {
   try {
-    return parseStoredJob(await readFile(jobStorePath(), "utf8"));
+    return parseStoredJob(await readBoundedUpdateJson(jobStorePath(), 1024 * 1024));
   } catch {
     return null;
   }
@@ -173,7 +174,7 @@ async function startUpdateJob(
     startedByPid: process.pid,
     logs: ["Update job created."],
   };
-  const log = (message: string) => { job.logs.push(`${new Date().toISOString()} ${message}`); };
+  const log = (message: string) => { job.logs = boundInstallerLogLines([...job.logs, `${new Date().toISOString()} ${message}`]); };
 
   await initialize?.(job);
   log("Maintenance mode enabled.");

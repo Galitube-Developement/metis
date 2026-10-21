@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import type { ChatMessage, ToolPart } from "@/lib/store";
+import { editedFileFromTool } from "@/lib/edited-files";
 
 const MAX_ROLLBACK_BYTES = 10 * 1024 * 1024;
 
@@ -90,6 +91,10 @@ function recoverBeforeFromEditInput(tool: ToolPart, current: string | undefined,
 }
 
 export function revertEditTool(tool: ToolPart, agentCwd: string): RevertFileResult {
+  const editedFile = editedFileFromTool(tool);
+  if (editedFile && editedFile.target !== "server") {
+    return { status: "warning", path: editedFile.path, reason: "remote file rollback requires its original device" };
+  }
   const filePath = tool.path ? resolveAgentPath(tool.path, agentCwd) : null;
   const displayPath = tool.path || tool.name;
   if (!filePath) {

@@ -307,7 +307,8 @@ export async function runAlternativeProviderJob(
       existingIndex >= 0 ? tools[existingIndex] : undefined,
       agentCwd,
     );
-    normalizedTool = withEditedFileTracking(normalizedTool, agentCwd, existingIndex >= 0 ? tools[existingIndex] : undefined);
+    normalizedTool = withEditedFileTracking(normalizedTool, agentCwd, existingIndex >= 0 ? tools[existingIndex] : undefined,
+      { userId: job.userId, chatId: job.chatId, jobId: job.id, incognito: Boolean(job.incognito || chat.incognito) });
     if (existingIndex >= 0) {
       tools[existingIndex] = { ...tools[existingIndex], ...normalizedTool };
     } else {

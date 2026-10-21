@@ -27,7 +27,7 @@ import type {
 import { chatUploadDir, resolveUploadPath } from "@/lib/uploads";
 import { BoundedSnapshotCache } from "@/lib/snapshot-cache";
 import { RUNTIME_MODES } from "@/lib/runtime-mode";
-import { currentChatTodos, type ChatTodoState } from "@/lib/chat-todos";
+import { pageIsReady, pageState, readChatPage, rebuildChatPage, syncChatPage } from "@/lib/chat-page-store";
 import { recordChatSyncEvent, type ChatSyncEventKind } from "@/lib/chat-sync";
 
 const now = () => new Date().toISOString();
@@ -50,22 +50,14 @@ function workerProjectionLeaseValid(chatId?: string) {
   ).get(...params));
 }
 // These are optional copies of durable data, bounded independently in every process.
-const chatCache = new BoundedSnapshotCache<string, { updatedAt: string; chat: Chat }>(() => [], 16, 128 * 1024 * 1024);
+const chatCache = new BoundedSnapshotCache<string, { updatedAt: string; revision: number; chat: Chat }>(() => [], 8, 64 * 1024 * 1024);
 const MAX_CHAT_KEYWORDS = 24;
 const MAX_CHAT_KEYWORD_LENGTH = 80;
 const MAX_CHAT_TITLE_LENGTH = 48;
-type ChatPageResult = {
-  chat: Chat;
-  currentTodos: ChatTodoState | null;
-  messageOffset: number;
-  hasEarlierMessages: boolean;
-  totalMessages: number;
-};
-const chatPageCache = new BoundedSnapshotCache<string, { updatedAt: string; page: ChatPageResult }>(() => [], 128, 32 * 1024 * 1024);
 
 export function clearStoreCaches() {
   chatCache.clear();
-  chatPageCache.clear();
+  chatIndexCache = null;
 }
 let chatIndexCache: { key: string; expiresAt: number; chats: ChatIndexEntry[] } | null = null;
 
@@ -276,15 +268,13 @@ function persistAssistantMessage(chat: Chat, index: number, message: ChatMessage
   // only the message and timestamp, so refresh the cache from that canonical
   // row instead of putting the worker's stale pre-run Chat object back.
   const persisted = rowChat(db.prepare("SELECT data FROM chats WHERE id = ?").get(chat.id)) || chat;
+  syncChatPage(db, persisted, { message, position: index });
   recordMessageActivity(chat.id, previous ? [previous] : [], [message]);
   syncChatList(persisted);
   chatIndexCache = null;
   Object.assign(persisted, getChatActivity(chat.id));
   recordAccountUsage(chatActor(chat) || persisted.ownerId, message);
-  chatCache.set(chat.id, { updatedAt, chat: persisted });
-  for (const key of chatPageCache.keys()) {
-    if (key.includes(`:${chat.id}:`)) chatPageCache.delete(key);
-  }
+  chatCache.set(chat.id, { updatedAt, revision:pageState(db,chat.id)?.revision ?? 0, chat: persisted });
   recordChatSyncEvent({
     ownerId: persisted.ownerId,
     chatId: chat.id,
@@ -322,7 +312,8 @@ export function listChatsForUser(
 ): ChatIndexEntry[] {
   cleanupExpiredIncognitoChats();
   const db = getDatabase();
-  const cacheKey = `${ownerId || "*"}:${options.includeArchived ? "all" : "active"}`;
+  const dataVersion=JSON.stringify(db.prepare("PRAGMA data_version").get());
+  const cacheKey = `${ownerId || "*"}:${options.includeArchived ? "all" : "active"}:${dataVersion}`;
   if (chatIndexCache?.key === cacheKey && chatIndexCache.expiresAt > Date.now()) {
     return ownerId ? chatIndexCache.chats.filter(chat => canAccessChat(chat.id,ownerId)).map(chat => chatIndexForUser(chat,ownerId)) : chatIndexCache.chats;
   }
@@ -472,8 +463,9 @@ export function getChat(id: string, ownerId?: string): Chat | null {
     : db.prepare("SELECT updated_at AS updatedAt FROM chats WHERE id = ?").get(id);
   const updatedAt = (identity as { updatedAt?: string } | undefined)?.updatedAt;
   if (!updatedAt) return null;
+  const revision=pageState(db,id)?.revision ?? 0;
   const cached = chatCache.get(id);
-  if (cached && cached.updatedAt === updatedAt) {
+  if (cached && cached.updatedAt === updatedAt && cached.revision===revision) {
     if (cached.chat.incognito && cached.chat.expiresAt && new Date(cached.chat.expiresAt).getTime() <= Date.now()) {
       getDatabase().prepare("DELETE FROM chats WHERE id = ?").run(id);
       chatCache.delete(id);
@@ -492,63 +484,35 @@ export function getChat(id: string, ownerId?: string): Chat | null {
     chatIndexCache = null;
     return null;
   }
-  if (chat && updatedAt) chatCache.set(id, { updatedAt, chat });
+  if (chat && updatedAt) chatCache.set(id, { updatedAt, revision, chat });
   return chat ? chatForUser({ ...chat, ...getChatActivity(id) },ownerId) : null;
 }
 
 export function getChatPage(
-  id: string,
-  ownerId: string | undefined,
-  messageLimit: number,
-  messageOffset: number,
+  id: string, ownerId: string | undefined, messageLimit: number, messageOffset: number, before?: number,
 ) {
   if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id,ownerId)) return null;
-  const db = getDatabase();
-  const identity = ownerId
-    ? db.prepare(
-        "SELECT updated_at AS updatedAt FROM chats WHERE id = ?",
-      ).get(id) as { updatedAt?: string } | undefined
-    : db.prepare(
-        "SELECT updated_at AS updatedAt FROM chats WHERE id = ?",
-      ).get(id) as { updatedAt?: string } | undefined;
-  if (!identity?.updatedAt) return null;
-  const pageKey = `${ownerId || "*"}:${id}:${messageLimit}:${messageOffset}`;
-  const cachedPage = chatPageCache.get(pageKey);
-  if (cachedPage?.updatedAt === identity.updatedAt) {
-    return { ...cachedPage.page, chat: { ...cachedPage.page.chat, ...getChatActivity(id) } };
+  const db=getDatabase();
+  // Synchronous internal callers retain their contract. HTTP callers await
+  // ensureChatPage first, which performs large legacy recovery off-thread.
+  if(!pageIsReady(db,id)) {
+    const size=db.prepare("SELECT length(CAST(data AS BLOB)) AS bytes FROM chats WHERE id=?").get(id) as {bytes:number}|undefined;
+    if(!size || size.bytes>64*1024)return null;
+    rebuildChatPage(db,id);
   }
-  // JSON1 re-parsed the complete transcript for metadata, count, iteration and
-  // aggregation. Read once and slice in JS; raw messages remain unchanged.
-  const row = ownerId
-    ? db.prepare("SELECT data FROM chats WHERE id = ?").get(id)
-    : db.prepare("SELECT data FROM chats WHERE id = ?").get(id);
-  try {
-    const full = rowChat(row);
-    if (!full) return null;
-    if (full.incognito && full.expiresAt && new Date(full.expiresAt).getTime() <= Date.now()) return null;
-    const totalMessages = full.messages.length;
-    const end = Math.max(0, totalMessages - messageOffset);
-    const start = Math.max(0, end - messageLimit);
-    const chat: Chat = chatForUser({ ...full, ...getChatActivity(id), updatedAt: identity.updatedAt, messages: full.messages.slice(start, end) },ownerId);
-    const page: ChatPageResult = {
-      chat,
-      currentTodos: currentChatTodos(full.messages),
-      messageOffset,
-      hasEarlierMessages: start > 0,
-      totalMessages,
-    };
-    chatPageCache.set(pageKey, { updatedAt: identity.updatedAt, page });
-    return page;
-  } catch {
-    return null;
-  }
+  const page=readChatPage(db,id,messageLimit,messageOffset,before);
+  if(!page)return null;
+  if(page.chat.incognito && page.chat.expiresAt && Date.parse(page.chat.expiresAt)<=Date.now())return null;
+  return {...page,chat:chatForUser({...page.chat,...getChatActivity(id)},ownerId)};
 }
 
-function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; syncKind?: ChatSyncEventKind }) {
+function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; syncKind?: ChatSyncEventKind; pageChange?: { message?: ChatMessage; position?: number; metadataOnly?: boolean } }) {
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
-  const before = rowChat(getDatabase().prepare("SELECT data FROM chats WHERE id = ?").get(chat.id));
+  const before = options?.pageChange?.metadataOnly
+    ? rowChat(getDatabase().prepare("SELECT json_set(data,\'$.messages\',json(\'[]\')) AS data FROM chats WHERE id = ?").get(chat.id))
+    : rowChat(getDatabase().prepare("SELECT data FROM chats WHERE id = ?").get(chat.id));
   const actor = chatActor(chat);
   if (actor && !canAccessChat(chat.id, actor)) throw new Error("Project chat access has been revoked.");
   const updated = { ...sharedChatForStorage(chat,before), ...(options?.touchUpdatedAt === false ? {} : { updatedAt: now() }) };
@@ -578,7 +542,8 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
       updated.createdAt,
       updated.updatedAt,
     );
-  recordMessageActivity(updated.id, before?.messages ?? [], updated.messages);
+  syncChatPage(getDatabase(), updated, options?.pageChange);
+  if(!options?.pageChange?.metadataOnly) recordMessageActivity(updated.id, before?.messages ?? [], updated.messages);
   recordAttentionActivity(updated.id, before, updated);
   Object.assign(updated, getChatActivity(updated.id));
   syncChatList(updated);
@@ -588,10 +553,7 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
     kind: options?.syncKind || "updated",
     chatUpdatedAt: updated.updatedAt,
   });
-  chatCache.set(updated.id, { updatedAt: updated.updatedAt, chat: updated });
-  for (const key of chatPageCache.keys()) {
-    if (key.includes(`:${updated.id}:`)) chatPageCache.delete(key);
-  }
+  chatCache.set(updated.id, { updatedAt: updated.updatedAt, revision:pageState(getDatabase(),updated.id)?.revision ?? 0, chat: updated });
   chatIndexCache = null;
   return chatForUser(updated,actor);
 }
@@ -916,7 +878,7 @@ export function updateChat(
     }
     if (patch.badge === null && (patch.readRevision === undefined || patch.readRevision >= getChatActivity(id).activityRevision)) delete next.badge;
     else if (patch.badge) next.badge = patch.badge;
-    return saveChatInternal(next, { touchUpdatedAt: patch.touchUpdatedAt !== false });
+    return saveChatInternal(next, { touchUpdatedAt: patch.touchUpdatedAt !== false, pageChange: { metadataOnly: true } });
   });
 }
 
@@ -954,9 +916,6 @@ export function deleteChat(id: string, ownerId?: string) {
     if (deleted) {
       chatCache.delete(id);
       chatIndexCache = null;
-      for (const key of chatPageCache.keys()) {
-        if (key.includes(`:${id}:`)) chatPageCache.delete(key);
-      }
     }
     return deleted;
   });
@@ -1151,7 +1110,7 @@ export function appendMessageInTransaction(
   if (message.role === "user") {
     chat.lastMessageSent = message.createdAt || chat.messages.at(-1)?.createdAt || now();
   }
-  return saveChatInternal(chat);
+  return saveChatInternal(chat, { pageChange: { message: chat.messages.at(-1)!, position: chat.messages.length - 1 } });
 }
 
 export function appendMessage(

@@ -5,7 +5,7 @@ import type { ProjectHandoff } from "@/lib/project-team-types";
 const programHandoffId = /^handoff:([\da-f-]{36}):(sent|assignment|result:(?:sender|recipient))$/i;
 
 /** UI metadata comes from owned durable records, never from matching user prose. */
-export function withChatProgramEvents(messages: ChatMessage[], chatId: string, ownerId: string): ChatMessage[] {
+export function withChatProgramEvents(messages: ChatMessage[], chatId: string, ownerId: string, includeDetails = false): ChatMessage[] {
   if (!messages.length) return messages;
   const db = getDatabase();
   const userMessageIds = messages.filter(message => message.role === "user").map(message => message.id);
@@ -22,7 +22,7 @@ export function withChatProgramEvents(messages: ChatMessage[], chatId: string, o
   const handoffs = new Map<string, ProjectHandoff & { recipientChatId?: string; prompt?: string }>();
   if (ids.length) {
     const rows = db.prepare(
-      `SELECT h.data, recipient.chat_id AS recipientChatId, json_extract(j.data, '$.message') AS prompt
+      `SELECT ${includeDetails ? "h.data" : "json_set(json_remove(h.data,'$.context','$.result','$.error'),'$.context',substr(json_extract(h.data,'$.context'),1,512),'$.result',substr(json_extract(h.data,'$.result'),1,512),'$.error',substr(json_extract(h.data,'$.error'),1,512))"} AS data, recipient.chat_id AS recipientChatId, ${includeDetails ? "json_extract(j.data, '$.message')" : "substr(json_extract(j.data, '$.message'),1,512)"} AS prompt
        FROM project_handoffs h
        LEFT JOIN project_agents recipient ON recipient.id = json_extract(h.data, '$.recipientAgentId')
          AND recipient.project_id = h.project_id AND recipient.owner_id = h.owner_id
@@ -59,6 +59,7 @@ export function withChatProgramEvents(messages: ChatMessage[], chatId: string, o
       context: handoff.context,
       result: handoff.result,
       error: handoff.error,
+      ...(!includeDetails ? { detailsUrl: `/api/chats/${encodeURIComponent(chatId)}/handoff?handoffId=${encodeURIComponent(handoff.id)}` } : {}),
     } } };
   });
 }

@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { boundInstallerLogLines, readBoundedUpdateJson } from "./installer-update-log";
 import path from "node:path";
 import { config } from "@/lib/config";
 import { formatUpdateInstalledLabel, shortGitSha } from "@/lib/update-display";
@@ -83,7 +84,7 @@ function parseHistoryEntry(value: unknown): UpdateHistoryEntry | null {
     ...(parsed.fromCommit !== undefined ? { fromCommit: parsed.fromCommit } : {}),
     ...(parsed.toTag !== undefined ? { toTag: parsed.toTag } : {}),
     ...(parsed.toCommit !== undefined ? { toCommit: parsed.toCommit } : {}),
-    logs: Array.isArray(parsed.logs) ? parsed.logs.map(String) : [],
+    logs: Array.isArray(parsed.logs) ? boundInstallerLogLines(parsed.logs) : [],
   };
 }
 
@@ -106,16 +107,16 @@ function historyFromStoredJob(raw: string): UpdateHistoryEntry | null {
 
 export async function readUpdateHistory(dataDir = config.dataDir): Promise<UpdateHistoryEntry[]> {
   try {
-    const parsed = JSON.parse(await readFile(historyPath(dataDir), "utf8")) as { entries?: unknown };
+    const parsed = JSON.parse(await readBoundedUpdateJson(historyPath(dataDir), 8 * 1024 * 1024)) as { entries?: unknown };
     if (Array.isArray(parsed.entries)) {
-      const entries = parsed.entries.map(parseHistoryEntry).filter((entry): entry is UpdateHistoryEntry => Boolean(entry));
+      const entries = parsed.entries.slice(0, UPDATE_HISTORY_LIMIT).map(parseHistoryEntry).filter((entry): entry is UpdateHistoryEntry => Boolean(entry));
       if (entries.length) return entries;
     }
   } catch {
     // Fall through to the last persisted job so the most recent failure is visible.
   }
   try {
-    const recovered = historyFromStoredJob(await readFile(jobStorePath(dataDir), "utf8"));
+    const recovered = historyFromStoredJob(await readBoundedUpdateJson(jobStorePath(dataDir), 1024 * 1024));
     return recovered ? [recovered] : [];
   } catch {
     return [];
@@ -160,6 +161,6 @@ export function historyEntryFromJob(job: {
     fromCommit: job.fromCommit ?? null,
     toTag: job.toTag ?? job.result?.tag ?? null,
     toCommit: job.toCommit ?? job.result?.commit ?? null,
-    logs: Array.isArray(job.logs) ? job.logs.map(String) : [],
+    logs: Array.isArray(job.logs) ? boundInstallerLogLines(job.logs) : [],
   };
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import { executeFileEdit } from "./file-edit.mjs";
+import { executeFileEdit, executeFileWrite } from "./file-edit.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,15 +173,10 @@ export function startRemoteClient({ config: suppliedConfig, configPath, onEvent 
       return { path: file, content: fs.readFileSync(file, "utf8").slice(0, limit) };
     }
     if (action === "write_file") {
-      const file = String(params.path || "");
-      if (!file) throw new Error("Path is required");
-      if (typeof params.content !== "string") throw new Error("Content is required");
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, params.content, "utf8");
-      return { path: file, bytes: Buffer.byteLength(params.content, "utf8") };
+      return executeFileWrite(fs, params, true);
     }
     if (action === "edit_file" || action === "edit_file_batch") {
-      return executeFileEdit(fs, params);
+      return executeFileEdit(fs, params, true);
     }
     if (action === "delete_file") {
       const file = String(params.path || "");

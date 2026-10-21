@@ -37,7 +37,10 @@ test("large repeated outputs load on demand without modifying stored history or 
 test("structured cards, small outputs and special-character IDs retain their behavior", () => {
   for (const kind of ["plan", "canvas", "note", "memory", "automation", "todo", "subagent"] as const) {
     const card: ChatMessage = { ...message, tools: [{ ...message.tools![0], kind }], parts: undefined };
-    assert.equal(compactChatPageMessages([card], "chat")[0].tools![0].result, result);
+    const preview=compactChatPageMessages([card], "chat")[0].tools![0];
+    assert.ok(preview.resultUrl);
+    assert.ok(preview.result!.length<2048);
+    assert.equal(card.tools![0].result,result);
   }
   const small = { ...message, tools: [{ ...message.tools![0], result: "small" }], parts: undefined };
   assert.equal(compactChatPageMessages([small], "chat")[0].tools![0].resultUrl, undefined);

@@ -1,4 +1,5 @@
 import { modeById } from "@/lib/modes";
+import { memoryWorkingPrompt } from "@/lib/mcp-core/memory-instructions.mjs";
 import { projectModelOverride, validateProjectModelSelection } from "@/lib/project-model-server";
 import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
@@ -203,6 +204,9 @@ function extractEditMetadata(
 ): Pick<ToolPart, "path" | "diff"> {
   if (classifyTool(name) !== "edit") return {};
   const input = asRecord(args);
+  const target = typeof input.target === "string" ? input.target
+    : input.client_id || input.clientId ? "client" : "server";
+  if (target !== "server" && target !== "local") return {};
   const rawPath = [input.path, input.filePath, input.filename]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (!rawPath) return {};
@@ -1002,7 +1006,7 @@ export async function runQueuedJob(job: AgentJob) {
         : [
                   project?.memoryMode === "project_only"
                     ? "Include global memory is OFF: only project memory tools are allowed; global memory and personal context-hub reads and writes are forbidden."
-                    : "Personal context: retrieve the smallest relevant slice from the owner's shared context hub. The system selectively captures clear first-person profile facts and interaction preferences; ordinary requests, temporary state, secrets, and tool output are not auto-saved. Use context_remember for durable facts discovered through tools or for an explicit correction. Never dump the context hub or memory list into the prompt.",
+                    : "Personal context: retrieve only the smallest relevant slice from the owner's shared context hub. Durable memories are saved through visible memory tools following the shared memory routing instructions, not by copying every user prompt. Never dump the context hub or memory list into the prompt.",
           ]),
       ...(job.incognito || chat.incognito ? [] : [
       "When referring to an existing or newly created plan/canvas, include its exact Markdown link using workspace://plan/<id> or workspace://canvas/<id>.",
@@ -1010,7 +1014,7 @@ export async function runQueuedJob(job: AgentJob) {
       "Use list_notes or search_notes when you need note IDs before linking them.",
       "To create an automation, call create_automation with name, prompt, and schedule (kind: once | interval | days | monthly). Recurring minute schedules must be at least 60. Use list_automations, update_automation, pause_automation, resume_automation, and delete_automation for existing ones. Do not claim an automation was created without a completed tool call. When referring to an automation, include its exact Markdown link using automation://<id>, for example [Name](automation://id).",
       "Workspace rule: create or edit a plan/canvas only when the active mode and user request allow it. Never claim a workspace exists until the tool result or persisted workspace confirms it.",
-      "Memories are not auto-filled from every prompt. Use list_memories only when a task genuinely needs memory inspection; use add_memory/edit_memory only when the user explicitly asks to remember something, or for a durable fact learned outside the chat. Never bulk-load memories into context.",
+      memoryWorkingPrompt({ agentMemory: project?.mode === "agents", includeGlobal: project?.memoryMode !== "project_only" }),
       "To edit an existing workspace, call edit_plan or edit_canvas with its exact id and the changed title/content. Do not create a duplicate when the user asked to edit.",
       chatMetadataPrompt(chat, Boolean(job.incognito || chat.incognito)),
       job.automationId
@@ -1182,7 +1186,8 @@ export async function runQueuedJob(job: AgentJob) {
         ...(resultText ? { result: resultText } : {}),
         ...(todos?.length ? { todos } : {}),
         ...(subagent ? { subagent } : {}),
-      }), agentCwd);
+      }), agentCwd, existingTool,
+        { userId: job.userId, chatId: job.chatId, jobId: job.id, incognito: Boolean(job.incognito || chat.incognito) });
       const existingToolIndex = tools.findIndex((tool) => tool.id === stableId);
       if (existingToolIndex >= 0) {
         tools[existingToolIndex] = { ...tools[existingToolIndex], ...nextTool };

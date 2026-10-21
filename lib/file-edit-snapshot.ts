@@ -2,11 +2,22 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { editedFileFromTool } from "@/lib/edited-files";
 import { resolveAgentPath } from "@/lib/revert";
+import { innerToolName, unwrapToolRecord } from "@/lib/tool-call-display";
+import { readFileEditSnapshot, type FileSnapshotScope } from "@/lib/mcp-core/file-edit-snapshots.mjs";
 import type { ToolPart } from "@/lib/store";
 
 /** Resolve relative edits against the actual per-run workspace before persistence/SSE. */
-export function withEditedFileTracking(tool: ToolPart, agentCwd: string, previous?: ToolPart): ToolPart {
+export function withEditedFileTracking(tool: ToolPart, agentCwd: string, previous?: ToolPart, scope?: FileSnapshotScope): ToolPart {
   if (tool.status !== "completed") return tool;
+  const result = unwrapToolRecord(tool.result);
+  const saved = readFileEditSnapshot(result?.fileSnapshotRef, scope);
+  if (saved) {
+    tool = { ...tool, kind: "edit", path: saved.path, diff: saved.diff,
+      editedFile: { path: saved.path, target: saved.target } };
+  } else if (result?.fileSnapshotRef && previous?.diff) {
+    // The staging receipt may already have been acknowledged by a checkpoint.
+    tool = { ...tool, diff: previous.diff };
+  }
   const editedFile = editedFileFromTool({ ...previous, ...tool, input: tool.input ?? previous?.input, path: tool.path ?? previous?.path });
   return { ...tool, editedFile: editedFile ? {
     ...editedFile,
@@ -15,15 +26,7 @@ export function withEditedFileTracking(tool: ToolPart, agentCwd: string, previou
 }
 
 function parseToolInput(value: string | undefined) {
-  if (!value) return undefined;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object"
-      ? parsed as Record<string, unknown>
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return unwrapToolRecord(value);
 }
 
 function localFileOperation(name: string) {
@@ -38,9 +41,10 @@ function readSnapshot(rawPath: string, agentCwd: string) {
   const filePath = resolveAgentPath(rawPath, agentCwd);
   if (!filePath) return undefined;
   try {
-    return readFileSync(filePath, "utf8");
-  } catch {
-    return undefined;
+    return { before: readFileSync(filePath, "utf8") };
+  } catch (error) {
+    // A missing file is a known creation; unreadable/out-of-scope is unknown.
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { before: undefined } : undefined;
   }
 }
 
@@ -50,30 +54,31 @@ export function withLocalFileEditSnapshot(
   previous: ToolPart | undefined,
   agentCwd: string,
 ): ToolPart {
-  const operation = localFileOperation(tool.name || previous?.name || "");
+  const input = parseToolInput(tool.input) ?? parseToolInput(previous?.input);
+  const name = innerToolName(tool.name || previous?.name || "", input);
+  const operation = localFileOperation(name);
   if (!operation) return tool;
 
-  const input = parseToolInput(tool.input) ?? parseToolInput(previous?.input);
-  const target = typeof input?.target === "string" ? input.target : "server";
+  const target = typeof input?.target === "string" ? input.target
+    : input?.client_id || input?.clientId ? "client" : "server";
   if (target !== "server" && target !== "local") return tool;
 
-  const rawPath = [tool.path, previous?.path, input?.path, input?.filePath, input?.filename]
+  const rawPath = [tool.path, previous?.path, input?.path, input?.filePath, input?.file_path, input?.filename]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (!rawPath) return tool;
 
+  const captured = tool.diff && Object.prototype.hasOwnProperty.call(tool.diff, "before") ? tool.diff
+    : previous?.diff && Object.prototype.hasOwnProperty.call(previous.diff, "before") ? previous.diff : undefined;
   if (tool.status === "running") {
-    return {
-      ...tool,
-      path: rawPath,
-      diff: { before: previous?.diff?.before ?? readSnapshot(rawPath, agentCwd) },
-    };
+    if (tool.phase === "preparing") return tool;
+    const before = captured ?? readSnapshot(rawPath, agentCwd);
+    return before ? { ...tool, path: rawPath, diff: before } : tool;
   }
 
-  if (tool.status !== "completed" || !previous?.diff) return tool;
-  const after = operation === "delete" ? undefined : readSnapshot(rawPath, agentCwd);
-  return {
-    ...tool,
-    path: rawPath,
-    diff: { ...previous.diff, after },
-  };
+  if (tool.status !== "completed" || !captured) return tool;
+  if (typeof tool.diff?.after === "string" || typeof previous?.diff?.after === "string") {
+    return { ...tool, path: rawPath, diff: { ...previous?.diff, ...tool.diff } };
+  }
+  const after = operation === "delete" ? undefined : readSnapshot(rawPath, agentCwd)?.before;
+  return { ...tool, path: rawPath, diff: { ...captured, after } };
 }

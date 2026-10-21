@@ -1,15 +1,17 @@
-import { compactChatPageMessages } from "@/lib/chat-page-payload";
+import { ensureChatPage, updateChatOffThread } from "@/lib/chat-page-loader";
+import { getDatabase } from "@/lib/sqlite";
+import { randomUUID, createHash } from "node:crypto";
+const pageBootId=randomUUID();
+import { canAccessChat } from "@/lib/project-access";
 import { withChatProgramEvents } from "@/lib/chat-program-events-server";
 import { archiveProjectAgent, getProjectAgentForChat } from "@/lib/project-team";
 import { materializeQueuedUploads, type QueuedUploadMessage } from "@/lib/queued-uploads";
-import { getChat } from "@/lib/db-store";
 import { getProject } from "@/lib/projects";
 import { projectModelOverride } from "@/lib/project-model-server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import {
   deleteChat,
   getChatPage,
-  updateChat,
   type BrowserContext,
   type PendingChatQuestion,
   type WorkspaceItem,
@@ -40,9 +42,23 @@ export async function GET(req: Request, { params }: Params) {
   const messageOffset = Number.isFinite(requestedOffset)
     ? Math.max(0, Math.floor(requestedOffset))
     : 0;
-  const page = getChatPage(id, ownerId, messageLimit, messageOffset);
-  if (!page) return Response.json({ error: "Not found" }, { status: 404 });
-  return Response.json({ ...page, chat: { ...page.chat, messages: withChatProgramEvents(compactChatPageMessages(page.chat.messages, id), id, ownerId) } });
+  if (!canAccessChat(id,ownerId)) return Response.json({ error: "Not found" }, { status: 404 });
+  try { await ensureChatPage(id); } catch { return Response.json({ error: "History is being prepared. Please retry." }, { status: 503, headers: { "Retry-After": "1" } }); }
+  // Both local writes and commits from other connections invalidate this token,
+  // including job/handoff status changes that do not alter chat.updatedAt.
+  const db=getDatabase();
+  const version=JSON.stringify([db.prepare("PRAGMA data_version").get(),db.prepare("SELECT total_changes() AS changes").get()]);
+  const etag=JSON.stringify(createHash("sha256").update(pageBootId+":"+id+":"+searchParams.toString()+":"+version).digest("base64url"));
+  if(req.headers.get("if-none-match")===etag)return new Response(null,{status:304,headers:{ETag:etag,"Cache-Control":"private, no-store"}});
+  const beforeValue=searchParams.get("messageBefore");
+  const before=beforeValue!==null && Number.isSafeInteger(Number(beforeValue)) && Number(beforeValue)>=0 ? Number(beforeValue) : undefined;
+  const page = getChatPage(id, ownerId, messageLimit, messageOffset,before);
+  if (!page) {
+    const state=getDatabase().prepare("SELECT revision,ready_revision FROM chat_page_state WHERE chat_id=?").get(id) as {revision:number;ready_revision:number}|undefined;
+    if(state && state.revision!==state.ready_revision)return Response.json({error:"Chat changed while loading. Retry shortly."},{status:503,headers:{"Retry-After":"1"}});
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  return Response.json({ ...page, chat: { ...page.chat, messages: withChatProgramEvents(page.chat.messages, id, ownerId) } }, { headers: { "Cache-Control": "private, no-store", ETag: etag } });
 }
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -101,7 +117,7 @@ export async function PATCH(req: Request, { params }: Params) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!getChat(id, ownerId)) return Response.json({ error: "Not found" }, { status: 404 });
+  if (!canAccessChat(id, ownerId)) return Response.json({ error: "Not found" }, { status: 404 });
   try {
     body.queuedMessages = materializeQueuedUploads(id, body.queuedMessages, ownerId);
   } catch (error) {
@@ -128,8 +144,9 @@ export async function PATCH(req: Request, { params }: Params) {
   if (sessionState) delete sessionState.goalOriginChatId;
   let chat;
   try {
-    chat = updateChat(
+    chat = await updateChatOffThread(
       id,
+      ownerId,
       {
         ...body,
         sessionState,
@@ -139,7 +156,6 @@ export async function PATCH(req: Request, { params }: Params) {
         // move a chat in the activity-sorted sidebar.
         touchUpdatedAt: body.touchUpdatedAt === true,
       },
-      ownerId,
     );
   } catch (error) {
     if (error instanceof Error && error.name === "WorkspaceNameConflict") {

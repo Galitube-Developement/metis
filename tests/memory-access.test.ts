@@ -56,6 +56,29 @@ test("project chats default to project memory and can explicitly choose global",
  assert.equal((await call(chat.id,{action:"edit",scope:"global",id:global.body.memory.id,content:"Updated preference"})).status,200);
  assert.equal((await call(chat.id,{action:"delete",scope:"global",id:global.body.memory.id})).status,200);
 });
+test("durable owner facts cross chats while task state stays local and corrections preserve identity", async () => {
+ const {project,chat} = fixture();
+ const otherChat = m[0].createChat("Unrelated future chat",undefined,owner);
+ const fact = await call(chat.id,{action:"add",scope:"global",content:"The owner normally develops with Cursor"});
+ const task = await call(chat.id,{action:"add",scope:"chat",content:"Current task is waiting for a preview build"});
+ assert.equal(fact.status,200);
+ assert.equal(task.status,200);
+ const future = await call(otherChat.id,{action:"list",scope:"global"});
+ assert.equal(future.status,200);
+ assert(future.body.memories.some((x:{id:string})=>x.id===fact.body.memory.id));
+ assert(!future.body.memories.some((x:{content:string})=>x.content===task.body.memory.content));
+ const otherLocal = await call(otherChat.id,{action:"list",scope:"chat"});
+ assert.equal(otherLocal.status,200);
+ assert(!otherLocal.body.memories.some((x:{id:string})=>x.id===task.body.memory.id));
+ const corrected = await call(otherChat.id,{action:"edit",scope:"global",id:fact.body.memory.id,content:"The owner normally develops with Cursor and uses VS Code for reviews"});
+ assert.equal(corrected.status,200);
+ const originalView = await call(chat.id,{action:"list",scope:"global"});
+ const matches = originalView.body.memories.filter((x:{id:string})=>x.id===fact.body.memory.id);
+ assert.equal(matches.length,1);
+ assert.equal(matches[0].content,corrected.body.memory.content);
+ assert.deepEqual(m[1].listProjectMemories(project.id,owner),[]);
+});
+
 test("switch off denies every global action, preserves globals, and permits project CRUD", async () => {
  const {project,chat} = fixture("project_only");
  const global = m[0].createMemory("Secret global fact",[],owner);

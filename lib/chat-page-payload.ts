@@ -6,7 +6,6 @@ import { editedFileFromTool } from "@/lib/edited-files";
 const INLINE_PAYLOAD_LIMIT = 2_048;
 const PREVIEW_LENGTH = 256;
 const pageCache = new WeakMap<ChatMessage[], { chatId: string; messages: ChatMessage[] }>();
-const structuredKinds = new Set(["plan", "canvas", "note", "memory", "automation", "todo", "subagent"]);
 
 /** Keep JSON arguments valid so paths/targets and native tool captions still work. */
 function previewInput(input: string): string {
@@ -24,26 +23,29 @@ export function compactChatPageMessages(messages: ChatMessage[], chatId: string)
     const compact = <T extends ToolPart>(tool: T): T => {
       const deferResult = typeof tool.result === "string" && tool.result.length > INLINE_PAYLOAD_LIMIT;
       const deferInput = typeof tool.input === "string" && tool.input.length > INLINE_PAYLOAD_LIMIT;
-      if (!tool.id || (!deferResult && !deferInput)) return tool;
+      const deferNested = Boolean(tool.subagent?.messages?.length || tool.subagent?.tools?.length || tool.subagent?.thinking || (tool.subagent?.prompt?.length || 0)>INLINE_PAYLOAD_LIMIT || (tool.subagent?.title?.length || 0)>512 || (tool.diff?.before?.length || 0) + (tool.diff?.after?.length || 0) > INLINE_PAYLOAD_LIMIT);
+      if (!tool.id || (!deferResult && !deferInput && !deferNested)) return tool;
       // Known native kinds do not need their multi-megabyte output parsed to
       // discover a name. Gateway wrappers still resolve the inner contract.
       const resolvedName = !/^(mcp|call_mcp_tool|callmcptool)$/i.test(tool.name);
       const knownKind = tool.kind && tool.kind !== "mcp" && tool.kind !== "other";
       const display = enrichToolDisplay({ ...tool, result: resolvedName && knownKind ? undefined : tool.result });
-      if (structuredKinds.has(display.kind) || tool.todos?.length || display.todos?.length) return tool;
       const url = `/api/chats/${encodeURIComponent(chatId)}/tool-result?messageId=${encodeURIComponent(message.id)}&toolId=${encodeURIComponent(tool.id)}`;
       return {
         ...tool,
         ...(tool.status === "completed" ? { editedFile: editedFileFromTool(tool) } : {}),
         name: display.name,
         kind: display.kind,
+        detail: tool.detail?.slice(0,512),
+        ...(tool.todos ? {todos:tool.todos.slice(0,20).map(todo=>({...todo,content:todo.content.slice(0,512)}))}:{}),
+        ...(deferNested ? { resultUrl: url, subagent: tool.subagent ? { agentId: tool.subagent.agentId, chatId: tool.subagent.chatId, title: tool.subagent.title?.slice(0,512), model: tool.subagent.model, mode: tool.subagent.mode, prompt: tool.subagent.prompt?.slice(0, PREVIEW_LENGTH) } : undefined, diff: tool.diff ? { additions: tool.diff.additions, deletions: tool.diff.deletions } : undefined } : {}),
         ...(deferResult ? { result: tool.result!.slice(0, PREVIEW_LENGTH), resultUrl: url } : {}),
         ...(deferInput ? { input: previewInput(tool.input!), inputUrl: url } : {}),
       };
     };
     return {
       ...message,
-      contextTokenEstimate: estimateContextTokens({ role: message.role, content: message.content, tools: message.tools || [] }),
+      contextTokenEstimate: message.contextTokenEstimate ?? estimateContextTokens({ role: message.role, content: message.content, tools: message.tools || [] }),
       ...(message.tools ? { tools: message.tools.map(compact) } : {}),
       ...(message.parts ? { parts: message.parts.map(part => part.type === "tool" ? compact(part) : part) } : {}),
     };

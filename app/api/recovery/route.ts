@@ -1,5 +1,5 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { getChat } from "@/lib/db-store";
+import { canAccessChat } from "@/lib/project-access";
 import { resolveRecoverySnapshot } from "@/lib/recovery";
 import { isSqliteBusyError } from "@/lib/sqlite";
 import { createSnapshot, SNAPSHOT_SCHEMA_VERSION } from "@/lib/shared-context";
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
   const chatId = new URL(req.url).searchParams.get("chatId")?.trim() || "";
   if (!chatId) return Response.json({ error: "chatId is required" }, { status: 400 });
-  if (!getChat(chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
+  if (!canAccessChat(chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
   try {
     const snapshot = resolveRecoverySnapshot(chatId, userId);
     return Response.json({
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const chatId = typeof body.chatId === "string" ? body.chatId.trim() : "";
-  if (!chatId || !getChat(chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
+  if (!chatId || !canAccessChat(chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
   const sessionState = body.sessionState && typeof body.sessionState === "object" ? body.sessionState as Record<string, unknown> : {};
   const browser = body.browser && typeof body.browser === "object" ? body.browser as Record<string, unknown> : undefined;
   const notesView = body.notesView && typeof body.notesView === "object" ? body.notesView as Record<string, unknown> : undefined;

@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, writeFile } from "node:fs/promises";
+import { createInstallerLogCursor, readBoundedInstallerLog, streamInstallerLog, updateLogFailure, updateLogSuccess } from "./installer-update-log";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -60,13 +61,8 @@ export function installerSystemdEnvironment(env: NodeJS.ProcessEnv = process.env
   return args;
 }
 
-export function installerLogIndicatesFailure(text: string): boolean {
-  return /unbound variable|^Error:|\bError: |Failed to compile\.|Build failed|ELIFECYCLE.*(?:failed|exit code)|ERR_PNPM_/m.test(text);
-}
-
-export function installerLogIndicatesSuccess(text: string): boolean {
-  return /Metis AI installed successfully/i.test(text);
-}
+export const installerLogIndicatesFailure = updateLogFailure;
+export const installerLogIndicatesSuccess = updateLogSuccess;
 
 function platformOf(value: NodeJS.Platform | undefined): "linux" | "darwin" | "win32" {
   value ??= process.platform;
@@ -185,19 +181,8 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
   };
 }
 
-export async function readInstallerUpdateLog(dataDir: string, limit = 80, jobId?: string) {
-  try {
-    const text = await readFile(installerUpdateLogPath(dataDir), "utf8");
-    const lines = (jobId ? installerLogForJob(text, jobId) : text).split(/\r?\n/).filter((line) => line.trim());
-    // Preserve identity when displaying the tail of a long build.
-    if (jobId && lines.length > limit) {
-      const evidence = lines.filter((line) => /^\[metis-update-(?:pid|exit):/.test(line) || installerLogIndicatesSuccess(line) || installerLogIndicatesFailure(line));
-      return [lines[0], ...evidence, ...lines.slice(-limit)];
-    }
-    return lines.slice(-limit);
-  } catch {
-    return [];
-  }
+export function readInstallerUpdateLog(dataDir: string, limit = 80, jobId?: string) {
+  return readBoundedInstallerLog(installerUpdateLogPath(dataDir), limit, jobId);
 }
 
 export async function installerUpdateIsRunning(serviceName: string, platform: NodeJS.Platform = process.platform) {
@@ -215,25 +200,9 @@ export async function installerUpdateIsRunning(serviceName: string, platform: No
   }
 }
 
-async function flushNewLogLines(file: string, offset: { bytes: number }, log: (message: string) => void) {
-  try {
-    const handle = await open(file, "r");
-    try {
-      const stat = await handle.stat();
-      if (stat.size <= offset.bytes) return;
-      const length = Number(stat.size - offset.bytes);
-      const buffer = Buffer.alloc(length);
-      await handle.read(buffer, 0, length, offset.bytes);
-      offset.bytes = Number(stat.size);
-      for (const line of buffer.toString("utf8").split(/\r?\n/)) {
-        if (line.trim()) log(line);
-      }
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    // The log file appears after systemd-run starts.
-  }
+async function flushNewLogLines(file: string, cursor: ReturnType<typeof createInstallerLogCursor>, log: (message: string) => void) {
+  try { await streamInstallerLog(file, cursor, line => { if (line.trim()) log(line); }); }
+  catch { /* The log appears after the installer starts. */ }
 }
 
 async function copyScriptForUpdate(source: string, dataDir: string) {
@@ -265,6 +234,9 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
   } catch {
     // No previous failed unit.
   }
+  const offset = createInstallerLogCursor();
+  // Start forwarding at this job, rather than replaying every previous installer run.
+  await streamInstallerLog(plan.logFile, offset, () => undefined).catch(() => undefined);
   await execFileAsync("systemd-run", [
     `--unit=${unit}`,
     "--no-block",
@@ -276,7 +248,6 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
     ...installerExitCommand(plan, args),
   ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
 
-  const offset = { bytes: 0 };
   const deadline = Date.now() + 50 * 60_000;
   while (Date.now() < deadline) {
     await flushNewLogLines(plan.logFile, offset, log);
@@ -296,7 +267,7 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
     const code = status.ExecMainStatus || "";
     if (active === "failed" || result === "failed" || (result === "exit-code" && code !== "0")) {
       await flushNewLogLines(plan.logFile, offset, log);
-      const logText = await readFile(plan.logFile, "utf8").catch(() => "");
+      const logText = (await readBoundedInstallerLog(plan.logFile, 200)).join("\n");
       const last = logText.trim().split(/\r?\n/).filter(Boolean).at(-1);
       throw new Error(
         `Installer update failed (systemd result=${result || active}, status=${code || "unknown"}).${last ? ` ${last}` : ""}`,
@@ -304,7 +275,7 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
     }
     if (active === "inactive" || active === "dead") {
       await flushNewLogLines(plan.logFile, offset, log);
-      const logText = await readFile(plan.logFile, "utf8").catch(() => "");
+      const logText = (await readBoundedInstallerLog(plan.logFile, 200)).join("\n");
       if (code && code !== "0") throw new Error(`Installer update exited with status ${code}.`);
       const currentLog = logText.slice(Math.max(0, logText.lastIndexOf("[metis-update-job:")));
       if (installerExitCode(currentLog) !== 0 && installerLogIndicatesFailure(currentLog)) {

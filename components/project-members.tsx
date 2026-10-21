@@ -57,6 +57,7 @@ export function ProjectMembers({ projectId, membershipRole, open, onOpenChange, 
       } else {
         if (method === "POST") { setUsername(""); setMessage("Invitation sent."); }
         await load();
+        window.dispatchEvent(new Event("metis:projects-changed"));
       }
     } catch (cause) {
       const text = cause instanceof Error ? cause.message : "Could not update project members.";

@@ -2,38 +2,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
+import { config } from "./config";
+import { createServerMetricsSampler } from "./server-metrics-sampler";
+import type { ServerMetric } from "./server-metrics-history";
+export type { ServerMetric } from "./server-metrics-history";
 
 const execFileAsync = promisify(execFile);
-const SAMPLE_INTERVAL_MS = 5_000;
-const HISTORY_LENGTH = 60;
-
-type GpuMetric = {
-  id: string;
-  name: string;
-  utilizationPercent: number | null;
-  memoryUsedBytes: number | null;
-  memoryTotalBytes: number | null;
-  temperatureC: number | null;
-};
-
-export type ServerMetric = {
-  timestamp: string;
-  cpuPercent: number;
-  ramUsedBytes: number;
-  ramTotalBytes: number;
-  load: number[];
-  networkRxBytesPerSecond: number;
-  networkTxBytesPerSecond: number;
-  gpus: GpuMetric[];
-};
-
 let previousCpu: { total: number; idle: number } | null = null;
 let previousNetwork: { rx: number; tx: number; timestamp: number } | null = null;
-let latest: ServerMetric | null = null;
-const history: ServerMetric[] = [];
-let samplerPromise: Promise<ServerMetric> | null = null;
-let samplerTimer: NodeJS.Timeout | null = null;
-
 function numberOrNull(value: string | undefined) {
   if (!value || !Number.isFinite(Number(value))) return null;
   return Number(value);
@@ -138,32 +115,16 @@ async function sample(): Promise<ServerMetric> {
     networkTxBytesPerSecond: network.tx,
     gpus,
   };
-  latest = metric;
-  history.push(metric);
-  while (history.length > HISTORY_LENGTH) history.shift();
   return metric;
 }
 
-function requestSample() {
-  if (!samplerPromise) {
-    samplerPromise = sample().finally(() => { samplerPromise = null; });
-    // Timer-triggered samples have no request waiting on them. Attach a
-    // rejection handler so a transient /proc or GPU command failure cannot
-    // become an unhandled rejection.
-    void samplerPromise.catch(() => undefined);
-  }
-  return samplerPromise;
+const shared = globalThis as typeof globalThis & {
+  __metisServerMetricsSampler?: ReturnType<typeof createServerMetricsSampler>;
+};
+function sampler() {
+  return shared.__metisServerMetricsSampler ??= createServerMetricsSampler({
+    filePath: path.join(config.dataDir, "server-metrics.json"), sample,
+  });
 }
-
-export async function getServerMetrics() {
-  if (!samplerTimer) {
-    samplerTimer = setInterval(() => {
-      void requestSample();
-    }, SAMPLE_INTERVAL_MS);
-    samplerTimer.unref();
-  }
-  if (!latest) {
-    await requestSample();
-  }
-  return { current: latest, history: [...history] };
-}
+export function startServerMetrics() { return sampler().start(); }
+export function getServerMetrics() { return sampler().read(); }

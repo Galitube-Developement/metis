@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { ChatIcon } from "@/components/chat-icon";
+import { TaskListInput } from "@/components/task-list-input";
 import { cn } from "@/lib/utils";
 import {
   normalizeQuestionAnswers, previewQuestionValues, questionKey, questionType,
@@ -78,7 +79,7 @@ export function QuestionForm({
           const common = { id, disabled, "aria-invalid": Boolean(message), "aria-describedby": [question.description && `${id}-description`, message && `${id}-error`].filter(Boolean).join(" ") || undefined };
           return <Fragment key={question.id}>
             {showGroup ? <h4 className="col-span-full border-t border-border pt-4 text-xs font-medium text-muted-foreground first:border-t-0 first:pt-0">{question.group}</h4> : null}
-            <div data-field-key={key} className={cn("min-w-0 space-y-2", (question.width === "full" || (form.columns === 2 && !question.width && ["textarea", "radio", "multiselect"].includes(type))) && "col-span-full")}>
+            <div data-field-key={key} className={cn("min-w-0 space-y-2", (question.width === "full" || (form.columns === 2 && !question.width && ["textarea", "radio", "multiselect", "task_list"].includes(type))) && "col-span-full")}>
               <label htmlFor={id} id={`${id}-label`} className="flex items-center gap-2 text-sm font-medium leading-5">
                 <ChatIcon name={question.icon} className="size-4 shrink-0 text-muted-foreground" />
                 <span>{question.question}{question.required === false ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">(optional)</span> : null}</span>
@@ -131,6 +132,7 @@ export function QuestionForm({
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground"><span>{question.min}</span><span>{question.max}</span></div>
               </div> : null}
+              {type === "task_list" ? <TaskListInput {...common} language={form.language} value={value} onChange={next => update(index, next)} /> : null}
               {type === "textarea" ? <Textarea {...common} value={value} onChange={event => update(index, event.target.value)} maxLength={question.maxLength ?? 4000} placeholder={question.placeholder || "Type your answer…"} className="min-h-24 text-sm" /> : null}
               {["text", "number", "date", "time"].includes(type) ? <div className="flex items-center gap-2">
                 <Input {...common} type={type === "text" ? "text" : type} value={value} onChange={event => update(index, event.target.value)} placeholder={question.placeholder} min={question.min} max={question.max} step={question.step ?? (type === "number" ? "any" : undefined)} maxLength={question.maxLength ?? 4000} className="min-h-11 text-sm" />

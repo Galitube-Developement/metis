@@ -382,7 +382,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   const isCommand = resolvedKind === "shell";
   const expanded = userOpen;
   useEffect(() => {
-    if ((!expanded && resolvedKind !== "memory") || !payloadUrl || loadedOutput?.url === payloadUrl) return;
+    if (!expanded || !payloadUrl || loadedOutput?.url === payloadUrl) return;
     const controller = new AbortController();
     setOutputError("");
     void loadToolPayload(payloadUrl, controller.signal).then(full => {
@@ -449,7 +449,7 @@ export const ToolCallChip = memo(function ToolCallChip({
         <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-400/10 text-violet-300"><Brain className="size-3.5" /></span>
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground/85">{memoryCard.title}</p>
-          {outputStatus}
+          {payloadUrl && !expanded ? <button type="button" className="mt-1 underline" onClick={()=>setUserOpen(true)}>Load memory details</button> : outputStatus}
           <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-foreground/75">{memoryCard.body}</p>
         </div>
       </div>
@@ -801,10 +801,22 @@ export const ToolCallGroup = memo(function ToolCallGroup({
       hostnames={hostnames}
       workspaces={workspaces}
       nested={nested}
-      onOpenDiff={() => onOpenDiff?.(tool)}
+      onOpenDiff={() => {
+        const url=tool.inputUrl || tool.resultUrl;
+        if(!url){onOpenDiff?.(tool);return;}
+        void loadToolPayload(url).then(payload=>onOpenDiff?.({...tool,...payload})).catch(()=>toast.error("Could not load file details"));
+      }}
       onOpenSubagent={() => onOpenSubagent?.(tool)}
-      onOpenWorkspace={() => onOpenWorkspace?.(tool)}
-      onBuildPlan={(plan, options) => onBuildPlan?.(tool, plan, options)}
+      onOpenWorkspace={() => {
+        const url=tool.inputUrl || tool.resultUrl;
+        if(!url){onOpenWorkspace?.(tool);return;}
+        void loadToolPayload(url).then(payload=>onOpenWorkspace?.({...tool,...payload})).catch(()=>toast.error("Could not load workspace details"));
+      }}
+      onBuildPlan={(plan, options) => {
+        const url=tool.inputUrl || tool.resultUrl;
+        if(!url){onBuildPlan?.(tool,plan,options);return;}
+        void loadToolPayload(url).then(payload=>onBuildPlan?.({...tool,...payload},planFromToolPayload(payload.input,payload.result,tool.detail) || plan,options)).catch(()=>toast.error("Could not load full plan"));
+      }}
       buildDisabled={buildDisabled}
       onOpenRaw={() => {
         const url = tool.inputUrl || tool.resultUrl;

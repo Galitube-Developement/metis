@@ -1,9 +1,10 @@
 import { BoundedSnapshotCache, estimateSnapshotBytes } from "./snapshot-cache";
+import { chatNavigationSnapshot } from "./chat-navigation-snapshot";
 
 const DB_NAME = "metis-client-chat-cache";
-// Invalidate pre-lazy-payload snapshots once; they retained megabytes of raw
-// tool input/output even when the server returned a compact replacement.
-const DB_VERSION = 2;
+// Discard old snapshots that could retain complete tool/subagent histories.
+// Reopened chats start with the same bounded tail as an HTTP page.
+const DB_VERSION = 3;
 const STORE_NAME = "snapshots";
 export const MAX_SNAPSHOTS = 8;
 export const MAX_MEMORY_CHAT_SNAPSHOTS = 8;
@@ -35,6 +36,7 @@ export function estimateChatSnapshotBytes(value: unknown, limit = MAX_MEMORY_CHA
 }
 
 export class BoundedChatSnapshotCache<K, V> extends BoundedSnapshotCache<K, V> {
+  override set(key:K,value:V):this{return super.set(key,typeof key==="string"?chatNavigationSnapshot(value,key):value);}
   constructor(protectedKeys: () => Iterable<K> = () => [], maxEntries = MAX_MEMORY_CHAT_SNAPSHOTS, maxBytes = MAX_MEMORY_CHAT_CACHE_BYTES) {
     super(protectedKeys, maxEntries, maxBytes);
   }
@@ -131,7 +133,7 @@ export async function readClientChatSnapshot<T>(scope: string, chatId: string): 
       void deleteClientChatSnapshot(scope, chatId);
       return null;
     }
-    return withoutCachedQueue(row.value);
+    return chatNavigationSnapshot(withoutCachedQueue(row.value),chatId);
   } catch {
     return null;
   } finally {
@@ -143,6 +145,7 @@ export async function writeClientChatSnapshot<T>(scope: string, chatId: string, 
   const db = await openDatabase();
   if (!db) return;
   try {
+    value=chatNavigationSnapshot(value,chatId);
     if (estimateChatSnapshotBytes(value) > MAX_MEMORY_CHAT_CACHE_BYTES) {
       db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(cacheKey(scope, chatId));
       return;

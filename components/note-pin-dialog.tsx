@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Globe2, Pin, Search } from "lucide-react";
 import type { SharedNote } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -35,28 +35,78 @@ export function NotePinDialog({
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const initialized = useRef<string | null>(null);
+  const request = useRef<AbortController | null>(null);
+
+  async function loadPage(offset: number, noteId: string, controller: AbortController) {
+    try {
+      const params = new URLSearchParams({noteId, picker:"1", search, offset:String(offset)});
+      const response = await fetch(`/api/context/pins?${params}`, {cache:"no-store", signal:controller.signal});
+      if (!response.ok) throw new Error("Could not load pin settings. Please retry.");
+      const data = await response.json() as {chats?:ChatOption[];globalNoteIds?:string[];configuredChatIds?:string[];nextOffset?:number|null};
+      if (controller.signal.aborted) return;
+      setChats(current => offset ? [...current, ...(data.chats || []).filter(chat => !current.some(item=>item.id===chat.id))] : data.chats || []);
+      setNextOffset(data.nextOffset ?? null);
+      if (initialized.current !== noteId) {
+        const global = Boolean(data.globalNoteIds?.includes(noteId));
+        setEverywhere(global);
+        setChatIds(global ? [] : data.configuredChatIds || []);
+        initialized.current = noteId;
+        setReady(true);
+      }
+      setError("");
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not load pin settings.");
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }
+  // Ref keeps this effect scoped to navigation/search, not every selection change.
+  const loadPageRef = useRef(loadPage);
+  loadPageRef.current = loadPage;
   useEffect(() => {
-    if (!open) return;
-    void fetch(`/api/context/pins?noteId=${encodeURIComponent(note?.id || "")}`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : null)
-      .then((data: { chats?: ChatOption[]; globalNoteIds?: string[]; configuredChatIds?: string[] } | null) => {
-        setChats(data?.chats || []);
-        const isEverywhere = Boolean(note && data?.globalNoteIds?.includes(note.id));
-        setEverywhere(isEverywhere);
-        setChatIds(isEverywhere ? [] : data?.configuredChatIds || []);
-      })
-      .catch(() => setChats([]));
-  }, [note, open]);
+    if (!open || !note?.id) {
+      initialized.current = null;
+      setReady(false);
+      return;
+    }
+    const noteId = note.id;
+    if (initialized.current !== noteId) setReady(false);
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    setChats([]);
+    setNextOffset(null);
+    setError("");
+    const timer = window.setTimeout(() => void loadPageRef.current(0, noteId, controller), search ? 180 : 0);
+    return () => { window.clearTimeout(timer); controller.abort(); request.current?.abort(); };
+  }, [note?.id, open, search]);
+
+  function loadMore() {
+    if (nextOffset === null || !note || loading) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    void loadPageRef.current(nextOffset, note.id, controller);
+  }
 
   function toggleChat(id: string) {
     setChatIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  const filteredChats = chats.filter((chat) => chat.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const filteredChats = chats;
 
   async function save() {
-    if (!note) return;
+    if (!note || !ready) return;
+    const savingNoteId = note.id;
     setSaving(true);
+    setError("");
     try {
       const response = await fetch("/api/context/pins", {
         method: "PATCH",
@@ -64,8 +114,12 @@ export function NotePinDialog({
         body: JSON.stringify({ noteId: note.id, everywhere, chatIds }),
       });
       if (!response.ok) throw new Error("Could not save pin settings");
-      onSaved?.();
-      onOpenChange(false);
+      if (initialized.current === savingNoteId) {
+        onSaved?.();
+        onOpenChange(false);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save pin settings.");
     } finally {
       setSaving(false);
     }
@@ -84,6 +138,7 @@ export function NotePinDialog({
           <button
             type="button"
             className={cn("flex min-w-0 max-w-full items-center gap-3 rounded-xl border p-3 text-left", everywhere ? "border-primary bg-primary/10" : "border-border/60")}
+            disabled={!ready || saving}
             onClick={() => {
               setEverywhere((value) => !value);
               setChatIds([]);
@@ -114,23 +169,23 @@ export function NotePinDialog({
                   variant="ghost"
                   size="sm"
                   className="min-w-0 px-2 text-xs"
-                  disabled={everywhere || !filteredChats.length}
+                  disabled={!ready || saving || everywhere || !filteredChats.length}
                   onClick={() => setChatIds((current) => [...new Set([...current, ...filteredChats.map((chat) => chat.id)])])}
                 >
-                  Select all
+                  Select loaded
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="min-w-0 px-2 text-xs"
-                  disabled={everywhere || !filteredChats.length}
+                  disabled={!ready || saving || everywhere || !filteredChats.length}
                   onClick={() => {
                     const visibleIds = new Set(filteredChats.map((chat) => chat.id));
                     setChatIds((current) => current.filter((id) => !visibleIds.has(id)));
                   }}
                 >
-                  Deselect all
+                  Deselect loaded
                 </Button>
               </div>
             </div>
@@ -141,6 +196,8 @@ export function NotePinDialog({
                 <button
                   key={chat.id}
                   type="button"
+                  disabled={!ready || saving}
+                  aria-pressed={selected}
                   className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs", selected ? "bg-primary/10" : "hover:bg-muted/60")}
                   onClick={() => {
                     setEverywhere(false);
@@ -153,13 +210,23 @@ export function NotePinDialog({
                   <span className="truncate">{chat.title}</span>
                 </button>
               );
-            }) : <p className="p-2 text-xs text-muted-foreground">{chats.length ? "No chats match your search." : "No chats available yet."}</p>}
+            }) : !loading && !error ? <p className="p-2 text-xs text-muted-foreground">{search ? "No chats match your search." : "No chats available yet."}</p> : null}
+            {loading ? <p role="status" className="p-2 text-xs text-muted-foreground">Loading chats…</p> : null}
+            {nextOffset !== null ? <Button type="button" variant="ghost" size="sm" disabled={loading || saving} onClick={loadMore}>Load more chats</Button> : null}
             </div>
           </div>
         </div>
+        {error ? <div role="alert" className="text-sm text-destructive">{error}<Button type="button" variant="ghost" size="sm" disabled={loading || saving} onClick={() => {
+          if (!note) return;
+          request.current?.abort();
+          const controller = new AbortController();
+          request.current = controller;
+          setLoading(true);
+          void loadPageRef.current(0, note.id, controller);
+        }}>Retry loading</Button></div> : null}
         <DialogFooter className="min-w-0 max-w-full sm:flex-row sm:flex-wrap sm:items-center [&>button]:min-w-0 [&>button]:max-w-full [&>button]:shrink-0 [&>button]:whitespace-normal">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" disabled={saving || !note} onClick={() => void save()}>{saving ? "Saving…" : confirmLabel}</Button>
+          <Button type="button" disabled={saving || !note || !ready} onClick={() => void save()}>{saving ? "Saving…" : confirmLabel}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

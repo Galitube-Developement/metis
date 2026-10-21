@@ -1,5 +1,7 @@
 "use client";
 import { useReferenceSearch } from "@/components/use-reference-search";
+import { MessageHistoryControl } from "@/components/message-history-control";
+import { ProjectMessageAuthor, useProjectMessageMembers } from "@/components/project-message-author";
 import { REFERENCE_KINDS } from "@/lib/reference-search";
 import { ResearchModeOption } from "@/components/research-mode-option";
 import { consumeModeMention, showDeepResearchAction } from "@/lib/composer-mode-actions";
@@ -52,11 +54,7 @@ import {
   Repeat2,
   Telescope,
   CalendarClock,
-  Cpu,
-  Gauge,
-  MemoryStick,
   Monitor,
-  Network,
   Users,
   ArrowLeft,
   ArrowRight,
@@ -345,14 +343,7 @@ function formatCompletedAt(value: string) {
     : new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(date);
 }
 
-function formatMetricBytes(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let amount = Math.max(0, value);
-  let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
-  return `${amount.toFixed(amount >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
+const ServerMonitor = dynamic(() => import("@/components/server-monitor").then(module => module.ServerMonitor), { ssr: false });
 
 function formatMetricNumber(value: number) {
   return Math.max(0, Math.round(value)).toLocaleString();
@@ -386,13 +377,6 @@ async function copyRawMessage(raw: string) {
   } catch {
     toast.error("Could not copy message");
   }
-}
-
-function MetricSparkline({ values, color }: { values: number[]; color: string }) {
-  const safe = values.length ? values : [0];
-  const max = Math.max(1, ...safe);
-  const points = safe.map((value, index) => `${(index / Math.max(1, safe.length - 1)) * 100},${36 - (Math.max(0, value) / max) * 32}`).join(" ");
-  return <svg viewBox="0 0 100 36" preserveAspectRatio="none" className="h-12 w-full overflow-visible"><polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
 function formatToolPayload(value?: string) {
@@ -441,6 +425,10 @@ type Msg = {
   authorId?: string;
   authorName?: string;
   contextTokenEstimate?: number;
+  eventsUrl?: string;
+  eventOffset?: number;
+  historyPosition?: number;
+  contentUrl?: string;
   programEvent?: ChatProgramEvent;
   questionAnswer?: QuestionAnswerReference;
   transcriptSourceId?: string;
@@ -602,6 +590,7 @@ function flatFromParts(parts: MsgPart[]): {
         diff: p.diff,
         input: p.input,
         result: p.result,
+        resultUrl: p.resultUrl, inputUrl: p.inputUrl,
         subagent: p.subagent,
         todos: p.todos,
       });
@@ -668,6 +657,10 @@ type Chat = ChatIndexEntry & {
     authorId?: string;
     authorName?: string;
     contextTokenEstimate?: number;
+  eventsUrl?: string;
+  eventOffset?: number;
+  historyPosition?: number;
+  contentUrl?: string;
     programEvent?: ChatProgramEvent;
     questionAnswer?: QuestionAnswerReference;
     id: string;
@@ -841,7 +834,7 @@ type ConfiguredModelProvider = {
   enabled: boolean;
 };
 
-const CHAT_MESSAGE_LOAD_LIMIT = 20;
+const CHAT_MESSAGE_LOAD_LIMIT = 10;
 const CHAT_MESSAGE_PRELOAD_MAX = CHAT_MESSAGE_LOAD_LIMIT;
 const MODEL_STORAGE_KEY = `${clientConfig.storagePrefix}_model`;
 const PARAMS_STORAGE_KEY = `${clientConfig.storagePrefix}_model_params`;
@@ -1241,10 +1234,6 @@ function BrowserTabIcon({ tab }: { tab: BrowserTab }) {
     </span>
   );
 }
-type MonitorGpu = { id: string; name: string; utilizationPercent: number | null; memoryUsedBytes: number | null; memoryTotalBytes: number | null; temperatureC: number | null };
-type MonitorMetric = { timestamp: string; cpuPercent: number; ramUsedBytes: number; ramTotalBytes: number; load: number[]; networkRxBytesPerSecond: number; networkTxBytesPerSecond: number; gpus: MonitorGpu[] };
-type MonitorPayload = { current: MonitorMetric | null; history: MonitorMetric[] };
-
 type DiffLine = {
   text: string;
   kind: "add" | "remove" | "context";
@@ -1583,6 +1572,7 @@ function mapApiMessages(
       programEvent: m.programEvent,
       questionAnswer: m.questionAnswer,
       contextTokenEstimate: m.contextTokenEstimate,
+      eventsUrl: m.eventsUrl, eventOffset: m.eventOffset, historyPosition: m.historyPosition, contentUrl: m.contentUrl,
       content: legacyError ? "" : m.content,
       errorMessage: m.errorMessage || legacyError || undefined,
       referenceText: m.referenceText,
@@ -1850,6 +1840,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     updatedAt?: string;
   }>>([]);
   const modeProjectId = chats.find(chat => chat.id === activeChatId)?.projectId || draftProjectId;
+  const messageProjectMembers = useProjectMessageMembers(authed && activeChatId ? chats.find(chat => chat.id === activeChatId)?.projectId : null);
   const modeProject = sidebarProjects.find(project => project.id === modeProjectId);
   const projectModel = projectDefaultModel(modeProject);
   const projectModelSignature = JSON.stringify(projectModel);
@@ -1945,7 +1936,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     paintVoiceWaveform(voiceWaveformRef.current, level);
   }, []);
   const [composerSyncNonce, setComposerSyncNonce] = useState(0);
-  const [monitorData, setMonitorData] = useState<MonitorPayload>({ current: null, history: [] });
   const browserSocketRef = useRef<WebSocket | null>(null);
   const browserStreamObjectUrlRef = useRef<string | null>(null);
   const browserViewportRef = useRef<HTMLDivElement | null>(null);
@@ -2290,6 +2280,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const loadedChatIdsRef = useRef<Set<string>>(new Set());
   const serverSnapshotVersionRef = useRef<Map<string, string>>(new Map());
   const chatRefreshInFlightRef = useRef<Set<string>>(new Set());
+  const chatRefreshEtagRef = useRef(new Map<string,string>());
   const pendingFilesRef = useRef<PendingFile[]>([]);
   const notifiedQuestionRef = useRef<string | null>(null);
   const pendingQuestionIdRef = useRef<string | null>(null);
@@ -2952,6 +2943,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   useEffect(() => {
     const ids = childChatIds ? childChatIds.split(",") : [];
     if (!ids.length) return;
+    const controller=new AbortController();
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -2960,16 +2952,18 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         return;
       }
       const updates: Record<string, string> = {};
-      await Promise.all(ids.map(async (id) => {
-        try {
-          const response = await fetch(`/api/chats/${encodeURIComponent(id)}?messageLimit=1`, { cache: "no-store" });
-          if (!response.ok) return;
-          const data = await response.json() as { chat?: { runStatus?: string } };
-          if (data.chat?.runStatus) updates[id] = data.chat.runStatus;
-        } catch {
-          // Child status stays at the last known value.
+      try{
+        for(let start=0;start<ids.length;start+=50){
+          const batch=ids.slice(start,start+50);
+          const response=await fetch("/api/chats/status?ids="+encodeURIComponent(batch.join(",")),{cache:"no-store",signal:controller.signal});
+          if(!response.ok)throw new Error("Subagent status unavailable");
+          const data=await response.json() as {statuses?:Record<string,string>};
+          Object.assign(updates,data.statuses);
         }
-      }));
+      }catch{
+        if(!cancelled)timer=window.setTimeout(()=>void poll(),5000);
+        return;
+      }
       if (cancelled) return;
       if (Object.keys(updates).length) {
         setChildRunByChatId((current) => ({ ...current, ...updates }));
@@ -2982,6 +2976,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     void poll();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer) window.clearTimeout(timer);
     };
   }, [childChatIds]);
@@ -3581,18 +3576,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       .catch(() => undefined);
   }, [workspaceTab, activeChatId, browserEnabled]);
 
-  useEffect(() => {
-    if (workspaceTab !== "monitor") return;
-    let disposed = false;
-    const load = async () => {
-      const response = await fetch("/api/monitor", { cache: "no-store" });
-      if (!response.ok || disposed) return;
-      setMonitorData(await response.json() as MonitorPayload);
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, [workspaceTab]);
 
   function selectTerminalTab(tab: TerminalTab) {
     setActiveTerminalTabId(tab.id);
@@ -4744,8 +4727,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     setEarlierMessagesError(false);
     try {
       const nextOffset = messageOffset + CHAT_MESSAGE_LOAD_LIMIT;
+      const before=stateRef.current.messages.find(message=>message.historyPosition!==undefined)?.historyPosition;
+      const cursor=before===undefined ? `messageOffset=${nextOffset}` : `messageBefore=${before}`;
       const res = await fetchReadWithRetry(
-        `/api/chats/${id}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=${nextOffset}`,
+        `/api/chats/${id}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&${cursor}`,
         { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) throw new Error("Could not load older messages");
@@ -4805,53 +4790,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return () => observer.disconnect();
   }, [accountView, activeChatId, paneKey, loadingChatId, isEmpty, notesOpen, automationsOpen, projectHomeId, hasEarlierMessages, showScrollDown, earlierMessagesError]);
 
-  useEffect(() => {
-    if (loadingChatId || !activeChatId || !hasEarlierMessages || messages.length >= CHAT_MESSAGE_PRELOAD_MAX) return;
-    let cancelled = false;
-    let offset = messageOffset;
-    let loaded = messages.length;
-
-    const preload = async () => {
-      while (!cancelled && loaded < CHAT_MESSAGE_PRELOAD_MAX && hasEarlierMessages) {
-        const nextOffset = offset + CHAT_MESSAGE_LOAD_LIMIT;
-        const scrollElement = messagesScrollRef.current;
-        const previousHeight = scrollElement?.scrollHeight ?? 0;
-        const previousTop = scrollElement?.scrollTop ?? 0;
-        const wasAtBottom = enteringChatRef.current || stickToBottomRef.current;
-        try {
-          const res = await fetchReadWithRetry(
-            `/api/chats/${activeChatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=${nextOffset}`,
-            { cache: "no-store" },
-          );
-          if (!res.ok || cancelled) return;
-          const data = (await res.json()) as ChatPage;
-          const olderMessages = mapApiMessages(data.chat.messages);
-          if (cancelled) return;
-          setMessages((current) => prependMessages(current, olderMessages));
-          offset = data.messageOffset ?? nextOffset;
-          loaded += olderMessages.length;
-          setMessageOffset(offset);
-          setHasEarlierMessages(Boolean(data.hasEarlierMessages));
-          window.requestAnimationFrame(() => {
-            if (!scrollElement || cancelled) return;
-            const heightDelta = scrollElement.scrollHeight - previousHeight;
-            scrollElement.scrollTop = wasAtBottom
-              ? scrollElement.scrollHeight - scrollElement.clientHeight
-              : previousTop + heightDelta;
-          });
-          if (!data.hasEarlierMessages || olderMessages.length === 0) return;
-          await new Promise((resolve) => window.setTimeout(resolve, 40));
-        } catch {
-          return;
-        }
-      }
-    };
-
-    void preload();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeChatId, hasEarlierMessages, loadingChatId, messageOffset, messages.length]);
+  // Older pages are fetched only when the reader scrolls up or requests them.
 
   async function openSearchResult(chatId: string, messageId?: string) {
     setHighlightedMessageId(messageId || null);
@@ -5078,12 +5017,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (document.visibilityState === "hidden" || chatRefreshInFlightRef.current.has(chatId)) return;
       chatRefreshInFlightRef.current.add(chatId);
       try {
+        const previousEtag=chatRefreshEtagRef.current.get(chatId);
         const res = await fetchReadWithRetry(
           `/api/chats/${chatId}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=0`,
-          { cache: "no-store" },
+          { cache: "no-store", headers: previousEtag ? { "If-None-Match": previousEtag } : undefined },
         );
-        if (!res.ok || activeChatIdRef.current !== chatId) return;
+        if (res.status===304 || !res.ok || activeChatIdRef.current !== chatId) return;
         const data = (await res.json()) as { chat: Chat };
+        const etag=res.headers.get("etag");
+        if(etag){chatRefreshEtagRef.current.set(chatId,etag);if(chatRefreshEtagRef.current.size>32)chatRefreshEtagRef.current.delete(chatRefreshEtagRef.current.keys().next().value!);}
         if (activeChatIdRef.current !== chatId) return;
         const activityChanged = chatProgramEventsChanged(stateRef.current.messages, data.chat.messages);
         if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)) return;
@@ -7333,6 +7275,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       id: messageIdOverride || `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role: "user",
       createdAt: localCreatedAt,
+      ...(modeProjectId ? { authorName: username } : {}),
       content:
         text ||
         (localAttachments.length
@@ -7877,6 +7820,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 setPendingQuestion({
                   title: typeof payload.title === "string" ? payload.title : undefined,
                   description: typeof payload.description === "string" ? payload.description : undefined,
+                  language: typeof payload.language === "string" ? payload.language : undefined,
                   submitLabel: typeof payload.submitLabel === "string" ? payload.submitLabel : undefined,
                   responseTemplate: typeof payload.responseTemplate === "string" ? payload.responseTemplate : undefined,
                   columns: payload.columns === 2 ? 2 : 1,
@@ -10633,6 +10577,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       ],
                     )}
                   >
+                    <MessageHistoryControl<Msg> url={m.eventsUrl} label={`Load earlier activity (${m.eventOffset || 0})`} onLoad={older => {if(activeChatIdRef.current!==activeChatId)return;setMessages(current=>current.map(message=>message.id!==m.id?message:{...message,eventsUrl:older.eventsUrl,eventOffset:older.eventOffset,tools:[...(older.tools || []),...(message.tools || [])],parts:[...(older.parts || []),...(message.parts || [])]}));}}/>
+                    <MessageHistoryControl<Partial<Msg>> url={m.contentUrl} label="Read full message" onLoad={full => {if(activeChatIdRef.current!==activeChatId)return;setMessages(current=>current.map(message=>message.id!==m.id?message:{...message,content:full.content ?? message.content,thinking:full.thinking ?? message.thinking,parts:undefined,contentUrl:undefined}));}}/>
                     {m.role === "user" ? (
                       <div className="flex flex-col items-end gap-1">
                         {m.references?.length ? (
@@ -10701,6 +10647,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           </div>
                         ) : (
                         <div className="min-w-0 max-w-[92%] space-y-2 rounded-lg bg-secondary/70 px-3.5 py-2.5 text-[15px] leading-[1.55] [overflow-wrap:anywhere] sm:max-w-[85%] sm:px-4">
+                          <ProjectMessageAuthor members={messageProjectMembers} authorId={m.authorId} authorName={m.authorName} />
                           {m.attachments && m.attachments.length > 0 ? (
                             <div className="flex max-w-full gap-2 overflow-x-auto pb-1">
                               {m.attachments.map((att) => {
@@ -10728,7 +10675,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                     )}
                                   >
                                     <div className="whitespace-pre-wrap">
-                                      {m.authorName ? <div className="mb-1 text-xs font-medium text-muted-foreground">{m.authorName}</div> : null}
                                       <RichUserText content={m.content} references={m.references} />
                                     </div>
                                   </div>
@@ -11657,38 +11603,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 ) : null}
               </FileDropZone>
             ) : workspaceTab === "monitor" ? (
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {monitorData.current ? (
-                  <>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { label: "CPU", value: `${monitorData.current.cpuPercent.toFixed(1)}%`, icon: Cpu, color: "text-cyan-400", values: monitorData.history.map((item) => item.cpuPercent) },
-                        { label: "RAM", value: `${formatMetricBytes(monitorData.current.ramUsedBytes)} / ${formatMetricBytes(monitorData.current.ramTotalBytes)}`, icon: MemoryStick, color: "text-violet-400", values: monitorData.history.map((item) => item.ramTotalBytes ? (item.ramUsedBytes / item.ramTotalBytes) * 100 : 0) },
-                        { label: "Load", value: monitorData.current.load.map((item) => item.toFixed(2)).join(" / "), icon: Gauge, color: "text-amber-400", values: monitorData.history.map((item) => item.load[0] || 0) },
-                        { label: "Network", value: `↓ ${formatMetricBytes(monitorData.current.networkRxBytesPerSecond)}/s · ↑ ${formatMetricBytes(monitorData.current.networkTxBytesPerSecond)}/s`, icon: Network, color: "text-emerald-400", values: monitorData.history.map((item) => item.networkRxBytesPerSecond + item.networkTxBytesPerSecond) },
-                      ].map((card) => (
-                        <div key={card.label} className="overflow-hidden rounded-lg border border-border/40 bg-card/60 p-3">
-                          <div className="flex items-center justify-between gap-2"><span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><card.icon className={`size-3.5 ${card.color}`} />{card.label}</span><span className="text-xs font-medium">{card.value}</span></div>
-                          <div className="mt-2 opacity-80"><MetricSparkline values={card.values} color="currentColor" /></div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="rounded-lg border border-border/40 bg-card/40 p-3">
-                      <div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-medium"><Activity className="size-3.5 text-violet-400" />Last 5 minutes</span><span className="text-[10px] text-muted-foreground">{monitorData.history.length} samples · 5 s</span></div>
-                      <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground"><span>CPU history</span><span>RAM usage history</span><MetricSparkline values={monitorData.history.map((item) => item.cpuPercent)} color="#22d3ee" /><MetricSparkline values={monitorData.history.map((item) => item.ramTotalBytes ? (item.ramUsedBytes / item.ramTotalBytes) * 100 : 0)} color="#a78bfa" /></div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between"><span className="text-xs font-medium">GPUs</span><span className="text-[10px] text-muted-foreground">{monitorData.current.gpus.length ? `${monitorData.current.gpus.length} detected` : "No GPU telemetry detected"}</span></div>
-                      {monitorData.current.gpus.length ? monitorData.current.gpus.map((gpu) => (
-                        <div key={gpu.id} className="rounded-lg border border-border/40 bg-card/40 p-3">
-                          <div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-medium">{gpu.name}</span><span className="text-xs text-muted-foreground">{gpu.utilizationPercent === null ? "—" : `${gpu.utilizationPercent.toFixed(0)}%`}</span></div>
-                          <div className="mt-1 flex justify-between text-[10px] text-muted-foreground"><span>Memory {formatMetricBytes(gpu.memoryUsedBytes)} / {formatMetricBytes(gpu.memoryTotalBytes)}</span><span>{gpu.temperatureC === null ? "—" : `${gpu.temperatureC.toFixed(0)}°C`}</span></div>
-                        </div>
-                      )) : <div className="rounded-lg border border-dashed border-border/50 p-3 text-xs text-muted-foreground">GPU data is unavailable on this server.</div>}
-                    </div>
-                  </>
-                ) : <div className="flex min-h-48 items-center justify-center text-xs text-muted-foreground"><LoaderCircle className="mr-2 size-4 animate-spin" />Collecting server metrics…</div>}
-              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1"><ServerMonitor /></div>
             ) : workspaceTab === "terminal" ? (
               <>
                 <div className="flex shrink-0 items-center gap-1 overflow-x-auto">
