@@ -33,10 +33,13 @@ export async function PATCH(req: Request) {
   if (expectedVersion !== undefined && expectedVersion !== (current.version || 1)) {
     return Response.json({ error: "Workspace changed by another client", workspace: current }, { status: 409 });
   }
+  if (typeof body.content === "string" && body.content.length > 100_000) {
+    return Response.json({ error: "Workspace content exceeds 100,000 characters. Shorten the document before saving." }, { status: 413 });
+  }
   const updated = {
     ...current,
     ...(typeof body.title === "string" ? { name: body.title.trim().slice(0, 200) || current.name } : {}),
-    ...(typeof body.content === "string" ? { content: body.content.slice(0, 100_000) } : {}),
+    ...(typeof body.content === "string" ? { content: body.content } : {}),
     version: (current.version || 1) + 1,
     updatedAt: new Date().toISOString(),
   };

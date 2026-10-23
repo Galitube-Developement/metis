@@ -4,6 +4,8 @@ import {
   getNote,
   listNoteActivities,
   NoteConflictError,
+  NoteValidationError,
+  notePageInputFromBody,
   updateNote,
   type NoteWriteInput,
 } from "@/lib/shared-context";
@@ -17,6 +19,7 @@ function patchFromBody(body: Record<string, unknown>): NoteWriteInput {
   const position = body.position && typeof body.position === "object" ? body.position as Record<string, unknown> : undefined;
   const size = body.size && typeof body.size === "object" ? body.size as Record<string, unknown> : undefined;
   return {
+    ...notePageInputFromBody(body),
     title: typeof body.title === "string" ? body.title : undefined,
     content: typeof body.content === "string" ? body.content : undefined,
     kind: body.kind === "project" || body.kind === "note" ? body.kind : undefined,
@@ -26,7 +29,7 @@ function patchFromBody(body: Record<string, unknown>): NoteWriteInput {
     size: size ? { width: Number(size.width), height: Number(size.height) } : undefined,
     archived: typeof body.archived === "boolean" ? body.archived : undefined,
     projectId: body.projectId === null ? null : typeof body.projectId === "string" ? body.projectId.trim() : undefined,
-    expectedVersion: typeof body.version === "number" ? Math.floor(body.version) : undefined,
+    expectedVersion: typeof body.version === "number" ? body.version : typeof body.expectedVersion === "number" ? body.expectedVersion : undefined,
     author: body.author === "agent" ? "agent" : "user",
   };
 }
@@ -57,7 +60,7 @@ export async function PATCH(req: Request, { params }: Params) {
     if (error instanceof NoteConflictError) {
       return Response.json({ error: error.message, note: error.current }, { status: 409 });
     }
-    return Response.json({ error: error instanceof Error ? error.message : "Could not update note" }, { status: 400 });
+    return Response.json({ error: error instanceof Error ? error.message : "Could not update note" }, { status: error instanceof NoteValidationError ? error.status : 400 });
   }
 }
 
@@ -67,6 +70,11 @@ export async function DELETE(req: Request, { params }: Params) {
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as { confirm?: unknown };
   if (body.confirm !== true) return Response.json({ error: "Deletion requires confirmation" }, { status: 400 });
-  if (!deleteNote(id, userId)) return Response.json({ error: "Note not found" }, { status: 404 });
-  return Response.json({ ok: true, id });
+  try {
+    if (!deleteNote(id, userId)) return Response.json({ error: "Note not found" }, { status: 404 });
+    return Response.json({ ok: true, id });
+  } catch (error) {
+    if (error instanceof NoteValidationError) return Response.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
 }

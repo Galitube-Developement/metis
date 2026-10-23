@@ -73,17 +73,49 @@
       "skillPath": "skills/xlsx/SKILL.md",
       "computedHash": "f5945e6e76dc7c178375e5cdf3140959b30cbcd4570ec3dc62296812259fc38d"
     },
+    "deep-research": {
+      "source": "custom",
+      "sourceType": "local",
+      "skillPath": "skills/manual/deep-research/SKILL.md",
+      "computedHash": "616ac36bf773025b20334a89756e9121f0531670c1d327fea3376b93870c4e05"
+    },
+    "ae-abstract-art-direction": {
+      "source": "custom",
+      "sourceType": "local",
+      "skillPath": "skills/manual/ae-abstract-art-direction/SKILL.md",
+      "computedHash": "bee1680fa058594a0263ed6cab4eaf854418fb765cc718d56eea6ce8c041a95a"
+    },
+    "humanizer": {
+      "source": "blader/humanizer",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/humanizer/SKILL.md",
+      "computedHash": "0612f1dfb1672b0ea9b97e139bf1f06cabe98d8b27424fe8ff01e1fb4cc99cad"
+    },
     "ui-ux-pro-max": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",
       "skillPath": ".agents/skills/ui-ux-pro-max/SKILL.md",
       "computedHash": "f025d825ee60125a46c9299ffa32aba80ec26e4318902fcaca2f69462a7dd26c"
     },
-    "deep-research": {
-      "source": "custom",
-      "sourceType": "local",
-      "skillPath": "skills/manual/deep-research/SKILL.md",
-      "computedHash": "616ac36bf773025b20334a89756e9121f0531670c1d327fea3376b93870c4e05"
+    "ponytail": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/ponytail/SKILL.md",
+      "computedHash": "28316a655c47c3e29fa850483eb8742225350d8702eb008d0fabd6730d258fe7"
+    },
+    "social-content": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceRef": "f3990f7f99ae63b9e26eaa61114f60e0408742ff",
+      "skillPath": ".agents/skills/social-content/SKILL.md",
+      "computedHash": "949e3aee969fc4ef9ff6f900ef957b9354f07c48c72a77b20a977984ff8df2f8"
+    },
+    "launch-strategy": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceRef": "f3990f7f99ae63b9e26eaa61114f60e0408742ff",
+      "skillPath": ".agents/skills/launch-strategy/SKILL.md",
+      "computedHash": "5d603157a784f42521128334d68904c00f62a0b7ee92dceb7b182473d5e9a8a1"
     }
   }
 }

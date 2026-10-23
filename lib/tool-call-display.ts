@@ -1,6 +1,9 @@
 import { isSubagentControlName, isSubagentSpawnName } from "@/lib/subagent-bar";
 import { isMemoryScope } from "@/lib/memory-scopes.mjs";
 import { isMcpWrapperName } from "@/lib/tool-kind";
+import { parseInternalLink } from "@/lib/internal-link";
+import { noteDisplayTitle } from "@/lib/notes-tree";
+import { noteLinkFields } from "@/lib/note-reference";
 
 function joinAssistantText(left: string, right: string): string {
   if (!left) return right;
@@ -53,19 +56,6 @@ type LayoutPart<TTool> =
     }
   | { type: "text"; content: string }
   | ({ type: "tool" } & TTool);
-
-const STANDALONE_TOOL_KINDS = new Set([
-  "todo",
-  "plan",
-  "note",
-  "canvas",
-  "automation",
-  "memory",
-]);
-
-export function isStandaloneToolKind(kind?: string): boolean {
-  return Boolean(kind && STANDALONE_TOOL_KINDS.has(kind));
-}
 
 export type ToolKind =
   | "plan"
@@ -140,6 +130,27 @@ export function unwrapToolRecord(value: unknown, depth = 0): Record<string, unkn
     if (inner) Object.assign(record, inner);
   }
   return record;
+}
+
+/** Read saved note identities from actual MCP results, including older nested envelopes. */
+export function noteReferencesFromToolPayload(result: unknown, status?: string): Array<{id:string;title:string;noteLink:string}> {
+  if (isToolRunning(status) && result === undefined || /^(error|failed|declined|canceled|cancelled)$/i.test(status || "")) return [];
+  const record = unwrapToolRecord(result);
+  if (!record || record.isError === true || record.error) return [];
+  const structured = unwrapToolRecord(record.structuredContent);
+  const value = structured ? {...record,...structured} : record;
+  if (value.isError === true || value.error) return [];
+  const candidates = [value.note, ...(Array.isArray(value.notes) ? value.notes : [])];
+  const found = new Map<string, {id:string;title:string;noteLink:string}>();
+  for (const candidate of candidates) {
+    const note = asRecord(candidate);
+    if (typeof note?.id !== "string") continue;
+    const title = typeof note.title === "string" ? noteDisplayTitle(note.title).trim() || "Untitled note" : "Untitled note";
+    const {noteLink} = noteLinkFields({id:note.id,title});
+    if (!parseInternalLink(noteLink)) continue;
+    found.set(note.id,{id:note.id,title,noteLink});
+  }
+  return [...found.values()];
 }
 
 function normalizeTodoStatus(status?: string): string | undefined {
@@ -243,7 +254,7 @@ export function todosFromToolPayload(
     const record = unwrapToolRecord(raw);
     const list = record?.todos ?? record?.items ?? record?.tasks ?? record?.todoList;
     const todos = todosFromList(list);
-    if (todos.length) return todos;
+    if (Array.isArray(list)) return todos;
   }
   return undefined;
 }
@@ -253,47 +264,52 @@ export function planFromToolPayload(input?: string, result?: string, detail?: st
   content: string;
   workspaceLink?: string;
 } | undefined {
-  for (const source of [input, result, detail]) {
+  let content = "";
+  let workspaceLink = "";
+  let fallbackContent = "";
+  const titles: string[] = [];
+
+  for (const source of [result, input, detail]) {
     if (!source) continue;
     const record = unwrapToolRecord(source);
     if (record) {
       const plan = nestedRecord(record, "plan");
       const value = nestedRecord(record, "value");
-      const content = [
+      content ||= [
         record.content,
         record.plan,
         plan.content,
         value.content,
         value.plan,
-      ].map(nonEmptyString).find(Boolean);
-      if (content) {
-        const title = [
-          record.title,
-          record.name,
-          plan.title,
-          plan.name,
-          value.title,
-          value.name,
-        ].map(nonEmptyString).find(Boolean);
-        const workspaceLink = [
-          record.workspaceLink,
-          plan.workspaceLink,
-          value.workspaceLink,
-        ].map(nonEmptyString).find(Boolean);
-        const id = nonEmptyString(record.id) || nonEmptyString(plan.id) || nonEmptyString(value.id);
-        return {
-          title: title || "Plan",
-          content,
-          ...(workspaceLink
-            ? { workspaceLink }
-            : id ? { workspaceLink: `workspace://plan/${id}` } : {}),
-        };
+      ].map(nonEmptyString).find(Boolean) || "";
+      for (const candidate of [
+        record.title,
+        record.name,
+        plan.title,
+        plan.name,
+        value.title,
+        value.name,
+      ].map(nonEmptyString)) {
+        if (candidate) titles.push(candidate);
       }
-    } else if (source.trim() && !source.trim().startsWith("{")) {
-      return { title: "Plan", content: source.trim() };
+      const sourceId = nonEmptyString(record.id) || nonEmptyString(plan.id) || nonEmptyString(value.id);
+      workspaceLink ||= [
+        record.workspaceLink,
+        plan.workspaceLink,
+        value.workspaceLink,
+      ].map(nonEmptyString).find(Boolean) || (sourceId ? `workspace://plan/${sourceId}` : "");
+    } else if (!fallbackContent && source.trim() && !source.trim().startsWith("{")) {
+      fallbackContent = source.trim();
     }
   }
-  return undefined;
+
+  content ||= fallbackContent;
+  if (!content && !workspaceLink) return undefined;
+  return {
+    title: titles.find((candidate) => candidate !== "Plan") || titles[0] || "Plan",
+    content,
+    ...(workspaceLink ? { workspaceLink } : {}),
+  };
 }
 
 export type CanvasPreview = {
@@ -393,8 +409,9 @@ export function enrichToolDisplay(tool: {
 }): { name: string; kind: ToolKind; todos?: Array<{ id?: string; content: string; status?: string }> } {
   const name = innerToolName(tool.name, tool.input, tool.result);
   const classified = classifyToolKind(name, tool.input, tool.result);
-  const todos = todosFromToolPayload(tool.input, tool.result);
-  const kind: ToolKind = todos?.length || classified === "todo"
+  const isNote = classified === "note" || tool.kind === "note";
+  const todos = isNote ? undefined : todosFromToolPayload(tool.input, tool.result);
+  const kind: ToolKind = isNote ? "note" : todos?.length || classified === "todo"
     ? "todo"
     : tool.kind && tool.kind !== "mcp" && tool.kind !== "other"
       ? tool.kind as ToolKind
@@ -402,7 +419,7 @@ export function enrichToolDisplay(tool: {
   return {
     name: name || tool.name,
     kind,
-    ...(todos?.length ? { todos } : {}),
+    ...(todos !== undefined ? { todos } : {}),
   };
 }
 
@@ -423,18 +440,16 @@ export function withEnrichedToolDisplay<T extends {
     ...tool,
     name: enriched.name || tool.name,
     kind: enriched.kind as T["kind"],
-    ...(enriched.todos?.length && !tool.todos?.length ? { todos: enriched.todos } : {}),
+    ...(enriched.todos !== undefined && tool.todos === undefined ? { todos: enriched.todos } : {}),
   };
 }
 
 export function layoutAssistantParts<TTool extends { kind?: string }>(
   parts: Array<LayoutPart<TTool>>,
 ): AssistantViewBlock<TTool>[] {
-  // Plans and todos are state surfaces, not append-only history. Models may call
-  // create/edit_plan or write_todos repeatedly while working; rendering every
-  // intermediate call produces duplicate plan/task cards. Normalize tools once,
-  // then keep only the latest plan and todo for this assistant turn.
-  const normalizedToolsByIdentity = new Map<string, TTool & { type: "tool" }>();
+  // Every tool uses the same activity stream. Only updates to the same call
+  // identity merge; separate calls keep their place, including task updates.
+  const byIdentity = new Map<string, TTool & { type: "tool" }>();
   const normalized: Array<LayoutPart<TTool>> = [];
   for (const part of parts) {
     if (part.type !== "tool") {
@@ -444,120 +459,51 @@ export function layoutAssistantParts<TTool extends { kind?: string }>(
     const { type: _type, ...tool } = part;
     void _type;
     const next = withEnrichedToolDisplay(tool as unknown as TTool & {
-      name?: string;
-      input?: string;
-      result?: string;
-      kind?: string;
+      name?: string; input?: string; result?: string; kind?: string;
     }) as unknown as TTool;
     const key = toolIdentity(next);
-    const existing = normalizedToolsByIdentity.get(key);
-    if (existing) {
-      Object.assign(existing, next);
-      continue;
+    const existing = byIdentity.get(key);
+    if (existing) Object.assign(existing, next);
+    else {
+      const entry = { type: "tool" as const, ...next };
+      byIdentity.set(key, entry);
+      normalized.push(entry);
     }
-    const normalizedTool = { type: "tool" as const, ...next };
-    normalizedToolsByIdentity.set(key, normalizedTool);
-    normalized.push(normalizedTool);
   }
-  const lastStateIndex = new Map<string, number>();
-  normalized.forEach((part, index) => {
-    if (part.type === "tool" && (part.kind === "plan" || part.kind === "todo")) {
-      lastStateIndex.set(part.kind, index);
-    }
-  });
 
   const blocks: AssistantViewBlock<TTool>[] = [];
- let tools: TTool[] = [];
- let pendingThinking: { content: string; done?: boolean; durationMs?: number } | undefined;
-
- const takeThinking = () => {
- const thinking = pendingThinking;
- pendingThinking = undefined;
- return thinking;
- };
-
- const flushTools = () => {
- if (!tools.length) return;
- const thinking = takeThinking();
- blocks.push({ type: "tools", tools, ...(thinking ? { thinking } : {}) });
- tools = [];
- };
-
- const flushThinking = () => {
- if (tools.length) flushTools();
- const thinking = takeThinking();
- if (!thinking) return;
- blocks.push({ type: "thinking", ...thinking });
- };
-
- const pushStandalone = (tool: TTool) => {
- flushTools();
- // Keep pending thinking for the following regular tool group.
- const last = blocks.at(-1);
-    const isPlanTodo = tool.kind === "plan" || tool.kind === "todo";
-    const lastIsPlanTodoGroup =
-      last?.type === "tools" &&
-      last.tools.length > 0 &&
-      last.tools.every((item) => item.kind === "plan" || item.kind === "todo");
-    if (isPlanTodo && lastIsPlanTodoGroup) {
-      const byKind = new Map(last.tools.map((item) => [item.kind, item]));
-      byKind.set(tool.kind, tool);
-      // Cursor-like presentation: the plan is the primary surface and the task
-      // checklist sits directly below it in the same visual block.
-      last.tools = [byKind.get("plan"), byKind.get("todo")].filter(Boolean) as TTool[];
-      return;
-    }
-    blocks.push({ type: "tools", tools: [tool] });
+  let tools: TTool[] = [];
+  let thinking: { content: string; done?: boolean; durationMs?: number } | undefined;
+  const flushTools = () => {
+    if (!tools.length) return;
+    blocks.push({ type: "tools", tools, ...(thinking ? { thinking } : {}) });
+    tools = [];
+    thinking = undefined;
   };
-
-  normalized.forEach((part, index) => {
+  const flushThinking = () => {
+    if (!thinking) return;
+    blocks.push({ type: "thinking", ...thinking });
+    thinking = undefined;
+  };
+  for (const part of normalized) {
     if (part.type === "thinking") {
- if (tools.length) flushTools();
- const next = {
- content: part.content,
- done: part.done,
- durationMs: part.durationMs,
- };
- if (pendingThinking) {
- pendingThinking = {
- content: [pendingThinking.content, next.content].filter(Boolean).join("\n\n"),
- done: next.done,
- durationMs: (pendingThinking.durationMs || 0) + (next.durationMs || 0) || next.durationMs,
- };
- } else {
- pendingThinking = next;
- }
- return;
- }
- if (part.type === "compaction") {
- flushTools();
- flushThinking();
- blocks.push(part);
- return;
- }
- if (part.type === "text") {
- if (!part.content.trim()) return;
- flushTools();
- flushThinking();
- const last = blocks.at(-1);
+      flushTools();
+      thinking = mergeBlockThinking(thinking, part);
+    } else if (part.type === "compaction") {
+      flushTools();
+      flushThinking();
+      blocks.push(part);
+    } else if (part.type === "text") {
+      if (!part.content.trim()) continue;
+      flushTools();
+      flushThinking();
+      const last = blocks.at(-1);
       if (last?.type === "text") last.content = joinAssistantText(last.content, part.content);
       else blocks.push({ type: "text", content: part.content });
-      return;
-    }
-    if (
-      (part.kind === "plan" || part.kind === "todo") &&
-      lastStateIndex.get(part.kind) !== index
-    ) {
-      return;
-    }
-    if (isStandaloneToolKind(part.kind)) {
-      pushStandalone(part);
-      return;
-    }
-    tools.push(part);
-  });
+    } else tools.push(part);
+  }
   flushTools();
-    flushThinking();
+  flushThinking();
   return coalesceActivityBlocks(blocks);
 }
 
@@ -618,13 +564,9 @@ function coalesceActivityBlocks<TTool extends { kind?: string }>(
  continue;
  }
  if (block.type === "tools" && last?.type === "tools") {
- const blockHasStateSurface = block.tools.some((tool) => isStandaloneToolKind(tool.kind));
- const lastHasStateSurface = last.tools.some((tool) => isStandaloneToolKind(tool.kind));
- if (!blockHasStateSurface && !lastHasStateSurface) {
  last.tools = [...last.tools, ...block.tools];
  last.thinking = mergeBlockThinking(last.thinking, block.thinking);
  continue;
- }
  }
  out.push(block);
  }
@@ -822,6 +764,11 @@ export type ToolActionIcon =
   | "browser"
   | "subagent"
   | "compress"
+  | "todo"
+  | "plan"
+  | "canvas"
+  | "memory"
+  | "automation"
   | "other";
 
 export type ToolActionCategory = "file" | "search" | "edit" | "shell" | "browser" | "memory" | "tool";
@@ -832,6 +779,10 @@ export function resolveToolAction(name?: string, kind?: string): {
   category: ToolActionCategory;
 } {
   const value = (name || "").toLowerCase();
+  if (kind === "todo") return { verb: "Updated", icon: "todo", category: "tool" };
+  if (kind === "plan") return { verb: "Updated", icon: "plan", category: "tool" };
+  if (kind === "canvas") return { verb: "Updated", icon: "canvas", category: "tool" };
+  if (kind === "automation") return { verb: "Updated", icon: "automation", category: "tool" };
   if (kind === "compaction" || /(compact|compaction)/.test(value)) {
     return { verb: "Compacted", icon: "compress", category: "tool" };
   }
@@ -840,7 +791,7 @@ export function resolveToolAction(name?: string, kind?: string): {
   }
   if (kind === "memory" || /(memory|remember)/.test(value)) {
     const verb = /(list)/.test(value) ? "Listed" : /(delete|remove)/.test(value) ? "Deleted" : /(edit|update)/.test(value) ? "Updated" : "Saved";
-    return { verb, icon: "other", category: "memory" };
+    return { verb, icon: "memory", category: "memory" };
   }
   if (kind === "browser" || /(browser_|navigate|playwright|webfetch|web_fetch)/.test(value)) {
     return { verb: "Browsed", icon: "browser", category: "browser" };
@@ -895,7 +846,9 @@ export function toolCallHeadline(input: {
   const shortPath = filePath ? basenamePath(filePath) : undefined;
 
   let core: string;
-  if (action.category === "shell") {
+  if (input.kind === "todo") {
+    core = "Updated tasks";
+  } else if (action.category === "shell") {
     core = command ? `${action.verb} ${command}` : action.verb;
   } else if (action.verb === "Grepped") {
     core = pattern ? `${action.verb} ${pattern}` : action.verb;

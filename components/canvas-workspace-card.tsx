@@ -47,7 +47,7 @@ export function CanvasWorkspaceCard({ title, content, workspaceLink, onOpen }: C
             {stats.charts ? <span className="text-[10px] text-muted-foreground/65">{stats.charts} chart{stats.charts === 1 ? "" : "s"}</span> : null}
             {!stats.diagrams && stats.headings ? <span className="text-[10px] text-muted-foreground/65">{stats.headings} sections</span> : null}
           </div>
-          <h3 className="mt-0.5 truncate text-sm font-semibold tracking-tight text-foreground" title={title}>{title}</h3>
+          <h3 className="mt-0.5 truncate text-sm font-semibold tracking-tight text-foreground" title={title}>{onOpen ? <button type="button" className="max-w-full truncate text-left hover:underline" onClick={onOpen}>{title}</button> : title}</h3>
         </div>
         {onOpen ? (
           <button type="button" className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground" aria-label="Open canvas" title="Open canvas" onClick={onOpen}>
@@ -64,7 +64,7 @@ export function CanvasWorkspaceCard({ title, content, workspaceLink, onOpen }: C
 
       <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
         <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/55"><Sparkles className="size-3" /> Live Markdown</span>
-        {workspaceLink ? <span className="hidden min-w-0 flex-1 truncate px-1 text-[10px] text-muted-foreground/40 sm:block">{workspaceLink}</span> : <span className="flex-1" />}
+        {workspaceLink ? <button type="button" disabled={!onOpen} onClick={onOpen} className="hidden min-w-0 flex-1 truncate px-1 text-left text-[10px] text-muted-foreground/40 enabled:hover:underline sm:block">{workspaceLink}</button> : <span className="flex-1" />}
         <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground" onClick={() => void copyRawContent()}>
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           {copied ? "Copied" : "Copy"}

@@ -59,6 +59,28 @@ test("typed submission persists values, emits one readable message and preserves
     assert.equal(store.getChat(chat.id, owner.id)!.messages.filter(m => m.id === "question-answer-" + pending.questionId).length, 1);
   } finally { pending.stop(); jobs.updateJob(job.id, { status: "cancelled" }); }
 });
+test("wrapped ask_user answers persist their exact transcript boundary before the tool result returns", async () => {
+  const chat = store.createChat("Wrapped form flow", undefined, owner.id);
+  const pending = questions.createPendingQuestion([{ question: "Choice", key: "choice", type: "text" }], chat.id, owner.id);
+  store.appendMessage(chat.id, { id: "wrapped-assistant", role: "assistant", content: "Before.", parts: [
+    { type: "text", content: "Before." },
+    { type: "tool", id: "wrapped-ask", name: "mcp", input: JSON.stringify({ toolName: "ask_user", arguments: { questions: [{ question: "Choice" }] } }), status: "running" },
+  ] }, owner.id);
+  store.updateChat(chat.id, { pendingQuestion: { ...pending, status: "waiting_for_user" } }, owner.id);
+  try {
+    const response = await submit(pending.questionId, { choice: "Keep this answer here" });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result.message.questionAnswer, { questionId: pending.questionId, assistantMessageId: "wrapped-assistant", toolCallId: "wrapped-ask" });
+    assert.deepEqual(await pending.promise, ["Keep this answer here"]);
+    const restored = store.getChat(chat.id, owner.id)!;
+    assert.deepEqual(restored.messages.at(-1)!.questionAnswer, result.message.questionAnswer);
+    assert.equal(restored.pendingQuestion, undefined);
+    const repeated = await submit(pending.questionId, { choice: "Changed" });
+    assert.equal(repeated.status, 200);
+    assert.deepEqual((await repeated.json()).message, result.message);
+  } finally { pending.stop(); }
+});
 test("invalid values return field errors and leave the durable form open", async () => {
   const chat = store.createChat("Validation", undefined, owner.id);
   const pending = questions.createPendingQuestion([{ question: "Count", key: "count", type: "number", min: 1, max: 10 }], chat.id, owner.id);

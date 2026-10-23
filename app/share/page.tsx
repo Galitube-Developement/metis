@@ -236,7 +236,6 @@ function SharedMessageView({
             <ToolCallGroup
               thinking={message.thinking ? [{ text: message.thinking, done: true }] : []}
               tools={tools}
-              includePlans
               autoExpand={false}
               onOpenWorkspace={onOpenWorkspace}
             />

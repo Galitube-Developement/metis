@@ -4,10 +4,10 @@ import test from "node:test";
 
 const shellSource = readFileSync(new URL("../components/app-shell.tsx", import.meta.url), "utf8");
 
-test("mobile sidebar stays open when selecting normal sidebar content", () => {
-  const sidebarStart = shellSource.indexOf("const sidebar = (mobile = false) => (");
-  const sidebarEnd = shellSource.indexOf("useEffect(() =>", sidebarStart);
-  assert.ok(sidebarStart >= 0 && sidebarEnd > sidebarStart, "sidebar render block should be present");
+test("mobile sidebar stays open when selecting or creating a chat", () => {
+  const sidebarStart = shellSource.indexOf("renderChat={(chat) => {");
+  const sidebarEnd = shellSource.indexOf("onOpenProject={openProjectHome}", sidebarStart);
+  assert.ok(sidebarStart >= 0 && sidebarEnd > sidebarStart, "chat rows and creation handlers should be present");
   const sidebarSource = shellSource.slice(sidebarStart, sidebarEnd);
 
   assert.doesNotMatch(sidebarSource, /setMobileNavOpen\(false\)/);

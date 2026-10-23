@@ -64,7 +64,7 @@ function EditDiff({ tool, chatId, messageId, editorLanguage }: EditedFilesDiffPr
     if (editorLanguage === undefined) return <SnapshotDiff snapshot={state.snapshot} />;
     if (state.snapshot.before.length + state.snapshot.after.length > 2_000_000) return <p role="status" className="p-4 text-xs text-muted-foreground">This diff exceeds the 2 MB preview limit. Open the original file to continue.</p>;
     return <DiffEditor height="100%" language={editorLanguage} theme="vs-dark" original={state.snapshot.before} modified={state.snapshot.after}
-      options={{ readOnly: true, originalEditable: false, originalAriaLabel: "File before this edit", modifiedAriaLabel: "File after this edit", automaticLayout: true, renderSideBySide: true, useInlineViewWhenSpaceIsLimited: true, renderSideBySideInlineBreakpoint: 640, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false, padding: { top: 12 } }}
+      options={{ readOnly: true, originalEditable: false, originalAriaLabel: "File before this edit", modifiedAriaLabel: "File after this edit", automaticLayout: true, renderSideBySide: true, useInlineViewWhenSpaceIsLimited: true, renderSideBySideInlineBreakpoint: 640, minimap: { enabled: false }, wordWrap: "off", diffWordWrap: "off", scrollbar: { horizontal: "visible" }, scrollBeyondLastLine: false, padding: { top: 12 } }}
       loading={<p role="status" className="p-4 text-xs text-muted-foreground">Loading diff editor…</p>} />;
   }
   return <div className="px-2 py-3 text-xs text-muted-foreground" role={state.status === "error" ? "alert" : "status"}>

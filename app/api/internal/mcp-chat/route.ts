@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const requestedLimit = typeof body.limit === "number" ? Math.floor(body.limit) : 10;
     const limit = Math.min(30, Math.max(1, requestedLimit));
     return Response.json({
-      results: searchChatsForUser(query, userId, limit),
+      results: await searchChatsForUser(query, userId, limit),
       actor: "agent",
       jobId,
     });

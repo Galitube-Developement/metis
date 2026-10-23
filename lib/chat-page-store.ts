@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Chat, ChatMessage, ToolPart } from "@/lib/store";
 import { compactChatPageMessages } from "@/lib/chat-page-payload";
 import { currentChatTodos } from "@/lib/chat-todos";
+import { syncChatSearch } from "@/lib/chat-search-store";
 
 export const CHAT_EVENT_PAGE_SIZE = 24;
 export const CHAT_PAGE_BYTE_BUDGET = 256 * 1024;
@@ -100,6 +101,7 @@ function messageRows(db: DatabaseSync, chatId: string, message: ChatMessage, pos
 /** Called in the canonical write transaction. The original JSON remains authoritative. */
 export function syncChatPage(db: DatabaseSync, chat: Chat, change?: { message?: ChatMessage; position?: number; metadataOnly?: boolean }) {
  const state=pageState(db,chat.id);
+ syncChatSearch(db,chat,state?.revision ?? 1,change);
  const incremental=!!change && !!state?.metadata && state.ready_revision===state.revision-1;
  if(!incremental) {
   db.prepare("DELETE FROM chat_page_messages WHERE chat_id=?").run(chat.id);

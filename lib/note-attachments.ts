@@ -1,7 +1,7 @@
 import { getDatabase } from "@/lib/sqlite";
 import { canAccessProjectResource } from "@/lib/project-access";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getAgentCwd } from "@/lib/mcp";
 import { isImageMime, MAX_ATTACHMENTS, sanitizeFileName } from "@/lib/uploads";
@@ -50,6 +50,19 @@ export async function readNoteFile(noteId: string, id: string, ownerId?: string)
   } catch {
     return null;
   }
+}
+
+/** Callers must resolve note access before listing its attachment namespace. */
+export async function listNoteAttachmentFiles(noteId: string, ownerId?: string) {
+  const names = await readdir(attachmentDir(noteId, ownerId)).catch(() => [] as string[]);
+  const files = [];
+  for (const name of names) {
+    if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue;
+    const id = name.slice(0, -5);
+    const file = await resolveNoteFile(noteId, id, ownerId);
+    if (file) files.push({ id, ...file });
+  }
+  return files;
 }
 
 export async function resolveNoteFile(noteId:string,id:string,ownerId?:string) {

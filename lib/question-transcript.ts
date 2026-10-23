@@ -1,5 +1,7 @@
-type Tool = { id: string; name: string; status?: string; result?: string };
-type Part = { type: string; content?: string; id?: string; name?: string; status?: string; result?: string };
+import { innerToolName } from "./tool-call-display";
+
+type Tool = { id: string; name: string; input?: string; status?: string; result?: string };
+type Part = { type: string; content?: string; id?: string; name?: string; input?: string; status?: string; result?: string };
 
 export type QuestionAnswerAnchor = { assistantMessageId: string; toolCallId: string };
 export type QuestionAnswerReference = { questionId: string } & Partial<QuestionAnswerAnchor>;
@@ -12,8 +14,8 @@ type TranscriptMessage = {
   questionAnswer?: QuestionAnswerReference;
 };
 
-function isQuestionTool(name = "") {
-  return /(?:^|__|[/.])ask_user$/.test(name);
+function isQuestionTool(part: Part) {
+  return /(?:^|__|[/.])ask_user$/.test(innerToolName(part.name ?? "", part.input, part.result));
 }
 
 function partsFor(message: TranscriptMessage): Part[] {
@@ -50,7 +52,7 @@ function questionId(message: TranscriptMessage) {
 
 function answerAnchors(messages: readonly TranscriptMessage[]) {
   const calls = messages.flatMap((message, messageIndex) => message.role === "assistant"
-    ? partsFor(message).flatMap((part, partIndex) => part.type === "tool" && part.id && isQuestionTool(part.name)
+    ? partsFor(message).flatMap((part, partIndex) => part.type === "tool" && part.id && isQuestionTool(part)
       ? [{ assistantMessageId: message.id, toolCallId: part.id, messageIndex, partIndex, questionId: resultQuestionId(part.result), failed: part.status === "error" }]
       : [])
     : []);

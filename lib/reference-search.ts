@@ -1,4 +1,4 @@
-export const REFERENCE_KINDS = ["file", "canvas", "plan", "note", "browser", "terminal", "memory", "chat"] as const;
+export const REFERENCE_KINDS = ["file", "canvas", "plan", "note", "issue", "browser", "terminal", "memory", "chat"] as const;
 export type ReferenceKind = typeof REFERENCE_KINDS[number];
 
 /** Search words independently; accents and German spelling should not hide a result. */

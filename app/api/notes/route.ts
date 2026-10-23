@@ -3,8 +3,11 @@ import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import {
   createNote,
   listNotes,
+  notePageInputFromBody,
+  NoteValidationError,
   type NoteWriteInput,
 } from "@/lib/shared-context";
+import { listAccessibleIssues } from "@/lib/issues";
 import { searchProjects } from "@/lib/projects";
 import { featureFlags } from "@/lib/feature-flags";
 
@@ -15,16 +18,17 @@ function inputFromBody(body: Record<string, unknown>): NoteWriteInput {
   const position = body.position && typeof body.position === "object" ? body.position as Record<string, unknown> : undefined;
   const size = body.size && typeof body.size === "object" ? body.size as Record<string, unknown> : undefined;
   return {
+    ...notePageInputFromBody(body),
     title: typeof body.title === "string" ? body.title : undefined,
     content: typeof body.content === "string" ? body.content : undefined,
-    kind: body.kind === "project" || body.kind === "note" || body.kind === "image" || body.kind === "file" ? body.kind : undefined,
+    kind: body.kind === "issuebook" || body.kind === "project" || body.kind === "note" || body.kind === "image" || body.kind === "file" ? body.kind : undefined,
     uploadId: typeof body.uploadId === "string" ? body.uploadId : undefined,
     todos: Array.isArray(body.todos) ? body.todos as NoteWriteInput["todos"] : undefined,
     color: typeof body.color === "string" ? body.color : undefined,
     scope: body.scope === "global" || body.scope === "chat" || body.scope === "workspace" ? body.scope : undefined,
     chatId: typeof body.chatId === "string" ? body.chatId.trim() : undefined,
     workspaceId: typeof body.workspaceId === "string" ? body.workspaceId.trim() : undefined,
-    projectId: typeof body.projectId === "string" ? body.projectId.trim() : undefined,
+    projectId: body.projectId === null ? null : typeof body.projectId === "string" ? body.projectId.trim() : undefined,
     position: position ? { x: Number(position.x), y: Number(position.y) } : undefined,
     size: size ? { width: Number(size.width), height: Number(size.height) } : undefined,
     archived: typeof body.archived === "boolean" ? body.archived : undefined,
@@ -42,6 +46,12 @@ export async function GET(req: Request) {
   const workspaceId = url.searchParams.get("workspaceId")?.trim() || undefined;
   if (chatId && !getChat(chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
   const search = url.searchParams.get("search")?.trim() || undefined;
+  const requestedProject = url.searchParams.get("projectId")?.trim() || undefined;
+  const projectId = requestedProject === "none" ? null : requestedProject;
+  const requestedParent = url.searchParams.get("parentId")?.trim() || undefined;
+  const parentId = requestedParent === "none" || requestedParent === "root" ? null : requestedParent;
+  // Materialize existing issues once, keeping their IDs and project membership.
+  if (userId) listAccessibleIssues(userId);
   let notes = listNotes({
     ownerId: userId,
     chatId,
@@ -49,7 +59,8 @@ export async function GET(req: Request) {
     scope: url.searchParams.get("scope") as NoteWriteInput["scope"] || undefined,
     includeArchived: url.searchParams.get("includeArchived") === "true",
     search,
-    projectId: url.searchParams.get("projectId")?.trim() || undefined,
+    projectId,
+    parentId,
   }).filter((note) => note.kind !== "learned_fact");
   if (search) {
     const matchingIds = new Set(searchProjects(search, userId).map((project) => project.id));
@@ -59,6 +70,8 @@ export async function GET(req: Request) {
         chatId,
         workspaceId,
         includeArchived: url.searchParams.get("includeArchived") === "true",
+        projectId,
+        parentId,
       }).filter((note) => note.kind !== "learned_fact" && note.projectId && matchingIds.has(note.projectId));
       const seen = new Set(notes.map((note) => note.id));
       notes = [...notes, ...extra.filter((note) => !seen.has(note.id))];
@@ -72,9 +85,9 @@ export async function POST(req: Request) {
   const userId = (await getAuthenticatedUserId(req)) ?? undefined;
   if (!featureFlags(getGlobalModelSettings(userId)).notes) return Response.json({ error: "Notes are disabled" }, { status: 404 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const input = inputFromBody(body);
-  if (input.chatId && !getChat(input.chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
   try {
+    const input = inputFromBody(body);
+    if (input.chatId && !getChat(input.chatId, userId)) return Response.json({ error: "Chat not found" }, { status: 404 });
     const note = createNote({
       ...input,
       ownerId: userId,
@@ -82,6 +95,6 @@ export async function POST(req: Request) {
     });
     return Response.json({ note }, { status: 201 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Could not create note" }, { status: 400 });
+    return Response.json({ error: error instanceof Error ? error.message : "Could not create note" }, { status: error instanceof NoteValidationError ? error.status : 400 });
   }
 }

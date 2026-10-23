@@ -30,36 +30,31 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { loadToolPayload, type FullToolPayload } from "@/lib/tool-result-client";
 import { cn } from "@/lib/utils";
-import { AutomationCard } from "@/components/automation-card";
-import { PlanWorkspaceCard } from "@/components/plan-workspace-card";
-import { planLooksParallelizable } from "@/lib/modes";
-import { CanvasWorkspaceCard } from "@/components/canvas-workspace-card";
+import { internalLinkNavigation } from "@/lib/internal-link";
+import { ToolCallPreview } from "@/components/tool-call-preview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 import {
-  canvasFromToolPayload,
   compactFileDiff,
   enrichToolDisplay,
-  hydrateCanvasPreview,
   isToolRunning,
+  noteReferencesFromToolPayload,
   planFromToolPayload,
-  todosFromToolPayload,
   toolCallHeadline,
   toolSourceLabel,
   activityGroupLabel,
- memoryCardFromPayload,
- toolGroupLabel,
   truncateToolText,
   type ToolActionIcon,
+  type ToolKind,
 } from "@/lib/tool-call-display";
 import { looksLikeTranscriptDump } from "@/lib/agent-transcript";
 
-import { parseAutomationCard } from "@/lib/tool-kind";
-import { ThinkingBlock, activityRowClass } from "@/components/thinking-block";
+import { ThinkingBlock } from "@/components/thinking-block";
+import { activityActionClass, activityRowClass } from "@/lib/activity-display";
 
 export type ToolCallData = {
   id: string;
@@ -68,7 +63,7 @@ export type ToolCallData = {
   phase?: "preparing" | "executing";
   inputChars?: number;
   detail?: string;
-  kind?: "plan" | "edit" | "read" | "shell" | "subagent" | "mcp" | "canvas" | "note" | "todo" | "browser" | "memory" | "automation" | "compaction" | "other";
+  kind?: ToolKind;
   source?: "mcp" | "native" | "browser";
   path?: string;
   diff?: { before?: string; after?: string; additions?: number; deletions?: number };
@@ -111,7 +106,12 @@ const ACTION_ICONS: Record<ToolActionIcon, typeof BookOpen> = {
   browser: Globe2,
   subagent: Bot,
   compress: Shrink,
-  other: Globe2,
+  todo: ListTodo,
+  plan: ListTodo,
+  canvas: StickyNote,
+  memory: Brain,
+  automation: CalendarClock,
+  other: Wrench,
 };
 
 function formatStructuredValue(value: unknown, indent = 0): string {
@@ -213,29 +213,7 @@ function displayedDiffStats(diff?: ToolCallData["diff"], input?: string) {
   };
 }
 
-function noteInfo(input?: string, result?: string, detail?: string) {
-  for (const source of [result, input, detail].filter(Boolean) as string[]) {
-    try {
-      const parsed = JSON.parse(source) as Record<string, unknown>;
-      const value = parsed.value && typeof parsed.value === "object"
-        ? parsed.value as Record<string, unknown>
-        : {};
-      const note = [parsed.note, value.note].find(
-        (candidate): candidate is Record<string, unknown> =>
-          Boolean(candidate) && typeof candidate === "object" && !Array.isArray(candidate),
-      );
-      if (!note || typeof note.id !== "string") continue;
-      return {
-        id: note.id,
-        title: typeof note.title === "string" && note.title.trim() ? note.title.trim() : "Untitled note",
-        content: typeof note.content === "string" ? note.content : "",
-      };
-    } catch {
-      // Tool output may still be streaming or plain text.
-    }
-  }
-  return null;
-}
+
 
 function toolReactKey(tool: ToolCallData, index: number): string {
   const id = tool.id?.trim();
@@ -247,96 +225,7 @@ function toolReactKey(tool: ToolCallData, index: number): string {
   return `tool-${fingerprint || "unknown"}-${index}`;
 }
 
-function automationInfo(name: string, input?: string, result?: string, detail?: string) {
-  return parseAutomationCard(name, result, input, detail);
-}
 
-function isAutomationCardTool(tool: ToolCallData) {
-  if (["running", "in_progress", "pending", "started", "executing", "queued"].includes(String(tool.status ?? "").toLowerCase())) {
-    return false;
-  }
-  return Boolean(automationInfo(tool.name, tool.input, tool.result, tool.detail));
-}
-
-function mcpDisplayInfo(name: string, input?: string, detail?: string) {
-  const source = input || detail;
-  let values: Record<string, unknown> = {};
-  try {
-    const parsed = source ? JSON.parse(source) : null;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      values = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // MCP arguments may be plain text.
-  }
-  const nested = values.arguments && typeof values.arguments === "object"
-    ? values.arguments as Record<string, unknown>
-    : {};
-  const server = typeof values.server === "string" ? values.server : undefined;
-  const tool = typeof values.tool === "string"
-    ? values.tool
-    : typeof values.toolName === "string"
-      ? values.toolName
-      : undefined;
-  const nestedServer = typeof nested.server === "string" ? nested.server : undefined;
-  const nestedTool = typeof nested.tool === "string"
-    ? nested.tool
-    : typeof nested.toolName === "string"
-      ? nested.toolName
-      : undefined;
-  const action = [nestedServer || server, nestedTool || tool].filter(Boolean).join(" · ") || name.replaceAll("_", " ");
-  const description = [
-    values.description,
-    values.command,
-    values.query,
-    values.path,
-    nested.description,
-    nested.command,
-    nested.query,
-    nested.path,
-  ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
-  return {
-    label: action,
-    detail: description?.replace(/\s+/g, " ").trim(),
-  };
-}
-
-function toolDisplayInfo(kind: ToolCallData["kind"], name: string, input?: string, detail?: string, path?: string) {
-  let values: Record<string, unknown> = {};
-  try {
-    const parsed = input ? JSON.parse(input) : null;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) values = parsed as Record<string, unknown>;
-  } catch {
-    // Keep the compact fallback for streamed or plain-text arguments.
-  }
-  const command = [values.command, values.cmd, values.script]
-    .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
-  const inputPath = path || [values.path, values.file, values.filePath, values.filename]
-    .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
-  const readableName = name
-    .replaceAll("_", " ")
-    .replace(/^(shell|read|edit|write)\s*/i, "")
-    .trim();
-  const primary = kind === "shell"
-    ? command || readableName
-    : kind === "read" || kind === "edit"
-      ? inputPath || readableName
-      : readableName;
-  const output = detail?.replace(/\s+/g, " ").trim();
-  const extra = command && primary !== command ? command : output;
-  return {
-    label: primary || kind || name.replaceAll("_", " "),
-    detail: extra && !isSameCompactText(primary, extra) ? extra : undefined,
-  };
-}
-
-function isSameCompactText(left?: string, right?: string) {
-  if (!left || !right) return false;
-  const a = String(left ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-  const b = String(right ?? "").replace(/\s+/g, " ").trim().replace(/…$/u, "").trim().toLowerCase();
-  if (!a || !b) return false;
-  return a === b || a.startsWith(b) || b.startsWith(a);
-}
 
 export const ToolCallChip = memo(function ToolCallChip({
   name,
@@ -376,9 +265,16 @@ export const ToolCallChip = memo(function ToolCallChip({
   // "running". The result is terminal evidence, so never keep the spinner in
   // that case (including an intentionally empty response).
   const running = isToolRunning(status) && result === undefined;
+  const failed = /^(error|failed|declined|canceled|cancelled)$/i.test(status);
   const display = useMemo(() => enrichToolDisplay({ name, input, result, kind }), [name, input, result, kind]);
-  const todoItems = todos?.length ? todos : display.todos;
+  const todoItems = display.kind === "note" ? undefined : todos ?? display.todos;
   const resolvedKind = display.kind;
+  const noteReferences = useMemo(() => resolvedKind === "note" ? noteReferencesFromToolPayload(result, status) : [], [resolvedKind, result, status]);
+  const openNote = (id: string) => {
+    const navigation = internalLinkNavigation({kind:"note",id});
+    setUserOpen(false);
+    window.dispatchEvent(new CustomEvent(navigation.event,{detail:navigation.detail}));
+  };
   const isCommand = resolvedKind === "shell";
   const expanded = userOpen;
   useEffect(() => {
@@ -404,160 +300,17 @@ export const ToolCallChip = memo(function ToolCallChip({
   const sourceLabel = toolSourceLabel({ name, input, kind: resolvedKind, source });
   const Icon = deleteTool && (resolvedKind === "edit" || headline.icon === "edit")
     ? Trash2
-    : ACTION_ICONS[headline.icon];
+    : resolvedKind === "note" ? StickyNote : ACTION_ICONS[headline.icon];
   const clickable = resolvedKind === "edit" && Boolean(diff || path);
   const subagentClickable = resolvedKind === "subagent";
   const workspaceClickable = resolvedKind === "plan" || resolvedKind === "canvas" || resolvedKind === "browser";
-  if (running && phase === "preparing") return <ToolInputStatus name={resolvedName} kind={resolvedKind} source={source} characters={inputChars}/>;
-  if (todoItems?.length) {
-    const completed = todoItems.filter((todo) => /^(completed|done)$/i.test(todo.status || "")).length;
-    const percent = Math.round((completed / todoItems.length) * 100);
-    return (
-      <section className="my-2.5 w-full overflow-hidden rounded-xl border border-border/45 bg-card/40">
-        <div className="flex items-center gap-2 px-3 py-2.5">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-400/[0.08] text-blue-300"><ListTodo className="size-3.5" /></span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-xs font-semibold text-foreground/85">Tasks</span>
-              <span className="text-[10px] tabular-nums text-muted-foreground/60">{completed}/{todoItems.length} · {percent}%</span>
-            </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted/70"><div className="h-full rounded-full bg-blue-400/75 transition-[width]" style={{ width: `${percent}%` }} /></div>
-          </div>
-          {onOpenRaw ? <button type="button" className="flex size-6 shrink-0 items-center justify-center rounded-md max-md:min-h-11 max-md:min-w-11 text-muted-foreground/45 hover:bg-muted hover:text-foreground" aria-label="Show raw tool information" onClick={onOpenRaw}><Code2 className="size-3" /></button> : null}
-        </div>
-        <div className="border-t border-border/30 px-3 py-2">
-          <div className="space-y-1.5">
-            {todoItems.map((todo, index) => {
-              const done = /^(completed|done)$/i.test(todo.status || "");
-              const active = /^(in_progress|running)$/i.test(todo.status || "");
-              return (
-                <div key={todo.id ?? `${todo.content}-${index}`} className="flex min-w-0 items-start gap-2 text-xs">
-                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] transition-colors", done ? "border-emerald-400/45 bg-emerald-400/10 text-emerald-300" : active ? "border-blue-400/55 bg-blue-400/10 text-blue-300" : "border-border/65 text-muted-foreground")}>{done ? <Check aria-hidden="true" className="size-2.5" /> : active ? <span aria-hidden="true" className="size-1.5 rounded-full bg-current" /> : null}</span>
-                  <span className={cn("min-w-0 flex-1 leading-4", done ? "text-muted-foreground/60 line-through" : active ? "font-medium text-foreground/90" : "text-foreground/72")}>{todo.content}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-    );
-  }
-  if (resolvedKind === "memory") {
-    const memoryCard = memoryCardFromPayload(name, input || detail, result, running ? "running" : status);
-    return (
-      <div className="my-2 flex w-full items-start gap-2.5 rounded-xl border border-violet-400/15 bg-violet-400/[0.035] px-3 py-2.5 text-xs">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-400/10 text-violet-300"><Brain className="size-3.5" /></span>
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground/85">{memoryCard.title}</p>
-          {payloadUrl && !expanded ? <button type="button" className="mt-1 underline" onClick={()=>setUserOpen(true)}>Load memory details</button> : outputStatus}
-          <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-foreground/75">{memoryCard.body}</p>
-        </div>
-      </div>
-    );
-  }
-  const plan = resolvedKind === "plan" ? planFromToolPayload(input, result, detail) : null;
-  const previewText = headline.preview;
-  const automation = !running ? automationInfo(name, input, result, detail) : null;
+  if (running && phase === "preparing") return <div data-tool-call-row data-tool-kind={resolvedKind} className={cn(nested ? "my-0" : "my-0.5", "flex w-full min-w-0")}><ToolInputStatus name={resolvedName} kind={resolvedKind} source={source} characters={inputChars}/></div>;
+  const previewText = resolvedKind === "todo" && todoItems ? `${todoItems.filter(todo => /^(completed|done)$/i.test(todo.status || "")).length}/${todoItems.length} completed` : noteReferences.length === 1 ? noteReferences[0].title : headline.preview;
   const diffStats = displayedDiffStats(diff, input);
-  if (resolvedKind === "plan" && !running && plan) {
-    return (
-      <PlanWorkspaceCard
-        title={plan.title}
-        content={plan.content}
-        workspaceLink={plan.workspaceLink}
-        onOpen={onOpenWorkspace}
-        onBuild={() => onBuildPlan?.(plan)}
-        onBuildWithAgents={() => onBuildPlan?.(plan, { multiAgent: true })}
-        showMultiAgent={planLooksParallelizable(plan.content)}
-        buildDisabled={buildDisabled}
-        compact
-      />
-    );
-  }
-  const canvas = resolvedKind === "canvas" && !running
-    ? hydrateCanvasPreview(canvasFromToolPayload(input, result, detail), workspaces)
-    : null;
-  if (canvas) {
-    return (
-      <CanvasWorkspaceCard
-        title={canvas.title}
-        content={canvas.content}
-        workspaceLink={canvas.workspaceLink}
-        onOpen={onOpenWorkspace}
-      />
-    );
-  }
-  const note = resolvedKind === "note" && !running ? noteInfo(input, result, detail) : null;
-  if (note) {
-    return (
-      <section className="my-2.5 w-full rounded-lg border border-border/50 border-l-yellow-300/70 bg-muted/20 p-2.5">
-        <div className="flex items-start gap-2">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-yellow-300/10 text-yellow-300">
-            <StickyNote className="size-3.5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-yellow-300/80">Note ready</p>
-            <a
-              href={`#note-${note.id}`}
-              className="block truncate text-[13px] font-medium text-foreground underline decoration-border underline-offset-2 hover:text-primary"
-              onClick={(event) => {
-                event.preventDefault();
-                window.dispatchEvent(new CustomEvent("ai-chat:open-note", { detail: { id: note.id } }));
-              }}
-            >
-              {note.title}
-            </a>
-            <p className="mt-0.5 max-h-20 overflow-hidden whitespace-pre-wrap text-xs text-muted-foreground">
-              {note.content || "No note details available yet."}
-            </p>
-            <p className="mt-1 truncate text-[10px] text-muted-foreground/70">note://{note.id}</p>
-          </div>
-          <a
-            href={`#note-${note.id}`}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Open note"
-            title="Open note"
-            onClick={(event) => {
-              event.preventDefault();
-              window.dispatchEvent(new CustomEvent("ai-chat:open-note", { detail: { id: note.id } }));
-            }}
-          >
-            <ExternalLink className="size-3.5" />
-          </a>
-        </div>
-        <div className="mt-2 flex justify-end">
-          <a
-            href={`#note-${note.id}`}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
-              window.dispatchEvent(new CustomEvent("ai-chat:open-note", { detail: { id: note.id } }));
-            }}
-          >
-            Open note
-          </a>
-        </div>
-      </section>
-    );
-  }
-  if (automation) {
-    return (
-      <AutomationCard
-        actionLabel={automation.actionLabel}
-        title={automation.title}
-        prompt={automation.prompt}
-        scheduleLabel={automation.scheduleLabel}
-        automationLink={automation.automationLink}
-        onOpen={() => {
-          window.dispatchEvent(new CustomEvent("ai-chat:open-automations", { detail: { id: automation.id } }));
-        }}
-      />
-    );
-  }
   return (
     <Popover open={expanded} onOpenChange={setUserOpen}>
       <div className={cn(nested ? "my-0" : "my-0.5", "w-full min-w-0")} style={{ overflowAnchor: "none" }}>
-      <div className="group flex w-full min-w-0 items-center gap-1">
+      <div data-tool-call-row data-tool-kind={resolvedKind} className="group flex w-full min-w-0 items-center gap-1">
         <PopoverTrigger asChild>
         <button
           type="button"
@@ -566,7 +319,8 @@ export const ToolCallChip = memo(function ToolCallChip({
           {running ? (
             <RunStatus status={status} iconOnly decorative className="shrink-0 text-xs" />
           ) : null}
-          <Icon className="size-3 shrink-0 opacity-70" />
+          <Icon className={cn("size-3 shrink-0 opacity-70", failed && "text-destructive")} />
+          {failed ? <span className="shrink-0 text-destructive">{/cancel/i.test(status) ? "Canceled" : "Failed"}</span> : null}
           <span className={cn("truncate", deleteTool && "text-rose-400/80")}>{headline.title}{sourceLabel ? <span className="ml-1 text-[10px] uppercase tracking-wide opacity-50" title={sourceLabel}>{sourceLabel}</span> : null}</span>
           {searchResult ? <span className="shrink-0 text-[10px] text-muted-foreground">{workspaceSearchCount(searchResult)}</span> : null}
           {previewText ? (
@@ -585,7 +339,7 @@ export const ToolCallChip = memo(function ToolCallChip({
         {clickable ? (
           <button
             type="button"
-            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+            className={cn(activityActionClass, "text-muted-foreground/40 opacity-0 group-hover:opacity-100")}
             aria-label="Open file diff"
             title="Open file diff"
             onClick={(event) => {
@@ -599,7 +353,7 @@ export const ToolCallChip = memo(function ToolCallChip({
         {subagentClickable ? (
           <button
             type="button"
-            className="flex size-5 shrink-0 items-center justify-center rounded text-violet-300/80 opacity-100 transition-opacity hover:bg-muted hover:text-foreground"
+            className={cn(activityActionClass, "text-violet-300/80 opacity-100")}
             aria-label="Open subagent"
             title="Open subagent"
             onClick={(event) => {
@@ -610,10 +364,16 @@ export const ToolCallChip = memo(function ToolCallChip({
             <ExternalLink className="size-3" />
           </button>
         ) : null}
+        {noteReferences.length === 1 ? <a href={noteReferences[0].noteLink}
+          className={cn(activityActionClass, "text-muted-foreground/70")}
+          aria-label={"Open note " + noteReferences[0].title} title={"Open " + noteReferences[0].title}
+          onClick={event => {event.preventDefault();openNote(noteReferences[0].id);}}>
+          <ExternalLink className="size-3" />
+        </a> : null}
         {workspaceClickable ? (
           <button
             type="button"
-            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+            className={cn(activityActionClass, "text-muted-foreground/40 opacity-0 group-hover:opacity-100")}
             aria-label={`Open ${resolvedKind === "canvas" ? "canvas" : resolvedKind === "plan" ? "plan" : "browser"} in side panel`}
             title={`Open ${resolvedKind === "canvas" ? "canvas" : resolvedKind === "plan" ? "plan" : "browser"}`}
             onClick={(event) => {
@@ -627,7 +387,7 @@ export const ToolCallChip = memo(function ToolCallChip({
         {onOpenRaw ? (
           <button
             type="button"
-            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+            className={cn(activityActionClass, "text-muted-foreground/40 opacity-0 group-hover:opacity-100")}
             aria-label="Show raw tool information"
             onClick={(event) => {
               event.stopPropagation();
@@ -644,8 +404,19 @@ export const ToolCallChip = memo(function ToolCallChip({
           sideOffset={6}
           collisionPadding={12}
           aria-label={isCommand ? "Command details" : "Tool details"}
-          className="max-h-[min(70vh,36rem)] w-[min(42rem,calc(100vw-1.5rem))] overflow-y-auto p-3 text-xs leading-5"
+          className="max-h-[min(70dvh,36rem,var(--radix-popover-content-available-height,70dvh))] w-[min(42rem,calc(100vw-1.5rem))] overflow-y-auto p-3 text-xs leading-5 [&>*]:shrink-0"
         >
+          <ToolCallPreview tool={{name:resolvedName,kind:resolvedKind,input,result,detail,status,todos:todoItems}} workspaces={workspaces}
+            onOpenWorkspace={() => { setUserOpen(false); onOpenWorkspace?.(); }}
+            onBuildPlan={(plan, options) => { setUserOpen(false); onBuildPlan?.(plan, options); }}
+            onNavigate={() => setUserOpen(false)} buildDisabled={buildDisabled} />
+          {noteReferences.length > 0 ? <section aria-label="Referenced notes" className="mb-3 space-y-1 border-b border-border pb-3">
+            {noteReferences.map(note => <a key={note.id} href={note.noteLink}
+              className="flex min-h-8 items-center gap-2 rounded px-1.5 text-foreground hover:bg-muted"
+              onClick={event => {event.preventDefault();openNote(note.id);}}>
+              <StickyNote className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">{note.title}</span><ExternalLink className="size-3 shrink-0" />
+            </a>)}
+          </section> : null}
           {input ? (
             <section className="min-w-0">
               <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{isCommand ? "Command" : "Request"}</p>
@@ -672,45 +443,7 @@ export const ToolCallChip = memo(function ToolCallChip({
   );
 });
 
-export function PlanToolCallCard({
-  tool,
-  onOpenWorkspace,
-  onBuildPlan,
-  buildDisabled,
-  hostnames,
-}: {
-  tool: ToolCallData;
-  onOpenWorkspace?: () => void;
-  onBuildPlan?: (plan: { title: string; content: string; workspaceLink?: string }, options?: { multiAgent?: boolean }) => void;
-  buildDisabled?: boolean;
-  hostnames?: Record<string, string>;
-}) {
- const plan = planFromToolPayload(tool.input, tool.result, tool.detail);
-  if (!isToolRunning(tool.status) && plan) {
-    return (
-      <PlanWorkspaceCard
-        title={plan.title}
-        content={plan.content}
-        workspaceLink={plan.workspaceLink}
-        onOpen={onOpenWorkspace}
-        onBuild={() => onBuildPlan?.(plan)}
-        onBuildWithAgents={() => onBuildPlan?.(plan, { multiAgent: true })}
-        showMultiAgent={planLooksParallelizable(plan.content)}
-        buildDisabled={buildDisabled}
-        compact
-      />
-    );
-  }
-  return (
-    <ToolCallChip
-      {...tool}
-      hostnames={hostnames}
-      onOpenWorkspace={onOpenWorkspace}
-      onBuildPlan={onBuildPlan}
-      buildDisabled={buildDisabled}
-    />
-  );
-}
+
 
 export type ActivityThinking = {
   text: string;
@@ -732,7 +465,6 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   onBuildPlan,
   buildDisabled,
   onOpenRaw,
-  includePlans = true,
   autoExpand = false,
   live = false,
   hostnames,
@@ -749,7 +481,6 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   onBuildPlan?: (tool: ToolCallData, plan: { title: string; content: string; workspaceLink?: string }, options?: { multiAgent?: boolean }) => void;
   buildDisabled?: boolean;
   onOpenRaw?: (tool: ToolCallData) => void;
-  includePlans?: boolean;
   autoExpand?: boolean;
   live?: boolean;
   messageId?: string;
@@ -758,29 +489,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   workspaces?: Array<{ id: string; type?: string; name?: string; content?: string }>;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const entriesId = useId();
   const toolBornAt = (tool: ToolCallData) => messageId ? toolBirths?.get(toolMotionKey(messageId, tool.id)) : undefined;
-  const { planTools, noteTools, canvasTools, memoryTools, todoTools, automationTools, regularEntries } = useMemo(() => {
-  const isTodoTool = (tool: ToolCallData) =>
-    tool.kind === "todo" ||
-    Boolean(tool.todos?.length) ||
-    Boolean(todosFromToolPayload(tool.input, tool.result)?.length);
-  const planTools = includePlans ? tools.filter((tool) => tool.kind === "plan") : [];
-  const noteTools = tools.filter((tool) => tool.kind === "note");
-  const canvasTools = tools.filter((tool) => tool.kind === "canvas");
-  const memoryTools = tools.filter((tool) => tool.kind === "memory");
-  const todoTools = tools.filter((tool) => isTodoTool(tool));
-  const regularTools = tools.filter(
-    (tool) =>
-      tool.kind !== "note" &&
-      tool.kind !== "plan" &&
-      tool.kind !== "canvas" &&
-      tool.kind !== "memory" &&
-      !isTodoTool(tool),
-  );
-  const automationTools = tools.filter((tool) => isAutomationCardTool(tool));
-  const regularEntries = regularTools.filter((tool) => !isAutomationCardTool(tool));
-    return { planTools, noteTools, canvasTools, memoryTools, todoTools, automationTools, regularEntries };
-  }, [tools, includePlans]);
+  const entries = useMemo(() => tools.map(tool => ({ ...tool, ...enrichToolDisplay(tool) })), [tools]);
   const thinkingFromActivity = (activity || [])
  .filter((entry): entry is Extract<ActivityEntry, { type: "thinking" }> => entry.type === "thinking")
  .map((entry) => entry.thinking);
@@ -792,8 +503,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  durationMs: thinkingList.reduce((sum, item) => sum + (item.durationMs || 0), 0) || thinkingList.at(-1)?.durationMs,
  }
  : undefined;
- const preparingTool = latestPreparingTool(regularEntries);
- const groupTitle = activityGroupLabel(regularEntries, combinedThinking);
+ const preparingTool = latestPreparingTool(entries);
+ const groupTitle = activityGroupLabel(entries, combinedThinking);
   const groupOpen = userOpen ?? Boolean(live || autoExpand);
   const renderTool = (tool: ToolCallData, nested = false) => (
     <ToolCallChip
@@ -826,72 +537,16 @@ export const ToolCallGroup = memo(function ToolCallGroup({
       }}
     />
   );
-  const renderEntry = (entry: ActivityEntry, index: number) => {
-    if (entry.type === "thinking") {
-      if (!entry.thinking.text?.trim() && entry.thinking.done !== false) return null;
-      return (
-        <ThinkingBlock
-          key={`thinking-${index}`}
-          text={entry.thinking.text || "…"}
-          done={entry.thinking.done !== false}
-          durationMs={entry.thinking.durationMs}
-          embedded
-        />
-      );
-    }
-    return <div key={entry.tool.id}>{renderTool(entry.tool)}</div>;
-  };
-
-  if (regularEntries.length === 0 && !combinedThinking) {
- return (
- <>
- {planTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {noteTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {canvasTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {memoryTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {todoTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {automationTools.map((tool) => (
- <ArrivalFade key={tool.id} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- </>
- );
- }
- const activityRunning = regularEntries.some((tool) => isToolRunning(tool.status));
- return (
- <div className="w-full min-w-0" style={{ overflowAnchor: "none" }}>
- {planTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {noteTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {canvasTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {memoryTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {automationTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- {todoTools.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool)}</ArrivalFade>
- ))}
- <div className={regularEntries.length === 1 && !combinedThinking ? "flex flex-col" : "my-0.5 w-full"}>
- {regularEntries.length > 1 || combinedThinking ? <button
+  if (!entries.length && !combinedThinking) return null;
+  const activityRunning = entries.some(tool => isToolRunning(tool.status) && tool.result === undefined);
+  return (
+  <div className="w-full min-w-0" style={{ overflowAnchor: "none" }}>
+ <div className="my-0.5 flex w-full flex-col" data-tool-call-group>
+ <button
  type="button"
  className={activityRowClass}
  aria-expanded={groupOpen}
+ aria-controls={entriesId}
  onClick={() => setUserOpen((open) => open === null ? !groupOpen : !open)}
  >
  {activityRunning || combinedThinking?.done === false ? (
@@ -900,9 +555,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", groupOpen && "rotate-90")} />
  )}
  {preparingTool ? <ToolPreparationDetails name={preparingTool.name} kind={preparingTool.kind} source={preparingTool.source} characters={!groupOpen ? preparingTool.inputChars : undefined}/> : <span className="truncate">{groupTitle}</span>}
- </button> : null}
- <div key="entries" hidden={!(regularEntries.length === 1 && !combinedThinking) && !groupOpen}
-   className={cn("flex flex-col", (regularEntries.length > 1 || combinedThinking) && "gap-1 pl-4")}>
+ </button>
+ <div key="entries" id={entriesId} hidden={!groupOpen} className="mt-1 flex flex-col gap-1 pl-4">
  {combinedThinking?.text || combinedThinking?.done === false ? (
  <ThinkingBlock
  key="thinking"
@@ -912,8 +566,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  embedded
  />
  ) : null}
- {regularEntries.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool, regularEntries.length > 1 || Boolean(combinedThinking))}</ArrivalFade>
+ {entries.map((tool, index) => (
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool, true)}</ArrivalFade>
  ))}
  </div>
  </div>

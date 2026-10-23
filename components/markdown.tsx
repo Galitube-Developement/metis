@@ -2,6 +2,7 @@
 
 import {
   memo,
+  createElement,
   Children,
   isValidElement,
   useEffect,
@@ -25,6 +26,8 @@ import { MarkdownSpan } from "@/components/markdown-span";
 import { remarkChatIcons } from "@/lib/markdown-icons";
 import { markdownSourceTitle } from "@/lib/markdown-source-title";
 import { FileEmbed } from "@/components/file-embed";
+import { NotesRichBlockPreview } from "@/components/notes/rich-block-preview";
+import { collectNotesMarkdownHeadings, type NotesHeading } from "@/lib/notes-editor-headings";
 import { FileLink } from "@/components/file-link";
 import { parseFileEmbed, isFileUrl, mimeTypeFromFileName } from "@/lib/file-types";
 import { normalizeMath, splitStreamingMath } from "@/lib/math";
@@ -183,7 +186,7 @@ export function splitThinkingBlocks(content: string): ThinkingSegment[] {
 
 function transformMarkdownUrl(url: string) {
   if (parseWorkspaceFileLink(url)) return url;
-  if (/^(workspace|note|subagent|automation):\/\//i.test(url)) return url;
+  if (parseInternalLink(url) || /^subagent:\/\//i.test(url)) return url;
   return defaultUrlTransform(url);
 }
 
@@ -192,8 +195,10 @@ function CodeBlock({
   children,
   inline,
   editableFiles,
+  notesHeadings,
+  node,
   ...props
-}: HTMLAttributes<HTMLElement> & { inline?: boolean; editableFiles?: boolean }) {
+}: HTMLAttributes<HTMLElement> & { inline?: boolean; editableFiles?: boolean; notesHeadings?:NotesHeading[]; node?:{position?:{start?:{offset?:number}}} }) {
   const code = String(children).replace(/\n$/, "");
   const isInline = inline ?? (!className && !code.includes("\n"));
   const fileRoot = useRef<HTMLDivElement>(null);
@@ -206,6 +211,7 @@ function CodeBlock({
     );
   }
   const declaredLanguage = className?.match(/language-([\w-]+)/)?.[1];
+  if (declaredLanguage === "metis-block") return <NotesRichBlockPreview source={code} headings={notesHeadings} sourceOffset={node?.position?.start?.offset} />;
   const file = declaredLanguage === "file" ? parseFileEmbed(code) : null;
   if (file && !editableFiles) return <FileLink href={file.url} file={file}>{file.name}</FileLink>;
   if (file) return <div ref={fileRoot} data-editor-control="file" onPointerDown={e=>e.stopPropagation()}>
@@ -287,6 +293,11 @@ function TaskCheckbox({
   );
 }
 
+function MarkdownHeading({ level, headings, node, children, ...props }: HTMLAttributes<HTMLHeadingElement> & {level:number;headings:NotesHeading[];node?:{position?:{start?:{offset?:number}}}}) {
+  const id = headings.find((heading) => heading.path === undefined && heading.sourceOffset === node?.position?.start?.offset)?.id;
+  return createElement("h" + level,{...props,id},children);
+}
+
 export const Markdown = memo(function Markdown({
   content,
   streaming = false,
@@ -304,19 +315,25 @@ export const Markdown = memo(function Markdown({
   animateText?: boolean;
   initialBornAt?: number;
 }) {
+  const { ready, pending } = streaming ? splitStreamingMath(content) : { ready: normalizeMath(content), pending: "" };
+  const source = wrapBareMermaid(ready);
+  const noteHeadings = useMemo(() => source.includes("tableOfContents") && source.includes("metis-block") ? collectNotesMarkdownHeadings(source) : [], [source]);
   const markdownComponentsWithCode = useMemo(() => ({
     ...markdownComponents,
     pre: ({ children }: HTMLAttributes<HTMLPreElement>) => <>{children}</>,
-    code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles}/>,
+    code: (props: HTMLAttributes<HTMLElement>) => <CodeBlock {...props} editableFiles={editableFiles} notesHeadings={noteHeadings}/>,
+    h1: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={1} headings={noteHeadings}/>,
+    h2: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={2} headings={noteHeadings}/>,
+    h3: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={3} headings={noteHeadings}/>,
+    h4: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={4} headings={noteHeadings}/>,
+    h5: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={5} headings={noteHeadings}/>,
+    h6: (props: HTMLAttributes<HTMLHeadingElement>) => <MarkdownHeading {...props} level={6} headings={noteHeadings}/>,
     img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => typeof props.src === "string" && isFileUrl(props.src) ? <FileEmbed file={{url:props.src,name:props.alt || "Image",mimeType:mimeTypeFromFileName(props.alt || "image.png")}} className="my-2 max-h-96"/> : <img {...props} alt={props.alt || "Image"}/>,
     p: ({children}: HTMLAttributes<HTMLParagraphElement>) => Children.toArray(children).some(child => isValidElement<{href?:string;src?:string}>(child) && isFileUrl(child.props.src || "")) ? <div className="my-2">{children}</div> : <p>{children}</p>,
     input: (props: InputHTMLAttributes<HTMLInputElement>) => (
       <TaskCheckbox {...props} interactive={interactiveTasks} />
     ),
-  }), [editableFiles, interactiveTasks]);
-
-  const { ready, pending } = streaming ? splitStreamingMath(content) : { ready: normalizeMath(content), pending: "" };
-  const source = wrapBareMermaid(ready);
+  }), [editableFiles, interactiveTasks, noteHeadings]);
   const [arrivalState, setArrivalState] = useState(() => initialStreamingArrival(source, Date.now(), initialBornAt));
   const arrival = appendStreamingArrival(arrivalState, source, Date.now());
   if (arrival !== arrivalState) setArrivalState(arrival);

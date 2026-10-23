@@ -7,11 +7,14 @@ import { fileDownloadUrl, fileViewKind, type FileEmbedSpec } from "@/lib/file-ty
 import { formatFileBytes } from "@/lib/upload-limits";
 import { readTextFilePreview } from "@/lib/text-file-preview";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EditableMarkdown } from "@/components/editable-markdown";
+import { isMarkdownFile } from "@/lib/markdown-file";
 
 export function FileEmbed({ file, onChange, onRemove, className = "", resizable = true, previewOnly = false }: {
   file:FileEmbedSpec; onChange?:(file:FileEmbedSpec)=>void; onRemove?:()=>void; className?:string; resizable?:boolean; previewOnly?:boolean;
 }) {
-  const kind = fileViewKind(file.mimeType,file.name);
+  const markdownFile = isMarkdownFile(file.name, file.mimeType);
+  const kind = markdownFile ? "text" : fileViewKind(file.mimeType,file.name);
   const [text,setText] = useState<string|null>(file.text ?? null);
   const [error,setError] = useState("");
   const [editing,setEditing] = useState(false);
@@ -48,7 +51,7 @@ export function FileEmbed({ file, onChange, onRemove, className = "", resizable 
         : kind === "pdf" ? <iframe src={file.url} title={file.name} tabIndex={previewOnly ? -1 : undefined} className="h-full min-h-64 w-full border-0" />
         : kind === "text" || kind === "office" ? editing ?
           <div className="flex h-full min-h-52 flex-col gap-2 bg-background p-2 text-foreground">
-            <textarea aria-label={"Edit " + file.name} value={draft} maxLength={80_000} spellCheck={false} onChange={e=>setDraft(e.target.value)} className="min-h-32 w-full flex-1 resize-none rounded border border-border bg-background p-2 font-mono text-xs focus-visible:outline-2 focus-visible:outline-ring"/>
+            {markdownFile ? <EditableMarkdown editorId={`attachment:${file.url}`} aria-label={"Edit " + file.name} value={draft} onChange={setDraft} maxLength={80_000} autoFocus hideAttachmentButton className="min-h-32 flex-1 rounded border border-border p-2" /> : <textarea aria-label={"Edit " + file.name} value={draft} maxLength={80_000} spellCheck={false} onChange={e=>setDraft(e.target.value)} className="min-h-32 w-full flex-1 resize-none rounded border border-border bg-background p-2 font-mono text-xs focus-visible:outline-2 focus-visible:outline-ring"/>}
             <div className="flex gap-2"><button type="button" onClick={save} className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground focus-visible:outline-2 focus-visible:outline-ring">Save changes</button><button type="button" onClick={()=>setEditing(false)} className="rounded px-2 py-1 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">Cancel</button></div>
           </div>
           : <pre className="m-0 h-full min-h-32 overflow-auto whitespace-pre bg-background p-3 pr-10 font-mono text-xs text-foreground"><code>{text === null && !error ? "Loading preview…" : text || ""}</code></pre>

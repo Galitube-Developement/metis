@@ -2,6 +2,7 @@ import { getChat, getGlobalModelSettings } from "@/lib/db-store";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
 import { bearerTokenMatches } from "@/lib/security";
 import { featureFlags } from "@/lib/feature-flags";
+import { noteLinkFields } from "@/lib/note-reference";
 import {
   createNote,
   listNotes,
@@ -11,6 +12,14 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function pageFields(body: Record<string, unknown>) {
+  const fields: Partial<import("@/lib/shared-context").NoteWriteInput> = {};
+  for (const key of ["projectId", "parentId", "sortKey", "icon", "cover", "fullWidth", "favorite"] as const) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) (fields as Record<string, unknown>)[key] = body[key];
+  }
+  return fields;
+}
 
 function authorized(req: Request) {
   return bearerTokenMatches(req, process.env.MCP_BEARER_TOKEN);
@@ -49,7 +58,9 @@ export async function POST(req: Request) {
         scope: body.scope === "global" || body.scope === "chat" || body.scope === "workspace" ? body.scope : undefined,
         search: action === "search" && typeof body.query === "string" ? body.query : undefined,
         includeArchived: body.includeArchived === true,
-      }),
+        ...(Object.prototype.hasOwnProperty.call(body, "projectId") ? { projectId: body.projectId as string | null } : {}),
+        ...(Object.prototype.hasOwnProperty.call(body, "parentId") ? { parentId: body.parentId as string | null } : {}),
+      }).map(note => ({ ...note, ...noteLinkFields(note) })),
     });
   }
   if (action === "update") {
@@ -59,6 +70,7 @@ export async function POST(req: Request) {
       const note = updateNote(id, {
         ownerId: userId,
         author: "agent",
+        ...pageFields(body),
         title: typeof body.title === "string" ? body.title : undefined,
         content: typeof body.content === "string" ? body.content : undefined,
         kind: body.kind === "project" || body.kind === "note" ? body.kind : undefined,
@@ -71,18 +83,20 @@ export async function POST(req: Request) {
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : `${jobId}:${id}`,
       });
       if (!note) return Response.json({ error: "Note not found" }, { status: 404 });
-      return Response.json({ note, actor: "agent", jobId });
+      return Response.json({ note, ...noteLinkFields(note), actor: "agent", jobId });
     } catch (error) {
       if (error instanceof NoteConflictError) return Response.json({ error: error.message, note: error.current }, { status: 409 });
       return Response.json({ error: error instanceof Error ? error.message : "Could not update note" }, { status: 400 });
     }
   }
+  try {
   const note = createNote({
     ownerId: userId,
     author: "agent",
     chatId,
     workspaceId,
     projectId: typeof body.projectId === "string" ? body.projectId.trim() : chat.projectId,
+    ...pageFields(body),
     scope: body.scope === "global" || body.scope === "workspace" ? body.scope : "chat",
     kind: body.kind === "project" ? "project" : "note",
     todos: Array.isArray(body.todos) ? body.todos as import("@/lib/store").NoteTodo[] : undefined,
@@ -93,5 +107,8 @@ export async function POST(req: Request) {
     size: body.size && typeof body.size === "object" ? body.size as { width?: number; height?: number } : undefined,
     idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : `${jobId}:${Date.now()}`,
   });
-  return Response.json({ note, actor: "agent", jobId }, { status: 201 });
+  return Response.json({ note, ...noteLinkFields(note), actor: "agent", jobId }, { status: 201 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Could not create note" }, { status: 400 });
+  }
 }
