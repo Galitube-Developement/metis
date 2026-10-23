@@ -46,7 +46,6 @@ import { useSearchParams } from "next/navigation";
 import { scheduleUiBackgroundTask, shouldApplySnapshotVersion } from "@/lib/ui-work-scheduling";
 import { createMessageDerivationCache } from "@/lib/message-derivation-cache";
 import dynamic from "next/dynamic";
-import { AgentCursor } from "@/components/agent-cursor";
 import {
   ArrowUp,
   ArrowDown,
@@ -112,6 +111,7 @@ import {
   Settings2,
   Square,
   StickyNote,
+  NotebookPen,
   Terminal,
   Trash2,
   CornerUpLeft,
@@ -198,7 +198,7 @@ import {
   isChatBarSubagent,
   isChildRunLive,
 } from "@/lib/subagent-bar";
-import { PlanToolCallCard, ToolCallGroup, type ActivityEntry, type ToolCallData } from "@/components/tool-call-chip";
+import { ToolCallGroup, type ActivityEntry, type ToolCallData } from "@/components/tool-call-chip";
 import { canvasFromToolPayload, classifyToolKind, isToolRunning, layoutAssistantParts, mergeChatMessages, planFromToolPayload, remoteClientHostnameMap, todosFromToolPayload, workspaceIdFromLink } from "@/lib/tool-call-display";
 import { reconcileMessageParts } from "@/lib/message-parts";
 import { stripTranscriptDump } from "@/lib/agent-transcript";
@@ -235,7 +235,8 @@ import {
 import { CHAT_LIST_POLL_ACTIVE_MS, CHAT_LIST_POLL_IDLE_MS } from "@/lib/chat-list-poll";
 import { createStreamTextBatcher } from "@/lib/stream-ui-batch";
 import { browserFrameVisible, browserViewportPhase } from "@/lib/browser-viewport-phase";
-import { replaceBrowserFrameUrl } from "@/lib/browser-frame-url";
+import { createBrowserFramePresenter, type BrowserFramePresenter } from "@/lib/browser-frame-presenter";
+import { BrowserAgentPointer, type BrowserAgentPointerHandle } from "@/components/browser-agent-pointer";
 import { BrowserFrameIndicator } from "@/components/browser-frame-indicator";
 import {
   installGlobalClientTelemetry,
@@ -297,6 +298,7 @@ import {
 const AutomationsPanel = dynamic(() => import("@/components/automations-panel").then((mod) => mod.AutomationsPanel));
 const CommandPalette = dynamic(() => import("@/components/command-palette").then((mod) => mod.CommandPalette));
 const NotesVoid = dynamic(() => import("@/components/notes-void").then((mod) => mod.NotesVoid));
+const NotesWorkspace = dynamic(() => import("@/components/notes/notes-workspace").then((mod) => mod.NotesWorkspace));
 const ProjectHome = dynamic(() => import("@/components/project-home").then((mod) => mod.ProjectHome));
 const ProviderSetupDialog = dynamic(() => import("@/components/provider-setup-dialog").then((mod) => mod.ProviderSetupDialog));
 const RemoteFileEditor = dynamic(
@@ -794,7 +796,7 @@ type WorkspaceItem = {
   version?: number;
 };
 
-type ReferenceKind = "file" | "canvas" | "plan" | "note" | "browser" | "memory" | "chat" | "terminal";
+type ReferenceKind = "file" | "canvas" | "plan" | "note" | "issue" | "browser" | "memory" | "chat" | "terminal";
 
 type ReferenceItem = {
   kind: ReferenceKind;
@@ -1803,18 +1805,16 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [subagentModelParams, setSubagentModelParams] = useState<ModelParamSelection[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
+  const workspaceLinkRequestRef = useRef(0);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
-  const lastWorkspaceInteractionAtRef = useRef(Date.now());
+  const lastWorkspaceDismissedAtRef = useRef<number | null>(null);
   const workspaceWasOpenRef = useRef(false);
-  const markWorkspaceInteraction = useCallback((event: React.SyntheticEvent) => {
-    if (event.nativeEvent.isTrusted) lastWorkspaceInteractionAtRef.current = Date.now();
-  }, []);
   useEffect(() => {
     // Closing the pane must not let the next agent event immediately reopen it.
-    if (workspaceWasOpenRef.current && !workspaceOpen) lastWorkspaceInteractionAtRef.current = Date.now();
+    if (workspaceWasOpenRef.current && !workspaceOpen) lastWorkspaceDismissedAtRef.current = Date.now();
     workspaceWasOpenRef.current = workspaceOpen;
   }, [workspaceOpen]);
-  useEffect(() => { lastWorkspaceInteractionAtRef.current = Date.now(); }, [activeChatId]);
+  useEffect(() => { lastWorkspaceDismissedAtRef.current = null; }, [activeChatId]);
   const [workspaceMounted, setWorkspaceMounted] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<NonNullable<ChatSessionState["workspaceTab"]>>("canvas");
   const [notesOpen, setNotesOpen] = useState(false);
@@ -1897,8 +1897,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const [sendLockTick, setSendLockTick] = useState(0);
   const lastSendFingerprintRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
   const [browserHistory, setBrowserHistory] = useState<Array<{ id: number; url: string; title: string | null; ts: number }>>([]);
-  const [agentPointer, setAgentPointer] = useState<{ x: number; y: number; kind: string; ts: number } | null>(null);
-  const agentPointerHideTimerRef = useRef<number | null>(null);
+  const browserAgentPointerRef = useRef<BrowserAgentPointerHandle>(null);
   const composerDirtyUntilRef = useRef(0);
   const composerPersistChatRef = useRef<string | null>(null);
   const inputUpdatedAtRef = useRef("");
@@ -1937,7 +1936,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, []);
   const [composerSyncNonce, setComposerSyncNonce] = useState(0);
   const browserSocketRef = useRef<WebSocket | null>(null);
-  const browserStreamObjectUrlRef = useRef<string | null>(null);
+  const browserFramePresenterRef = useRef<BrowserFramePresenter | null>(null);
+  const [browserDocumentVisible, setBrowserDocumentVisible] = useState(true);
+  useEffect(() => {
+    const update = () => setBrowserDocumentVisible(document.visibilityState !== "hidden");
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
   const browserViewportRef = useRef<HTMLDivElement | null>(null);
   const browserScreenshotRef = useRef<HTMLImageElement | null>(null);
   const browserFrameUpdatedAtRef = useRef<number | null>(null);
@@ -2259,7 +2265,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const chatSyncConnectedRef = useRef(false);
   const chatSyncRefreshTimerRef = useRef<number | null>(null);
   const pendingChatSyncRef = useRef<Map<string, "created" | "updated" | "deleted">>(new Map());
-  const showBrowserStreamFrameRef = useRef<(blob: Blob) => void>(() => {});
   const openBrowserTabRef = useRef<(url?: string) => void>(() => {});
   const navigateBrowserRef = useRef<(url: string) => void>(() => {});
   const notifyAttentionRef = useRef<(chatId: string, questionId: string, body: string) => void>(() => {});
@@ -3085,23 +3090,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }
 
   function showBrowserScreenshot(source: string) {
-    if (browserStreamObjectUrlRef.current) {
-      URL.revokeObjectURL(browserStreamObjectUrlRef.current);
-      browserStreamObjectUrlRef.current = null;
-    }
-    if (browserScreenshotRef.current) {
-      browserScreenshotRef.current.src = source;
-    }
-    markBrowserFrameVisible();
+    browserFramePresenterRef.current?.push(source);
   }
-
-  function showBrowserStreamFrame(blob: Blob) {
-    browserStreamObjectUrlRef.current = replaceBrowserFrameUrl(
-      browserStreamObjectUrlRef.current, blob, browserScreenshotRef.current,
-    );
-    if (browserStreamObjectUrlRef.current) markBrowserFrameVisible();
-  }
-  showBrowserStreamFrameRef.current = showBrowserStreamFrame;
 
   async function performBrowserAction(action: string, extra: Record<string, unknown> = {}) {
     const chatId = activeChatId;
@@ -3343,9 +3333,15 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (!sendBrowserStreamAction("press", { key: press })) void performBrowserAction("press", { key: press });
   }
 
+  const browserStreamVisible = workspaceOpen && workspaceMounted && workspaceTab === "browser" &&
+    !accountView && !notesOpen && !automationsOpen && !projectHomeId && browserDocumentVisible;
+
   useEffect(() => {
-    if (workspaceTab !== "browser" || !browserEnabled || !activeChatId || loadingChatId) return;
+    if (!browserStreamVisible || !browserEnabled || !activeChatId || loadingChatId) return;
     const screenshotNode = browserScreenshotRef.current;
+    if (!screenshotNode) return;
+    const presenter = createBrowserFramePresenter(screenshotNode, markBrowserFrameVisible);
+    browserFramePresenterRef.current = presenter;
     let reconnectTimer: number | null = null;
     let disposed = false;
     const connect = () => {
@@ -3365,6 +3361,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       browserSocketRef.current = socket;
       socket.binaryType = "blob";
       socket.onmessage = (event) => {
+        if (disposed || browserSocketRef.current !== socket) return;
         if (typeof event.data === "string") {
           try {
             const message = JSON.parse(event.data) as { type?: string; url?: string; tabId?: string; activeTabId?: string; title?: string; viewport?: { width: number; height: number }; tabs?: BrowserTab[]; message?: string };
@@ -3393,7 +3390,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   return message.tabs!;
                 });
               } else if (message.title && message.tabId) {
-                setBrowserTabs((current) => current.map((tab) => tab.id === message.tabId ? { ...tab, title: message.title!, url } : tab));
+                setBrowserTabs((current) => {
+                  const tab = current.find((item) => item.id === message.tabId);
+                  return !tab || (tab.title === message.title && tab.url === url) ? current :
+                    current.map((item) => item.id === message.tabId ? { ...item, title: message.title!, url } : item);
+                });
               }
               if (message.viewport) {
                 const viewport = message.viewport;
@@ -3412,7 +3413,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           return;
         }
         const blob = event.data instanceof Blob ? event.data : new Blob([event.data], { type: "image/jpeg" });
-        showBrowserStreamFrameRef.current(blob);
+        presenter.push(blob);
       };
       socket.onclose = () => {
         if (browserSocketRef.current === socket) browserSocketRef.current = null;
@@ -3425,17 +3426,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (browserSocketRef.current) browserSocketRef.current.close();
       browserSocketRef.current = null;
-      if (browserStreamObjectUrlRef.current) URL.revokeObjectURL(browserStreamObjectUrlRef.current);
-      browserStreamObjectUrlRef.current = null;
-      if (screenshotNode) {
-        screenshotNode.removeAttribute("src");
-        screenshotNode.style.display = "none";
-      }
+      presenter.dispose();
+      if (browserFramePresenterRef.current === presenter) browserFramePresenterRef.current = null;
       clearBrowserFrame();
       browserLoadingRef.current = false;
       setBrowserLoading(false);
     };
-  }, [workspaceTab, activeChatId, activeBrowserTabId, browserDefaultViewport, loadingChatId, browserEnabled, browserRealtime, browserFps]);
+  }, [browserStreamVisible, activeChatId, activeBrowserTabId, browserDefaultViewport.width, browserDefaultViewport.height, loadingChatId, browserEnabled, browserRealtime, browserFps]);
 
   useEffect(() => {
     if (workspaceTab !== "browser") return;
@@ -3465,8 +3462,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     };
   }, [browserViewport.height, browserViewport.width, workspaceFullscreen, workspaceTab, workspaceWidth]);
 
-  // Current-chat browser events update the preview in the background. Revealing
-  // it is separate: an active run must not interrupt an open/recently used workspace.
+  // Agent activity can claim an empty pane, but must preserve another open tab.
   const activeBrowserAgentRun = Boolean(
     activeChatId &&
       !chats.some((chat) =>
@@ -3476,22 +3472,25 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       (busy || runningChatIds.includes(activeChatId) || chats.some((chat) => chat.id === activeChatId && chat.runStatus === "running")),
   );
 
-  const browserAutoRevealStateRef = useRef({workspaceOpen,activeRun:activeBrowserAgentRun,blocked:false});
+  const browserAutoRevealStateRef = useRef({workspaceOpen,workspaceTab,hasWorkspaceDocument:false,activeRun:activeBrowserAgentRun,blocked:false});
   browserAutoRevealStateRef.current = {
-    workspaceOpen,activeRun:activeBrowserAgentRun,
+    workspaceOpen,workspaceTab,hasWorkspaceDocument:Boolean(activeWorkspace && activeWorkspace.type === workspaceTab),activeRun:activeBrowserAgentRun,
     blocked:Boolean(accountView || notesOpen || automationsOpen || projectHomeId || loadingChatId || workspaceFullscreen),
   };
   useEffect(() => {
     if (typeof window === "undefined" || !browserEnabled || !activeChatId) return;
     const chatId = activeChatId;
+    const pointerRef = browserAgentPointerRef;
     const revealBrowserIfIdle = () => {
       const current = browserAutoRevealStateRef.current;
       if (!canAutoRevealBrowser({
-        workspaceOpen:current.workspaceOpen,lastWorkspaceInteractionAt:lastWorkspaceInteractionAtRef.current,
+        workspaceOpen:current.workspaceOpen,workspaceTab:current.workspaceTab,hasWorkspaceDocument:current.hasWorkspaceDocument,
+        lastWorkspaceDismissedAt:lastWorkspaceDismissedAtRef.current,
         now:Date.now(),mobile:isMobileChatViewport(),activeRun:current.activeRun,
         blocked:current.blocked || document.visibilityState === "hidden" || activeChatIdRef.current !== chatId,
       })) return;
       current.workspaceOpen = true;
+      current.workspaceTab = "browser";
       setWorkspaceMounted(true);
       setWorkspaceTab("browser");
       setWorkspaceOpen(true);
@@ -3506,17 +3505,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         if (data.source !== "agent") return;
         if (data.type === "pointer" && typeof data.x === "number" && typeof data.y === "number") {
           revealBrowserIfIdle();
-          setAgentPointer({
+          browserAgentPointerRef.current?.show({
             x: Math.max(0, Math.min(1, data.x)),
             y: Math.max(0, Math.min(1, data.y)),
             kind: data.pointerKind || "move",
             ts: data.ts || Date.now(),
           });
-          if (agentPointerHideTimerRef.current) window.clearTimeout(agentPointerHideTimerRef.current);
-          agentPointerHideTimerRef.current = window.setTimeout(() => {
-            setAgentPointer(null);
-            agentPointerHideTimerRef.current = null;
-          }, 4000);
           return;
         }
         if (data.type !== "action" && data.type !== "navigation") return;
@@ -3532,11 +3526,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     };
     return () => {
       source.close();
-      if (agentPointerHideTimerRef.current) {
-        window.clearTimeout(agentPointerHideTimerRef.current);
-        agentPointerHideTimerRef.current = null;
-      }
-      setAgentPointer(null);
+      pointerRef.current?.clear();
     };
   }, [activeBrowserAgentRun, activeChatId, browserEnabled]);
 
@@ -5210,6 +5200,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   useEffect(() => {
     const openLinkedUrl = (event: Event) => {
+      workspaceLinkRequestRef.current += 1;
       const url = (event as CustomEvent<unknown>).detail;
       if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
       if (!browserEnabled) return;
@@ -5224,22 +5215,31 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       const targetChatId =
         reference.chatId ||
         (reference.kind === "chat" ? reference.id : undefined);
+      if (reference.kind === "canvas" || reference.kind === "plan") {
+        window.dispatchEvent(new CustomEvent("ai-chat:open-workspace", {
+          detail: { type: reference.kind, id: reference.id, chatId: targetChatId },
+        }));
+        return;
+      }
+      workspaceLinkRequestRef.current += 1;
       if (targetChatId && targetChatId !== activeChatIdRef.current) {
         const opened = await loadChat(targetChatId);
         if (!opened) return;
       }
 
       if (reference.kind === "chat") return;
-      if (reference.kind === "canvas" || reference.kind === "plan") {
-        setActiveWorkspaceId(reference.id);
-        setWorkspaceTab(reference.kind);
-        setWorkspaceOpen(true);
+      if (reference.kind === "issue") {
+        window.dispatchEvent(new CustomEvent("ai-chat:open-issue", { detail: { id: reference.id } }));
         return;
       }
       if (reference.kind === "note") {
+        suppressNotesRouteRef.current = false;
         setWorkspaceOpen(false);
+        setWorkspaceFullscreen(false);
         setAccountView(null);
-      setNotesOpen(true);
+        setAutomationsOpen(false);
+        setMobileNavOpen(false);
+        setNotesOpen(true);
         setFocusedNoteId(null);
         window.setTimeout(() => setFocusedNoteId(reference.id), 0);
         navigateChat("notes");
@@ -5282,31 +5282,56 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       }
     };
     const openLinkedWorkspace = async (event: Event) => {
-      const detail = (event as CustomEvent<{ type?: string; id?: string }>).detail;
+      const detail = (event as CustomEvent<{ type?: string; id?: string; chatId?: string }>).detail;
       if (!detail?.id || (detail.type !== "plan" && detail.type !== "canvas")) return;
-      let workspace = workspaces.find((item) => item.id === detail.id);
-      if (!workspace && activeChatIdRef.current) {
-        try {
-          const response = await fetchReadWithRetry(
-            `/api/chats/${activeChatIdRef.current}?messageLimit=${CHAT_MESSAGE_LOAD_LIMIT}&messageOffset=${messageOffset}`,
-            { cache: "no-store" },
-          );
-          if (response.ok) {
-            const data = (await response.json()) as { chat?: Chat };
-            const nextWorkspaces = data.chat ? workspacesFromChat(data.chat) : [];
-            setWorkspaces(nextWorkspaces);
-            workspace = nextWorkspaces.find((item) => item.id === detail.id);
+      const requestId = ++workspaceLinkRequestRef.current;
+      const sourceChatId = activeChatIdRef.current;
+      const contextChatId = detail.chatId || sourceChatId;
+      let workspace = sourceChatId && contextChatId === sourceChatId
+        ? workspaces.find((item) => item.id === detail.id && item.type === detail.type)
+        : undefined;
+      try {
+        if (!workspace) {
+          const params = new URLSearchParams({ kind: detail.type, id: detail.id });
+          if (contextChatId) params.set("chatId", contextChatId);
+          let response = await fetchReadWithRetry(`/api/internal-workspace?${params}`, { cache: "no-store" });
+          // A pasted link may point to another owned chat. Explicit references
+          // retain their chat context, including repeated legacy canvas IDs.
+          if (response.status === 404 && contextChatId && !detail.chatId) {
+            params.delete("chatId");
+            response = await fetchReadWithRetry(`/api/internal-workspace?${params}`, { cache: "no-store" });
           }
-        } catch {
-          // Keep the side panel closed when the workspace cannot be loaded.
+          if (requestId !== workspaceLinkRequestRef.current || activeChatIdRef.current !== sourceChatId) return;
+          if (!response.ok) throw new Error("Workspace unavailable");
+          const data = await response.json() as { chatId: string; workspace: WorkspaceItem };
+          if (requestId !== workspaceLinkRequestRef.current || activeChatIdRef.current !== sourceChatId) return;
+          if (data.chatId !== activeChatIdRef.current) {
+            if (!(await loadChat(data.chatId, { forceReload: true }))) return;
+          }
+          if (requestId !== workspaceLinkRequestRef.current || activeChatIdRef.current !== data.chatId) return;
+          workspace = data.workspace;
+          const linkedWorkspace = workspace;
+          setWorkspaces((current) => {
+            const previous = current.find((item) => item.id === linkedWorkspace.id);
+            const merged = mergeIncomingWorkspace(linkedWorkspace, previous, data.chatId === sourceChatId ? workspaceDraftChangesRef.current.get(linkedWorkspace.id) : undefined);
+            return previous ? current.map((item) => item.id === merged.id ? merged : item) : [...current, merged];
+          });
         }
+        setAccountView(null);
+        setNotesOpen(false);
+        setAutomationsOpen(false);
+        setProjectHomeId(null);
+        setMobileNavOpen(false);
+        navigateChat(activeChatIdRef.current);
+        setActiveWorkspaceId(workspace.id);
+        setWorkspaceTab(detail.type);
+        setWorkspaceOpen(true);
+      } catch {
+        if (requestId === workspaceLinkRequestRef.current) toast.error("Could not open this workspace. It may have been deleted or is unavailable.");
       }
-      if (!workspace) return;
-      setActiveWorkspaceId(workspace.id);
-      setWorkspaceTab(detail.type);
-      setWorkspaceOpen(true);
     };
     const openLinkedFile = (event: Event) => {
+      workspaceLinkRequestRef.current += 1;
       const detail = (event as CustomEvent<WorkspaceFileRequest>).detail;
       if (!detail || typeof detail.path !== "string") return;
       const diff = detail.diff?.file?.path === detail.path ? detail.diff : undefined;
@@ -5317,7 +5342,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setWorkspaceOpen(true);
     };
     const openLinkedNote = (event: Event) => {
-      const detail = (event as CustomEvent<{ id?: string; chatId?: string }>).detail;
+      const detail = (event as CustomEvent<{ id?: string; chatId?: string; blockId?: string }>).detail;
       if (!detail?.id) return;
       void openLinkedReference(new CustomEvent("ai-chat:open-reference", {
         detail: {
@@ -5326,9 +5351,26 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           label: "Note",
           chatId: detail.chatId,
         } satisfies ReferenceItem,
-      }));
+      })).then(() => {
+        if (!detail.blockId || !/^[A-Za-z0-9_-]+$/.test(detail.blockId)) return;
+        window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + "#note-" + encodeURIComponent(detail.id!) + "/block-" + encodeURIComponent(detail.blockId));
+        window.dispatchEvent(new CustomEvent("metis:open-note-block", { detail: { id: detail.id, blockId: detail.blockId } }));
+      });
+    };
+    const openLinkedIssue = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (typeof id !== "string" || !id.trim()) return;
+      setFocusedNoteId(null);
+      setAccountView(null);
+      setNotesOpen(true);
+      setAutomationsOpen(false);
+      setWorkspaceOpen(false);
+      setMobileNavOpen(false);
+      navigateChat("notes");
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + "#issue-" + encodeURIComponent(id));
     };
     const openLinkedAutomation = (event: Event) => {
+      workspaceLinkRequestRef.current += 1;
       const detail = (event as CustomEvent<{ id?: string }>).detail;
       const id = typeof detail?.id === "string" && detail.id.trim() ? detail.id.trim() : null;
       persistActiveSnapshot();
@@ -5348,6 +5390,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     window.addEventListener("ai-chat:open-workspace", openLinkedWorkspace);
     window.addEventListener("ai-chat:open-file", openLinkedFile);
     window.addEventListener("ai-chat:open-note", openLinkedNote);
+    window.addEventListener("ai-chat:open-issue", openLinkedIssue);
     window.addEventListener("ai-chat:open-automations", openLinkedAutomation);
     return () => {
       window.removeEventListener("ai-chat:open-browser", openLinkedUrl);
@@ -5355,6 +5398,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       window.removeEventListener("ai-chat:open-workspace", openLinkedWorkspace);
       window.removeEventListener("ai-chat:open-file", openLinkedFile);
       window.removeEventListener("ai-chat:open-note", openLinkedNote);
+      window.removeEventListener("ai-chat:open-issue", openLinkedIssue);
       window.removeEventListener("ai-chat:open-automations", openLinkedAutomation);
     };
   }, [activeChatId, browserEnabled, loadChat, messageOffset, navigateChat, openDraft, persistActiveSnapshot, terminalTabs, workspaces]);
@@ -7742,10 +7786,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     (p) => p.type === "tool" && p.id.startsWith("workspace-") && p.kind === resolvedKind,
                   )
                   : -1;
-                const todoIndex = exactIndex < 0 && resolvedKind === "todo"
-                  ? parts.findIndex((p) => p.type === "tool" && p.kind === "todo")
-                  : -1;
-                const idx = exactIndex >= 0 ? exactIndex : workspaceIndex >= 0 ? workspaceIndex : todoIndex;
+                const idx = exactIndex >= 0 ? exactIndex : workspaceIndex;
                 const prevTool: ToolMsgPart | null =
                   idx >= 0 && parts[idx].type === "tool"
                     ? (parts[idx] as ToolMsgPart)
@@ -8684,6 +8725,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       canvas: "Canvases",
       plan: "Plans",
       note: "Notes",
+      issue: "Issues",
       browser: "Browser",
       memory: "Memories",
       chat: "Chats",
@@ -8697,6 +8739,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       canvas: Palette,
       plan: ClipboardList,
       note: StickyNote,
+      issue: ClipboardList,
       browser: PanelRight,
       memory: Brain,
       chat: MessageSquare,
@@ -9693,8 +9736,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             navigateChat("notes");
           }}
         >
-          <StickyNote className="size-3.5 shrink-0 opacity-60" />
-          <span className="min-w-0 truncate">Shared notes</span>
+          <NotebookPen className="size-3.5 shrink-0 opacity-60" />
+          <span className="min-w-0 truncate">Notebooks</span>
         </button>
         <button
           type="button"
@@ -10371,7 +10414,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             <div className="min-w-0 flex-1" aria-hidden="true" />
           ) : notesOpen ? (
             <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm font-medium text-foreground md:text-left">
-              Shared Notes
+              Notebooks
             </p>
           ) : isAgentChat && activeChatId && activeProjectId ? (
             <ProjectAgentChatHeader key={activeChatId} projectId={activeProjectId} chatId={activeChatId} fallbackTitle={chatTitle} onOpenTeam={() => { setWorkspaceTab("team"); setWorkspaceMounted(true); setWorkspaceOpen(true); }} />
@@ -10443,7 +10486,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               (queuedMessages.length ? "justify-end pb-10 sm:pb-8" : "justify-center pb-[10svh] sm:pb-8"),
           )}
         >
-        {!notesOpen && !automationsOpen && !projectHomeId && activeChatId ? <NotesVoid chatId={activeChatId} pinnedOnly compact projectId={chats.find((chat) => chat.id === activeChatId)?.projectId || draftProjectId} /> : null}
+        {!notesOpen && !automationsOpen && !projectHomeId && activeChatId ? <NotesVoid chatId={activeChatId} pinnedOnly compact projectId={chats.find((chat) => chat.id === activeChatId)?.projectId ?? null} /> : null}
         {projectHomeId && !notesOpen && !automationsOpen ? (
           <ProjectHome
             key={projectHomeId}
@@ -10475,8 +10518,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             />
           </div>
         ) : notesOpen ? (
-          <div className="h-full min-h-0 flex-1 p-3 sm:p-5">
-            <NotesVoid chatId={notesOpen ? null : activeChatId} focusNoteId={focusedNoteId} projectId={projectHomeId || draftProjectId || chats.find((chat) => chat.id === activeChatId)?.projectId} />
+          <div className="h-full min-h-0 flex-1 overflow-hidden">
+            <NotesWorkspace focusNoteId={focusedNoteId} initialProjectId={projectHomeId ?? (activeChatId ? chats.find((chat) => chat.id === activeChatId)?.projectId ?? null : draftProjectId ?? null)} />
           </div>
         ) : loadingChatId ? (
           <ChatLoadingSkeleton />
@@ -10860,21 +10903,19 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                                     ? canvasFromToolPayload(tool.input, tool.result, tool.detail)
                                     : planFromToolPayload(tool.input, tool.result, tool.detail);
                                   const previewId = workspaceIdFromLink(preview?.workspaceLink, tool.kind);
-                                  const workspace = previewId
-                                    ? workspaces.find((item) => item.id === previewId && item.type === tool.kind)
-                                    : undefined;
-                                  if (workspace) {
-                                    setActiveWorkspaceId(workspace.id);
-                                    setWorkspaceTab(tool.kind === "plan" ? "plan" : "canvas");
-                                    setWorkspaceOpen(true);
+                                  if (!previewId) {
+                                    toast.error("This workspace has no saved link.");
+                                    return;
                                   }
+                                  window.dispatchEvent(new CustomEvent("ai-chat:open-workspace", {
+                                    detail: { type: tool.kind, id: previewId },
+                                  }));
                                 }}
                                 onBuildPlan={(tool, plan, options) => {
                                   void tool;
                                   void buildPlan(plan, options);
                                 }}
                                 buildDisabled={busy || reverting}
-                                includePlans
                                 hostnames={remoteHostnames}
                                 workspaces={workspaces}
                               />
@@ -11220,11 +11261,6 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ) : null}
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted ? (
         <aside
-          onPointerDownCapture={markWorkspaceInteraction}
-          onPointerMoveCapture={markWorkspaceInteraction}
-          onKeyDownCapture={markWorkspaceInteraction}
-          onInputCapture={markWorkspaceInteraction}
-          onWheelCapture={markWorkspaceInteraction}
           className={cn(
             "workspace-surface relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border/55 bg-background",
             !workspaceFullscreen && "max-md:absolute max-md:inset-0 max-md:z-30 max-md:!w-full",
@@ -11569,14 +11605,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       onPointerUp={endBrowserPointer}
                       onPointerCancel={() => { browserPointerGestureRef.current = null; }}
                     />
-                    {agentPointer ? (
-                      <span
-                        className="metis-browser-agent-cursor"
-                        style={{ left: `${agentPointer.x * 100}%`, top: `${agentPointer.y * 100}%` }}
-                      >
-                        <AgentCursor kind={agentPointer.kind} />
-                      </span>
-                    ) : null}
+                    <BrowserAgentPointer ref={browserAgentPointerRef} />
                     {browserPhase === "loading" ? <BrowserPageSkeleton /> : null}
                     {browserPhase === "empty" ? <BrowserPageEmpty /> : null}
                   </div>
@@ -11823,10 +11852,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
-                    onChange={(nextContent) => {
-                      const content = nextContent.slice(0, 100_000);
-                      updateWorkspaceDraft(activeWorkspace.id, { content });
-                    }}
+                    maxLength={100_000}
+                    onChange={(content) => updateWorkspaceDraft(activeWorkspace.id, { content })}
                     aria-label="Plan content"
                     placeholder="Write the plan…"
                     className="rounded-xl border border-border/40 bg-card/35 px-4 py-4 text-sm leading-6 shadow-inner shadow-black/[0.025] focus-visible:bg-card/50"
@@ -11906,10 +11933,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     workspace={{ id: activeWorkspace.id, chatId: activeChatId! }}
                     value={activeWorkspace.content}
                     interactiveTasks
-                    onChange={(nextContent) => {
-                      const content = nextContent.slice(0, 100_000);
-                      updateWorkspaceDraft(activeWorkspace.id, { content });
-                    }}
+                    maxLength={100_000}
+                    onChange={(content) => updateWorkspaceDraft(activeWorkspace.id, { content })}
                     aria-label="Canvas content"
                     placeholder="Write notes, requirements, or a working draft…"
                     className="rounded-xl border border-border/40 bg-card/35 px-4 py-4 text-sm leading-6 shadow-inner shadow-black/[0.025] focus-visible:bg-card/50"

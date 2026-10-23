@@ -23,6 +23,8 @@ function acknowledge(task:Task) {
    // no full transcript is copied into JS or scanned for todos/activity.
    if(metadata.badge){
     db.prepare("UPDATE chats SET data=json_remove(data,'$.badge') WHERE id=?").run(task.chatId);
+    db.prepare(`UPDATE chat_search_state SET ready_revision=ready_revision+1
+      WHERE chat_id=? AND ready_revision=(SELECT revision-1 FROM chat_page_state WHERE chat_id=?)`).run(task.chatId,task.chatId);
     db.prepare("UPDATE chat_page_state SET metadata=json_remove(metadata,'$.badge'),ready_revision=revision WHERE chat_id=?").run(task.chatId);
     delete metadata.badge;
    }

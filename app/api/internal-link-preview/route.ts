@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   const kind = params.get("kind");
   const id = params.get("id")?.trim() || "";
   const chatId = params.get("chatId")?.trim();
-  if (!kind || !["plan", "canvas", "note", "automation"].includes(kind) ||
+  if (!kind || !["plan", "canvas", "note", "automation", "issue"].includes(kind) ||
       !id || id.length > 200 || /[\u0000-\u001f\u007f/\\]/.test(id) ||
       (chatId !== undefined && (!chatId || chatId.length > 200 || /[\u0000-\u001f\u007f/\\]/.test(chatId)))) {
     return Response.json({ error: "A valid kind and id are required" }, { status: 400, headers });

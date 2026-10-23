@@ -104,6 +104,8 @@ export function applyPinUpdate(ownerId: string, update: PinUpdate) {
           CASE WHEN json_type(data,'$.sessionState')='object' THEN data ELSE json_set(data,'$.sessionState',json('{}')) END,
           '$.sessionState.pinnedNoteIds',json(?),'$.sessionState.unpinnedGlobalNoteIds',json(?)) WHERE id=?`).run(ids,excluded,chat.id);
         db.prepare("UPDATE chat_list SET note_pins=? WHERE id=?").run(JSON.stringify(pins),chat.id);
+        db.prepare(`UPDATE chat_search_state SET ready_revision=ready_revision+1
+          WHERE chat_id=? AND ready_revision=(SELECT revision-1 FROM chat_page_state WHERE chat_id=?)`).run(chat.id,chat.id);
         // The trigger increments revision; only an already-current projection can be advanced.
         if(state && state.revision===state.ready_revision) db.prepare(`UPDATE chat_page_state SET metadata=json_set(
           CASE WHEN json_type(metadata,'$.sessionState')='object' THEN metadata ELSE json_set(metadata,'$.sessionState',json('{}')) END,

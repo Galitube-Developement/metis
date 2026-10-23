@@ -80,7 +80,7 @@ export function PlanWorkspaceCard({
               </span>
             ) : null}
           </div>
-          <h3 className="mt-0.5 truncate text-sm font-semibold tracking-tight text-foreground" title={title}>{title}</h3>
+          <h3 className="mt-0.5 truncate text-sm font-semibold tracking-tight text-foreground" title={title}>{onOpen ? <button type="button" className="max-w-full truncate text-left hover:underline" onClick={onOpen}>{title}</button> : title}</h3>
           {progress !== null ? (
             <div className="mt-2 flex items-center gap-2">
               <div className="h-1.5 min-w-20 flex-1 overflow-hidden rounded-full bg-muted/70">
@@ -115,7 +115,7 @@ export function PlanWorkspaceCard({
           {copied ? "Copied" : "Copy"}
         </button>
         {workspaceLink ? (
-          <span className="hidden min-w-0 flex-1 truncate px-1 text-[10px] text-muted-foreground/45 sm:block">{workspaceLink}</span>
+          <button type="button" disabled={!onOpen} onClick={onOpen} className="hidden min-w-0 flex-1 truncate px-1 text-left text-[10px] text-muted-foreground/45 enabled:hover:underline sm:block">{workspaceLink}</button>
         ) : <span className="flex-1" />}
         {onOpen ? (
           <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-foreground/85 transition-colors hover:bg-muted/70" onClick={onOpen}>

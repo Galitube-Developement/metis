@@ -161,7 +161,7 @@ export type NoteSize = {
   height: number;
 };
 
-export type NoteKind = "note" | "project" | "learned_fact" | "image" | "file";
+export type NoteKind = "note" | "issuebook" | "project" | "learned_fact" | "image" | "file";
 
 export type NoteTodo = {
   id: string;
@@ -190,6 +190,18 @@ export type SharedNote = {
   archived: boolean;
   version: number;
   projectId?: string;
+  /** Set only by the issue document store; title/content are shared with this issue. */
+  issueId?: string;
+  /** Legacy notes without hierarchy metadata are root Markdown pages. */
+  parentId?: string | null;
+  sortKey?: number;
+  formatVersion?: number;
+  icon?: string | null;
+  cover?: string | null;
+  fullWidth?: boolean;
+  favorite?: boolean;
+  childCount?: number;
+  hasChildren?: boolean;
 };
 
 export type Project = {

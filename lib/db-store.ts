@@ -402,56 +402,19 @@ export type ChatSearchResult = {
   matchedKeywords?: string[];
 };
 
-export function searchChatsForUser(
+export async function searchChatsForUser(
   query: string,
   ownerId?: string,
   limit = 30,
-): ChatSearchResult[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return [];
-
-  const results: ChatSearchResult[] = [];
-  for (const entry of listChatsForUser(ownerId, { includeArchived: true })) {
-    const chat = getChat(entry.id, ownerId);
-    if (!chat) continue;
-
-    const titleIndex = chat.title.toLowerCase().indexOf(normalized);
-    const matchedKeywords = normalizeChatKeywords(chat.keywords)
-      .filter((keyword) => keyword.toLowerCase().includes(normalized));
-    if (titleIndex >= 0 || matchedKeywords.length > 0) {
-      results.push({
-        chatId: chat.id,
-        chatTitle: chat.title,
-        updatedAt: chat.updatedAt,
-        snippet: titleIndex >= 0
-          ? makeSearchSnippet(chat.title, titleIndex, normalized.length)
-          : `Keywords: ${matchedKeywords.join(" · ")}`,
-        ...(matchedKeywords.length ? { matchedKeywords } : {}),
-      });
-    }
-
-    for (const message of chat.messages) {
-      const content = message.content || "";
-      const contentIndex = content.toLowerCase().indexOf(normalized);
-      if (contentIndex < 0) continue;
-      results.push({
-        chatId: chat.id,
-        chatTitle: chat.title,
-        updatedAt: chat.updatedAt,
-        messageId: message.id,
-        role: message.role,
-        snippet: makeSearchSnippet(content, contentIndex, normalized.length),
-      });
-      if (results.length >= limit) return results;
-    }
+): Promise<ChatSearchResult[]> {
+  const { searchOffThread } = await import("@/lib/chat-search");
+  const deadline=Date.now()+30_000;
+  let data=await searchOffThread(query,ownerId,limit);
+  while(data.indexing){
+    if(Date.now()>deadline)throw new Error("Search index is still preparing. Retry shortly.");
+    data=await searchOffThread(query,ownerId,limit);
   }
-  return results.slice(0, limit);
-}
-
-function makeSearchSnippet(text: string, index: number, matchLength: number) {
-  const start = Math.max(0, index - 70);
-  const end = Math.min(text.length, index + matchLength + 110);
-  return `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`;
+  return data.results;
 }
 
 export function getChat(id: string, ownerId?: string): Chat | null {

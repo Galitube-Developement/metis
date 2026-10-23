@@ -1,16 +1,19 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
-import { getChat, listChatsForUser, listMemories } from "@/lib/db-store";
+import { getChat, getGlobalModelSettings, listChatsForUser, listMemories } from "@/lib/db-store";
+import { listAccessibleIssues } from "@/lib/issues";
+import { issueReference } from "@/lib/issue-types";
+import { listProjects } from "@/lib/projects";
+import { featureFlags } from "@/lib/feature-flags";
 import { config } from "@/lib/config";
 import { listNotes } from "@/lib/shared-context";
-import { referenceMatches, REFERENCE_KINDS } from "@/lib/reference-search";
+import { noteDisplayTitle } from "@/lib/notes-tree";
+import { referenceMatches, REFERENCE_KINDS, type ReferenceKind } from "@/lib/reference-search";
 import { editedFilesForMessage } from "@/lib/edited-files";
 import { unwrapToolRecord } from "@/lib/tool-call-display";
 import { canAccessChat } from "@/lib/project-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type ReferenceKind = "file" | "canvas" | "plan" | "note" | "browser" | "memory" | "chat" | "terminal";
 
 type ReferenceResult = {
   kind: ReferenceKind;
@@ -44,7 +47,7 @@ export async function GET(req: Request) {
     }
   };
 
-  const chatEntries = kind === "note" || kind === "memory" ? [] : listChatsForUser(ownerId);
+  const chatEntries = kind === "note" || kind === "memory" || kind === "issue" ? [] : listChatsForUser(ownerId);
   for (const entry of chatEntries) {
     if (kind === "chat") {
       push({ kind: "chat", id: entry.id, label: entry.title || "Untitled chat", detail: entry.keywords?.join(" · "), chatId: entry.id, isCurrentChat: entry.id === currentChatId });
@@ -164,12 +167,17 @@ export async function GET(req: Request) {
       push({
         kind: note.kind === "learned_fact" ? "memory" : "note",
         id: note.id,
-        label: note.title || note.content.slice(0, 80) || "Untitled note",
+        label: noteDisplayTitle(note.title) || note.content.slice(0, 80) || "Untitled note",
         detail: note.projectId ? "Project context" : note.chatId ? "Chat context" : note.scope === "workspace" ? "Workspace context" : "Global context",
         ...(note.chatId ? { chatId: note.chatId, isCurrentChat: note.chatId === currentChatId } : {}),
         content: note.content.slice(0, 6_000),
       });
     }
+  }
+
+  if ((!kind || kind === "issue") && featureFlags(getGlobalModelSettings(ownerId)).notes) {
+    const projects = new Map(listProjects(ownerId).map(project => [project.id, project.name]));
+    for (const issue of listAccessibleIssues(ownerId)) push(issueReference(issue, issue.projectId ? projects.get(issue.projectId) : undefined));
   }
 
   const seen = new Set<string>();

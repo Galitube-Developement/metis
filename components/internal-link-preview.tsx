@@ -11,6 +11,7 @@ const kinds = {
   canvas: { label: "Canvas", Icon: LayoutDashboard },
   note: { label: "Note", Icon: NotebookPen },
   automation: { label: "Automation", Icon: Workflow },
+  issue: { label: "Issue", Icon: ClipboardList },
 } satisfies Record<InternalLinkKind, { label: string; Icon: typeof ClipboardList }>;
 
 export function InternalLinkPreviewContent({ target, chatId }: { target: InternalLinkTarget; chatId: string | null }) {

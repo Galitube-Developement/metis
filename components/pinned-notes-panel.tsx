@@ -4,6 +4,7 @@ import { createClientId } from "@/lib/client-id";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Pin, X } from "lucide-react";
 import type { SharedNote } from "@/lib/store";
+import { noteDisplayTitle } from "@/lib/notes-tree";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NoteMedia } from "@/components/note-media";
@@ -216,9 +217,9 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
           >
             <Pin className="size-3 text-black/60" />
             <Input
-              value={note.title}
+              value={noteDisplayTitle(note.title)}
               aria-label="Note title"
-              onChange={(event) => scheduleUpdate(note, { title: event.target.value })}
+              onChange={(event) => scheduleUpdate(note, { title: noteDisplayTitle(event.target.value) })}
               onPointerDown={(event) => event.stopPropagation()}
               className="h-6 min-w-0 flex-1 border-0 bg-transparent px-0 text-xs font-semibold text-black shadow-none focus-visible:ring-0"
             />
@@ -239,7 +240,7 @@ export function PinnedNotesPanel({ chatId }: { chatId: string | null }) {
             className="editable-markdown min-h-0 flex-1 cursor-text overflow-y-auto p-2 text-xs leading-5 text-black [&_.markdown-body]:text-black [&_.markdown-body_*]:text-black [&_.markdown-body_p]:my-1 [&_.markdown-body_ul]:my-1 [&_.markdown-body_ol]:my-1"
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
-              if (target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]")) return;
+              if (target.closest(".markdown-body, .cm-editor, .notes-block-editor, [contenteditable], input, textarea, button, a, [data-editor-control]")) return;
               startDrag(event, note);
             }}
           >

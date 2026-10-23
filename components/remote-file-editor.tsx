@@ -4,8 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import { workspaceFileDirectory, type WorkspaceFileLocation, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
 import { fileEntryNameError, parentFileDirectory, parseFileListing, type FileEntry } from "@/lib/file-editor";
-import { createPortal } from "react-dom";
-import { ArrowUp, ChevronRight, Download, File, FilePlus2, Folder, FolderPlus, Fullscreen, LoaderCircle, Minimize2, MoreHorizontal, PanelLeft, Pencil, RefreshCw, Save, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronRight, Download, File, FilePlus2, Folder, FolderPlus, LoaderCircle, MoreHorizontal, PanelLeft, Pencil, RefreshCw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -22,6 +21,9 @@ import { applyFileSyncContent, resolveFileHighlight } from "@/lib/file-editor-hi
 import { EditedFileEditorDiff } from "@/components/edited-file-diff";
 import type { EditedFileDiffRequest } from "@/lib/edited-file-diff";
 import { editedFileHref } from "@/lib/edited-files";
+import { EditableMarkdown } from "@/components/editable-markdown";
+import { isMarkdownFile } from "@/lib/markdown-file";
+import { markdownFileDisplayUrl } from "@/lib/markdown-file-url";
 
 type RemoteFileEditorProps = {
   cwd: string;
@@ -47,6 +49,8 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const [fileView, setFileView] = useState<"code" | "preview">("code");
   const [fileTextError, setFileTextError] = useState("");
   const previewKind = filePreviewKind(selectedPath);
+  const markdownFile = isMarkdownFile(selectedPath);
+  const resolveMarkdownUrl = useCallback((url: string, kind: "image" | "link") => markdownFileDisplayUrl(url, selectedPath, kind), [selectedPath]);
   const canEditFile = !isBinaryFilePreview(previewKind) && !fileTextError;
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -56,7 +60,6 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const [directorySyncError, setDirectorySyncError] = useState("");
   const [filter, setFilter] = useState("");
   const [searchRevision, setSearchRevision] = useState(0);
-  const [fullscreen, setFullscreen] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(240);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -76,6 +79,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   const [fileLocation, setFileLocation] = useState<WorkspaceFileLocation | null>(null);
   const fileLocationRef = useRef<WorkspaceFileLocation | null>(null);
   fileLocationRef.current = fileLocation;
+  const markdownSourceLocation = markdownFile && fileLocation?.path === selectedPath && (fileLocation.line || fileLocation.column || fileLocation.endLine || fileLocation.changes?.length) ? fileLocation : null;
   const decorationRef = useRef<ReturnType<Parameters<OnMount>[0]["createDecorationsCollection"]> | null>(null);
   const diffListenerRef = useRef<{ dispose(): void } | null>(null);
   const [highlightMessage, setHighlightMessage] = useState("");
@@ -85,8 +89,8 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
   useEffect(() => () => { diffListenerRef.current?.dispose(); }, []);
   const dirty = Boolean(selectedPath) && canEditFile && content !== savedContent;
   useEffect(() => {
-    if (fileView === "preview") { editorRef.current = null; decorationRef.current = null; diffListenerRef.current?.dispose(); }
-  }, [fileView]);
+    if (fileView === "preview" || (markdownFile && !reviewing)) { editorRef.current = null; decorationRef.current = null; diffListenerRef.current?.dispose(); }
+  }, [fileView, markdownFile, reviewing, selectedPath]);
   const busy = loading || saving || mutating;
   const directoryStateRef = useRef({ cwd, busy });
   directoryStateRef.current = { cwd, busy };
@@ -212,7 +216,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
         onCwdChange(parent); setDirectoryInput(parent); setFilter("");
       }
       setDiffReview(null); setSelectedPath(location.path); setFileTextError(textError);
-      setFileView(kind && (!file || (!location.line && !location.changes?.length)) ? "preview" : "code");
+      setFileView(kind && kind !== "markdown" && (!file || (!location.line && !location.changes?.length)) ? "preview" : "code");
       loadSnapshot(location.path, file || { content: "", revision: "" }); setFileLocation({ ...location });
       if ((containerRef.current?.clientWidth || 0) < 640) setExplorerOpen(false);
     } catch (cause) {
@@ -343,18 +347,15 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
     }
   }
 
-  const editor = (
+  return (
     <div ref={containerRef} data-file-editor data-explorer-open={explorerOpen} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (dirty && !busy) void save(); } }} style={{ containerType: "inline-size", containerName: "files" }}
-      className={fullscreen ? "fixed inset-0 z-50 flex min-h-0 flex-col bg-background p-3 sm:inset-3 sm:rounded-lg sm:border sm:border-border sm:p-4" : "flex min-h-0 min-w-0 flex-1 flex-col"}>
+      className="flex min-h-0 min-w-0 flex-1 flex-col">
       <style>{`@container files (max-width:639px){.file-explorer{width:100%!important;border-right:0}.file-explorer-resize{display:none!important}[data-explorer-open=true] .file-editor-pane{display:none}.file-toolbar-label{display:none}.file-toolbar-button{width:36px;padding:0}.file-navigation-toggle{display:inline-flex!important}}.metis-file-changed-line{background:color-mix(in srgb,var(--foreground) 9%,transparent)}.metis-file-removed-line{background:color-mix(in srgb,var(--destructive) 12%,transparent)}.metis-file-changed-gutter{border-left:2px solid var(--foreground)}.metis-file-removed-gutter{border-left:2px solid var(--destructive)}`}</style>
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 pb-3">
         <div className="flex min-w-0 items-center gap-1">
           <Button size="sm" variant="secondary" className="h-9" disabled={busy} onClick={() => openEntryDialog("create-file")}><FilePlus2 className="size-4" />New file</Button>
           <Button size="sm" variant="ghost" className="h-9" disabled={busy} onClick={() => openEntryDialog("create-folder")}><FolderPlus className="size-4" />New folder</Button>
         </div>
-        <Button size="icon-sm" variant="ghost" onClick={() => setFullscreen(open => !open)} aria-label={fullscreen ? "Exit fullscreen" : "Open file fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
-          {fullscreen ? <Minimize2 className="size-4" /> : <Fullscreen className="size-4" />}
-        </Button>
       </div>
       <form className="flex shrink-0 items-center gap-1 py-2" onSubmit={event => { event.preventDefault(); const path = directoryInput.trim(); if (path) runAfterUnsavedCheck(() => void loadDirectory(path)); }}>
         <Button type="button" size="icon-sm" variant="ghost" disabled={busy || cwd === "/"} onClick={() => runAfterUnsavedCheck(() => void loadDirectory(parentFileDirectory(cwd)))} aria-label="Parent folder" title="Parent folder"><ArrowUp className="size-4" /></Button>
@@ -398,7 +399,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
             </div>
             {diffReview ? <Button size="sm" variant="outline" className="min-h-11 shrink-0 text-xs" disabled={busy || !editedFileHref(diffReview.file)} title={editedFileHref(diffReview.file) ? "Open the current file for editing" : "This file cannot be opened in the server editor"} onClick={() => void readFile({ path: diffReview.file.path, changes: diffReview.file.ranges }, true)}><File aria-hidden="true" className="size-3.5" />{loading ? "Opening…" : "Open original file"}</Button> : null}
             {!diffReview && selectedPath && previewKind && canEditFile ? <div role="group" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
-              <Button size="sm" variant={fileView === "code" ? "secondary" : "ghost"} aria-pressed={fileView === "code"} onClick={() => setFileView("code")}>Code</Button>
+              <Button size="sm" variant={fileView === "code" ? "secondary" : "ghost"} aria-pressed={fileView === "code"} onClick={() => setFileView("code")}>{markdownFile ? "Editor" : "Code"}</Button>
               <Button size="sm" variant={fileView === "preview" ? "secondary" : "ghost"} aria-pressed={fileView === "preview"} onClick={() => setFileView("preview")}>Preview</Button>
             </div> : null}
             {!diffReview ? <><Button asChild size="icon-sm" variant="ghost" aria-label="Download file" title={dirty ? "Download saved file (save changes first to include them)" : "Download file"}>
@@ -421,7 +422,7 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
             {diffReview ? <EditedFileEditorDiff key={diffReview.id} {...diffReview} language={languageForPath(diffReview.file.path)} /> : selectedPath && fileTextError ? <div role="alert" className="p-5 text-sm text-muted-foreground"><p>{fileTextError}</p><p className="mt-2">Download the original file to open it.</p></div> : selectedPath && fileView === "preview" && previewKind ? <FileEditorPreview key={selectedPath} path={selectedPath} kind={previewKind} content={content} /> : selectedPath && reviewing && conflict ? <DiffEditor height="100%" language={languageForPath(selectedPath)} theme="vs-dark" original={conflict.content} modified={content} onMount={instance => {
               diffListenerRef.current?.dispose(); editorRef.current = instance.getModifiedEditor();
               diffListenerRef.current = instance.getModifiedEditor().onDidChangeModelContent(() => setContent(instance.getModifiedEditor().getModel()?.getValue(undefined,true) || ""));
-            }} options={{ originalEditable:false,readOnly:busy,renderSideBySide:(containerRef.current?.clientWidth || 0)>=640,automaticLayout:true,minimap:{enabled:false},wordWrap:"on" }} /> : selectedPath ? <Editor onMount={editor => { diffListenerRef.current?.dispose(); editorRef.current = editor; revealLocation(fileLocationRef.current); }}
+            }} options={{ originalEditable:false,readOnly:busy,renderSideBySide:(containerRef.current?.clientWidth || 0)>=640,automaticLayout:true,minimap:{enabled:false},wordWrap:"off",diffWordWrap:"off",scrollbar:{horizontal:"visible"} }} /> : selectedPath && markdownFile ? <div className="h-full overflow-auto"><EditableMarkdown key={selectedPath} editorId={`file:${selectedPath}`} value={content} onChange={setContent} maxLength={2_000_000} disabled={busy} sourceLocation={markdownSourceLocation} resolveUrl={resolveMarkdownUrl} hideAttachmentButton aria-label={`Edit ${selectedPath.split("/").pop()}`} className="min-h-full p-3" /></div> : selectedPath ? <Editor onMount={editor => { diffListenerRef.current?.dispose(); editorRef.current = editor; revealLocation(fileLocationRef.current); }}
               height="100%" path={selectedPath} language={languageForPath(selectedPath)} theme="vs-dark" value={content} onChange={value => setContent(editorRef.current?.getModel()?.getValue(undefined,true) ?? value ?? "")}
               options={{ readOnly: busy, automaticLayout: true, detectIndentation: false, insertSpaces: false, minimap: { enabled: false }, lineNumbers: "on", padding: { top: 12 }, scrollBeyondLastLine: false, tabSize: 2, wordWrap: "on" }}
               loading={<div className="p-3 text-xs text-muted-foreground">Loading editor…</div>} />
@@ -454,5 +455,4 @@ export function RemoteFileEditor({ cwd, onCwdChange, fileRequest }: RemoteFileEd
       <ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={open => { if (!open) setDeleteTarget(""); }} title="Delete entry?" description={`Delete “${deleteTarget.split("/").pop()}”? Folders and their contents will be removed. This cannot be undone.`} confirmLabel="Delete" onConfirm={() => { const path = deleteTarget; setDeleteTarget(""); deleteEntry(path); }} />
     </div>
   );
-  return fullscreen && typeof document !== "undefined" ? createPortal(editor, document.body) : editor;
 }

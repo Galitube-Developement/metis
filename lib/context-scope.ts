@@ -3,6 +3,8 @@ import {
   listMemories,
 } from "@/lib/db-store";
 import { getProject } from "@/lib/projects";
+import { getIssue } from "@/lib/issues";
+import { issueReference } from "@/lib/issue-types";
 import {
   createNote,
   getNote,
@@ -169,7 +171,7 @@ function learnedFactsForChat(chat: Chat): ScopedLearnedFact[] {
     .slice(0, 200);
 }
 
-/** Resolve only note references that are valid in this chat's scope. */
+/** Rehydrate persisted note/issue references against their current account/project permissions. */
 export function resolveScopeReferences(
   ownerId: string | undefined,
   chatId: string,
@@ -180,6 +182,13 @@ export function resolveScopeReferences(
   return references
     .slice(0, 20)
     .map((reference): ScopedContextReference | null => {
+      if (reference.kind === "issue") {
+        if (!ownerId || incognito) return null;
+        const issue = getIssue(reference.id, ownerId);
+        if (!issue) return null;
+        const project = issue.projectId ? getProject(issue.projectId, ownerId) : null;
+        return { ...issueReference(issue, project?.name), source: "explicit" };
+      }
       if (reference.kind !== "note") {
         return {
           ...reference,

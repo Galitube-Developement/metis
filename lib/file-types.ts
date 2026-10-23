@@ -4,7 +4,7 @@ export function mimeTypeFromFileName(name: string): string {
   return ({
     png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp",avif:"image/avif",svg:"image/svg+xml",
     mp4:"video/mp4",webm:"video/webm",mov:"video/quicktime",ogv:"video/ogg",mp3:"audio/mpeg",wav:"audio/wav",ogg:"audio/ogg",m4a:"audio/mp4",flac:"audio/flac",
-    pdf:"application/pdf",json:"application/json",xml:"application/xml",yaml:"text/yaml",yml:"text/yaml",md:"text/markdown",csv:"text/csv",html:"text/html",
+    pdf:"application/pdf",json:"application/json",xml:"application/xml",yaml:"text/yaml",yml:"text/yaml",md:"text/markdown",markdown:"text/markdown",csv:"text/csv",html:"text/html",
     js:"text/javascript",ts:"text/typescript",py:"text/x-python",
     docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation"
   } as Record<string,string>)[ext] || (/^(txt|log|toml|ini|sql|css|jsx|tsx|go|rs|java|c|cpp|h|sh|srt|vtt)$/.test(ext) ? "text/plain" : "application/octet-stream");
@@ -15,7 +15,7 @@ export function effectiveFileMime(mimeType: string, name: string) {
 }
 export function isTextAttachment(mime: string, name: string) {
   return effectiveFileMime(mime,name).startsWith("text/") || /json|xml|javascript|yaml|toml/.test(mime) ||
-    /\.(json|xml|ya?ml|toml|txt|log|md|csv|html?|css|js|jsx|ts|tsx|py|go|rs|java|c|cpp|h|sh|sql|ini|srt|vtt)$/i.test(name);
+    /\.(json|xml|ya?ml|toml|txt|log|md|markdown|csv|html?|css|js|jsx|ts|tsx|py|go|rs|java|c|cpp|h|sh|sql|ini|srt|vtt)$/i.test(name);
 }
 export function isOfficeAttachment(mime: string, name: string) {
   return /wordprocessingml|spreadsheetml|presentationml|msword|ms-excel|ms-powerpoint/.test(mime) || /\.(docx?|xlsx?|pptx?)$/i.test(name);

@@ -69,6 +69,49 @@ test("auth, invalid categories and cross-account content stay protected",async()
    assert.deepEqual(data.results,[]);
  }
 });
+test("issue references include private and accepted-project work, rehydrate current data and exclude revoked accounts",async()=>{
+ const [auth,db,,, ,projects,sharing]=modules;
+ const issues=await import("../lib/issues");
+ const {resolveScopeReferences}=await import("../lib/context-scope");
+ const privateOwner=issues.createIssue(owner,{title:"Issue visibility owner private",description:"Canonical owner context"});
+ const privateForeign=issues.createIssue(foreign,{title:"Issue visibility foreign private"});
+ const foreignProject=projects.createProject({ownerId:foreign,name:"Foreign issue project"});
+ const foreignProjectIssue=issues.createIssue(foreign,{projectId:foreignProject.id,title:"Issue visibility foreign project"});
+ const project=projects.createProject({ownerId:owner,name:"Shared issue project"});
+ const shared=issues.createIssue(owner,{projectId:project.id,title:"Issue visibility shared",description:"Canonical shared context",status:"todo",priority:"high"});
+ const foreignToken=auth.authenticateUser("refs-foreign","test-password")!.token;
+ const before=(await (await get("issue","Issue visibility",foreignToken)).json()).results;
+ assert.deepEqual(new Set(before.map((item:{id:string})=>item.id)),new Set([privateForeign.id,foreignProjectIssue.id]));
+ const invitation=sharing.inviteProjectMember(project.id,owner,"refs-foreign");
+ sharing.respondProjectInvitation(invitation.id,foreign,"accept");
+ const ownerResults=(await (await get("issue","Issue visibility")).json()).results;
+ assert.deepEqual(new Set(ownerResults.map((item:{id:string})=>item.id)),new Set([privateOwner.id,shared.id]));
+ assert.ok(ownerResults.every((item:{kind:string})=>item.kind==="issue"));
+ const sharedReference=ownerResults.find((item:{id:string})=>item.id===shared.id);
+ assert.equal(sharedReference.path,"issue://"+shared.id);
+ assert.match(sharedReference.detail,/Shared issue project/);
+ assert.match(sharedReference.content,/Canonical shared context/);
+ const memberResults=(await (await get("issue","Issue visibility",foreignToken)).json()).results;
+ assert.ok(memberResults.some((item:{id:string})=>item.id===shared.id));
+ assert.ok(!memberResults.some((item:{id:string})=>item.id===privateOwner.id));
+ assert.ok((await (await get(undefined,shared.key)).json()).results.some((item:{id:string;kind:string})=>item.kind==="issue"&&item.id===shared.id));
+ const memberChat=db.createChat("Member issue context",undefined,foreign);
+ issues.updateIssue(shared.id,owner,{title:"Updated issue title",status:"done"});
+ const selected={...sharedReference,label:"STALE LABEL",content:"STALE SNAPSHOT",source:"explicit" as const};
+ const resolved=resolveScopeReferences(foreign,memberChat.id,[selected]);
+ assert.equal(resolved.length,1);assert.match(resolved[0].label,/Updated issue title/);
+ assert.match(resolved[0].content||"",/Status: Done/);assert.ok(!resolved[0].content?.includes("STALE SNAPSHOT"));
+ assert.deepEqual(resolveScopeReferences(foreign,memberChat.id,[selected],true),[]);
+ sharing.removeProjectMember(project.id,owner,{userId:foreign});
+ const after=(await (await get("issue","Issue visibility",foreignToken)).json()).results;
+ assert.ok(!after.some((item:{id:string})=>item.id===shared.id));
+ assert.deepEqual(resolveScopeReferences(foreign,memberChat.id,[selected]),[]);
+ const settings=db.getGlobalModelSettings(owner);
+ db.saveGlobalModelSettings({...settings,featureFlags:{...settings.featureFlags,notes:false}},owner);
+ try {assert.deepEqual((await (await get("issue","Issue visibility")).json()).results,[]);}
+ finally {db.saveGlobalModelSettings(settings,owner);}
+});
+
 test("accepted project content is discoverable and disappears after membership removal",async()=>{
  const [auth,db,notes,,,projects,sharing]=modules;
  const member=auth.createUser("refs-member","test-password").id;

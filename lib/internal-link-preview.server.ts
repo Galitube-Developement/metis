@@ -4,7 +4,10 @@ import remarkGfm from "remark-gfm";
 import { getAutomation, type Automation } from "@/lib/automations";
 import { getChat } from "@/lib/db-store";
 import { getNote } from "@/lib/shared-context";
-import { getDatabase } from "@/lib/sqlite";
+import { noteDisplayTitle } from "@/lib/notes-tree";
+import { getIssue } from "@/lib/issues";
+import { ISSUE_STATUS_LABELS, ISSUE_PRIORITY_LABELS } from "@/lib/issue-types";
+import { getInternalWorkspace } from "@/lib/internal-workspace.server";
 import type { InternalLinkPreview, InternalLinkTarget } from "@/lib/internal-link";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
@@ -70,11 +73,20 @@ function preview(target: InternalLinkTarget, title: string, description: string,
 export function getInternalLinkPreview(target: InternalLinkTarget, ownerId: string, chatId?: string): InternalLinkPreview | null {
   // Never let an absent account widen the canonical stores' optional owner filters.
   if (!ownerId) return null;
+  if (target.kind === "issue") {
+    const issue = getIssue(target.id, ownerId);
+    if (!issue) return null;
+    return preview(target, issue.key + " · " + issue.title, documentSummary(issue.description).description, [
+      { label: "Status", value: ISSUE_STATUS_LABELS[issue.status] },
+      { label: "Priority", value: ISSUE_PRIORITY_LABELS[issue.priority] },
+      { label: "Updated", value: dateLabel(issue.updatedAt) },
+    ]);
+  }
   if (target.kind === "note") {
     const note = getNote(target.id, ownerId);
     if (!note) return null;
     const todos = note.todos || [];
-    return preview(target, note.title, documentSummary(note.content).description, [
+    return preview(target, noteDisplayTitle(note.title), documentSummary(note.content).description, [
       { label: "Scope", value: note.scope[0].toUpperCase() + note.scope.slice(1) },
       ...(todos.length ? [{ label: "Tasks", value: todos.filter(todo => todo.status === "completed").length + "/" + todos.length + " completed" }] : []),
       { label: "Updated", value: dateLabel(note.updatedAt) },
@@ -90,37 +102,11 @@ export function getInternalLinkPreview(target: InternalLinkTarget, ownerId: stri
       { label: "Next run", value: dateLabel(automation.nextRunAt, automation.timezone) },
     ]);
   }
-  const legacyCanvas = target.kind === "canvas" && target.id === "canvas-default";
-  let resolvedChatId = chatId;
-  if (resolvedChatId === undefined) {
-    // Some IDs (notably canvas-default) repeat across chats. A context-free
-    // request is only safe when exactly one owned chat contains that target.
-    const matches = getDatabase().prepare(`
-      SELECT c.id FROM chats AS c
-      WHERE c.owner_id = ? AND (
-        EXISTS (
-          SELECT 1 FROM json_each(c.data, '$.workspaces') AS workspace
-          WHERE json_extract(workspace.value, '$.id') = ?
-            AND json_extract(workspace.value, '$.type') = ?
-        ) OR (
-          ? = 1 AND COALESCE(json_array_length(c.data, '$.workspaces'), 0) = 0
-            AND json_type(c.data, '$.canvas') = 'text'
-            AND length(json_extract(c.data, '$.canvas')) > 0
-        )
-      )
-      LIMIT 2
-    `).all(ownerId, target.id, target.kind, legacyCanvas ? 1 : 0) as Array<{ id: string }>;
-    if (matches.length !== 1) return null;
-    resolvedChatId = matches[0].id;
-  }
-  // An explicit chat must never fall back to another chat with the same ID.
-  // getChat retains its ownership, cache and expired-incognito checks.
-  const chat = getChat(resolvedChatId, ownerId);
+  const resolved = getInternalWorkspace({ kind: target.kind, id: target.id }, ownerId, chatId);
+  if (!resolved) return null;
+  const chat = getChat(resolved.chatId, ownerId);
   if (!chat) return null;
-  const workspace = Array.isArray(chat.workspaces) && chat.workspaces.length
-    ? chat.workspaces.find(item => item.id === target.id && item.type === target.kind)
-    : legacyCanvas && chat.canvas ? { name: "Canvas", content: chat.canvas, updatedAt: chat.updatedAt } : undefined;
-  if (!workspace) return null;
+  const { workspace } = resolved;
   const summary = documentSummary(workspace.content);
   return preview(target, workspace.name, summary.description, [
     ...(target.kind === "plan" && summary.tasks

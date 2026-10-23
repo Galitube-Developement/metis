@@ -17,6 +17,7 @@ import { startUpload } from "@/lib/background-uploads";
 import { MAX_ATTACHMENTS } from "@/lib/upload-limits";
 import { NoteMedia } from "@/components/note-media";
 import { cn } from "@/lib/utils";
+import { noteDisplayTitle } from "@/lib/notes-tree";
 
 type View = { x: number; y: number; zoom: number };
 type ResizeEdge = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
@@ -219,10 +220,15 @@ export function NotesVoid({
   }, []);
 
   useEffect(() => {
-    if (!focusNoteId || consumedFocusNoteIdRef.current === focusNoteId) return;
+    if (!focusNoteId) {
+      consumedFocusNoteIdRef.current = null;
+      return;
+    }
+    if (consumedFocusNoteIdRef.current === focusNoteId) return;
     const note = notes.find((item) => item.id === focusNoteId);
     if (!note) return;
- consumedFocusNoteIdRef.current = focusNoteId;
+    consumedFocusNoteIdRef.current = focusNoteId;
+    setSearch("");
     setFrontNoteId(note.id);
     if (gridMode) {
       requestAnimationFrame(() => {
@@ -873,7 +879,7 @@ export function NotesVoid({
         open={Boolean(unpinTarget)}
         onOpenChange={(open) => !open && setUnpinTarget(null)}
         title="Unpin shared note?"
-        description={`Are you sure you want to unpin "${unpinTarget?.note.title || "Untitled note"}" for ${unpinTarget?.count || 0} chats?`}
+        description={`Are you sure you want to unpin "${noteDisplayTitle(unpinTarget?.note.title || "") || "Untitled note"}" for ${unpinTarget?.count || 0} chats?`}
         confirmLabel="Unpin for all"
         secondaryLabel="Configure"
         onSecondary={() => {
@@ -1040,7 +1046,7 @@ export function NotesVoid({
               setFrontNoteId(note.id);
               if (gridMode) return;
               const target = event.target as HTMLElement;
-              const fromContent = Boolean(target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]"));
+              const fromContent = Boolean(target.closest(".markdown-body, .cm-editor, .notes-block-editor, [contenteditable], input, textarea, button, a, [data-editor-control]"));
               const fromEditorEmpty = Boolean(target.closest(".editable-markdown")) && !fromContent;
               const point = localPoint(event);
               if (fromEditorEmpty) {
@@ -1066,7 +1072,7 @@ export function NotesVoid({
               {editingTitleId === note.id ? (
                 <Input
                   autoFocus
-                  value={note.title}
+                  value={noteDisplayTitle(note.title)}
                   onChange={(event) => scheduleUpdate(note, { title: event.target.value })}
                   onBlur={() => setEditingTitleId(null)}
                   onKeyDown={(event) => {
@@ -1096,9 +1102,9 @@ export function NotesVoid({
                     event.stopPropagation();
                     setFrontNoteId(note.id);
                   }}
-                  aria-label={`Edit note title: ${note.title}`}
+                  aria-label={`Edit note title: ${noteDisplayTitle(note.title)}`}
                 >
-                  {note.title || (note.kind === "project" ? "Untitled project" : "Untitled note")}
+                  {noteDisplayTitle(note.title) || (note.kind === "project" ? "Untitled project" : "Untitled note")}
                 </button>
               )}
               <NoteProjectMenu
@@ -1216,8 +1222,8 @@ export function NotesVoid({
                   size="icon-xs"
                   variant="ghost"
                   className={cn("size-6 text-black/70 hover:bg-black/10", gridMode && "size-9")}
-                  aria-label="Open note in Shared Notes"
-                  title="Open in Shared Notes"
+                  aria-label="Open note in Notebooks"
+                  title="Open in Notebooks"
                   onPointerDown={(event) => {
                     event.stopPropagation();
                     setFrontNoteId(note.id);
@@ -1306,7 +1312,7 @@ export function NotesVoid({
               onPointerDown={(event) => {
                 setFrontNoteId(note.id);
                 const target = event.target as HTMLElement;
-                if (target.closest(".markdown-body, .cm-editor, input, textarea, button, a, [data-editor-control]")) {
+                if (target.closest(".markdown-body, .cm-editor, .notes-block-editor, [contenteditable], input, textarea, button, a, [data-editor-control]")) {
                   event.stopPropagation();
                 }
               }}

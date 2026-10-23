@@ -4,6 +4,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { CHAT_PAGE_SCHEMA } from "@/lib/chat-page-store";
+import { CHAT_SEARCH_SCHEMA } from "@/lib/chat-search-store";
+import { NOTE_PROJECT_DELETE_TRIGGER_SQL } from "@/lib/note-hierarchy-schema";
 
 const dataDir = config.dataDir;
 export const databasePath = config.databasePath;
@@ -274,6 +276,7 @@ export function getDatabase(): DatabaseSync {
       updated_at TEXT NOT NULL
     );
     ${CHAT_PAGE_SCHEMA}
+    ${CHAT_SEARCH_SCHEMA}
     CREATE INDEX IF NOT EXISTS chats_owner_updated ON chats(owner_id, updated_at DESC);
     -- The worker checks this queue every second. Do not reparse every transcript.
     CREATE INDEX IF NOT EXISTS chats_pending_queue ON chats(updated_at)
@@ -449,6 +452,10 @@ export function getDatabase(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS notes_scope
       ON notes(owner_id, scope, chat_id, workspace_id, archived, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS notes_hierarchy_parent
+      ON notes(json_extract(data, '$.parentId'));
+    CREATE INDEX IF NOT EXISTS notes_hierarchy_project
+      ON notes(json_extract(data, '$.projectId'), archived, json_extract(data, '$.sortKey'));
     CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -457,6 +464,7 @@ export function getDatabase(): DatabaseSync {
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner_id, updated_at DESC);
+  ${NOTE_PROJECT_DELETE_TRIGGER_SQL}
   CREATE TABLE IF NOT EXISTS project_members (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

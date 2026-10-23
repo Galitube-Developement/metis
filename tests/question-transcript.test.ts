@@ -28,6 +28,41 @@ test("answer sits immediately after ask_user, before later tools and final text,
   assert.equal(projectChatTranscript(projected).filter(item => item.kind === "message").length, 5);
 });
 
+test("wrapped MCP questions split live continuation before the result arrives and survive reload", () => {
+  for (const tool of [
+    { ...ask("wrapped"), name: "mcp", input: JSON.stringify({ toolName: "ask_user", arguments: { questions: [{ question: "Which option?" }] } }) },
+    { ...ask("wrapped"), name: "CallMcpTool", input: JSON.stringify({ CallMcpTool: { toolName: "ask_user", arguments: {} } }) },
+  ]) {
+    const message: Message = { id: "assistant", role: "assistant", content: "Before", parts: [text("Before"), tool], streaming: true };
+    const anchor = questionAnswerAnchor([message], "wrapped-q");
+    assert.deepEqual(anchor, { assistantMessageId: "assistant", toolCallId: "wrapped" });
+    const response = { ...answer("wrapped-q"), questionAnswer: { questionId: "wrapped-q", ...anchor } };
+    const waiting = projectQuestionTranscript([message, response]);
+    assert.deepEqual(waiting.map(m => m.id), ["assistant", response.id]);
+    message.content += "Continued";
+    message.parts = [...message.parts!, { type: "tool", id: "read", name: "read_file" }, text("Continued")];
+    const continued = projectQuestionTranscript([message, response]);
+    assert.deepEqual(continued.map(m => m.content), ["Before", "Answer wrapped-q", "Continued"]);
+    assert.equal(continued[0].streaming, false);
+    assert.equal(continued[2].streaming, true);
+    assert.equal(continued[2].transcriptSourceId, message.id);
+    assert.deepEqual(projectQuestionTranscript(JSON.parse(JSON.stringify([message, response]))), continued);
+  }
+});
+
+test("legacy wrapped questions match only real question tools, including multiple answers", () => {
+  const wrapped = (id: string) => ({ ...ask(id), name: "mcp", input: JSON.stringify({ toolName: "ask_user", arguments: {} }) });
+  const messages: Message[] = [
+    { id: "assistant", role: "assistant", content: "OneTwoThree", parts: [text("One"), wrapped("first"), text("Two"), wrapped("second"), text("Three")] },
+    answer("first-q"), answer("second-q"),
+  ];
+  assert.deepEqual(projectQuestionTranscript(messages).map(m => m.content), ["One", "Answer first-q", "Two", "Answer second-q", "Three"]);
+  const unrelated: Message[] = [{ id: "other", role: "assistant", content: "Result", parts: [
+    { type: "tool", id: "read", name: "mcp", input: JSON.stringify({ toolName: "read_file", arguments: { questionId: "q", text: "ask_user" } }) },
+  ] }, answer("q")];
+  assert.deepEqual(projectQuestionTranscript(unrelated), unrelated);
+});
+
 test("old persisted chats with deferred raw results anchor multiple answers in the same assistant turn", () => {
   const messages: Message[] = [
     { id: "assistant", role: "assistant", content: "OneTwoThree", parts: [text("One"), ask("first"), text("Two"), ask("second"), text("Three")], streaming: true },

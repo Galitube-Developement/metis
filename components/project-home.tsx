@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ProjectColorPicker, ProjectIconPicker } from "@/components/project-appearance-picker";
 import { MAX_PROJECT_FILE_BYTES, PROJECT_COLORS } from "@/lib/project-constants";
 import { cn } from "@/lib/utils";
+import { noteDisplayTitle } from "@/lib/notes-tree";
 
 import { fetchProjectHome, type ProjectHomeData } from "@/lib/project-home-client";
 
@@ -760,7 +761,7 @@ export function ProjectHome({
          onClick={() => onOpenNotes(note.id)}
         >
          <StickyNote className="size-3.5 shrink-0" style={{ color: note.color || "#fef08a" }} />
-         <span className="min-w-0 truncate">{note.title || "Untitled note"}</span>
+         <span className="min-w-0 truncate">{noteDisplayTitle(note.title) || "Untitled note"}</span>
         </button>
        </li>
       ))}
@@ -773,7 +774,7 @@ export function ProjectHome({
     open={deleteOpen && data.project.membershipRole !== "member"}
     onOpenChange={setDeleteOpen}
     title={`Delete ${data.project.name}?`}
-    description="Chats stay, but they leave this project. Files and the custom logo are removed."
+    description="Chats stay, but they leave this project. Pages move to their creators’ private No Project trees; issues move to the owner’s No Project workspace. Files and the custom logo are removed."
     confirmLabel="Delete project"
     onConfirm={deleteProject}
    />

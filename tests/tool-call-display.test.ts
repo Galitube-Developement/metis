@@ -7,6 +7,8 @@ import {
   classifyToolKind,
   hydrateCanvasPreview,
   isToolRunning,
+  noteReferencesFromToolPayload,
+  enrichToolDisplay,
   layoutAssistantParts,
   planFromToolPayload,
   remoteClientHostnameMap,
@@ -263,7 +265,7 @@ test("layoutAssistantParts groups consecutive tools and splits after other conte
   }
 });
 
-test("layoutAssistantParts starts a new tool group after text, todos, and other cards", () => {
+test("layoutAssistantParts splits activity at assistant text, never at a tool kind", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "tool", id: "1", name: "read_file", kind: "read", status: "completed" },
     { type: "tool", id: "2", name: "grep", kind: "read", status: "completed" },
@@ -276,17 +278,17 @@ test("layoutAssistantParts starts a new tool group after text, todos, and other 
   ]);
   assert.deepEqual(
     blocks.map((block) => block.type),
-    ["tools", "text", "tools", "tools", "text", "tools"],
+    ["tools", "text", "tools", "text", "tools"],
   );
   assert.deepEqual(
     blocks
       .filter((block) => block.type === "tools")
       .map((block) => block.type === "tools" ? block.tools.map((tool) => tool.id) : []),
-    [["1", "2"], ["3"], ["4", "5"], ["6"]],
+    [["1", "2"], ["3", "4", "5"], ["6"]],
   );
 });
 
-test("layoutAssistantParts keeps only the latest plan and todo state", () => {
+test("layoutAssistantParts retains distinct plan and task calls in chronological order", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "tool", id: "plan-1", name: "create_plan", kind: "plan", status: "completed", input: "old plan" },
     { type: "tool", id: "todo-1", name: "write_todos", kind: "todo", status: "completed", todos: [{ content: "old task" }] },
@@ -297,7 +299,7 @@ test("layoutAssistantParts keeps only the latest plan and todo state", () => {
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0]?.type, "tools");
   if (blocks[0]?.type === "tools") {
-    assert.deepEqual(blocks[0].tools.map((tool) => tool.id), ["plan-2", "todo-2"]);
+    assert.deepEqual(blocks[0].tools.map((tool) => tool.id), ["plan-1", "todo-1", "plan-2", "todo-2"]);
   }
 });
 
@@ -328,6 +330,68 @@ test("planFromToolPayload deeply unwraps nested plan responses", () => {
     title: "Release plan",
     content: "Ship it.",
     workspaceLink: "workspace://plan/plan-42",
+  });
+});
+
+test("plan create cards retain the saved workspace link alongside input content", () => {
+  const plan = planFromToolPayload(
+    JSON.stringify({ title: "Release plan", content: "- [ ] Ship it." }),
+    JSON.stringify({ content: [{ type: "text", text: JSON.stringify({
+      id: "saved-plan",
+      name: "Release plan",
+      content: "- [ ] Ship it.",
+      workspaceLink: "workspace://plan/saved-plan",
+    }) }] }),
+  );
+
+  assert.deepEqual(plan, {
+    title: "Release plan",
+    content: "- [ ] Ship it.",
+    workspaceLink: "workspace://plan/saved-plan",
+  });
+  assert.equal(workspaceIdFromLink(plan?.workspaceLink, "plan"), "saved-plan");
+});
+
+test("plan cards prefer saved content and identity over stale input metadata", () => {
+  const plan = planFromToolPayload(
+    JSON.stringify({ id: "draft", title: "Draft", content: "Old content", workspaceLink: "workspace://plan/draft" }),
+    JSON.stringify({ value: { id: "saved", title: "Saved plan", content: "Saved content" } }),
+  );
+
+  assert.deepEqual(plan, {
+    title: "Saved plan",
+    content: "Saved content",
+    workspaceLink: "workspace://plan/saved",
+  });
+});
+
+test("plan edit cards merge sparse saved metadata with the submitted markdown", () => {
+  const plan = planFromToolPayload(
+    JSON.stringify({ title: "Release plan", content: "Updated plan" }),
+    JSON.stringify({ status: "success", value: {
+      id: "saved-plan", title: "Plan", content: "", workspaceLink: "workspace://plan/saved-plan",
+    } }),
+  );
+
+  assert.deepEqual(plan, {
+    title: "Release plan",
+    content: "Updated plan",
+    workspaceLink: "workspace://plan/saved-plan",
+  });
+});
+
+test("plan cards preserve structured markdown when a tool returns plain status text", () => {
+  assert.deepEqual(planFromToolPayload(
+    JSON.stringify({ title: "Release plan", content: "Actual plan" }),
+    "Saved successfully",
+    JSON.stringify({ id: "saved-plan" }),
+  ), {
+    title: "Release plan",
+    content: "Actual plan",
+    workspaceLink: "workspace://plan/saved-plan",
+  });
+  assert.deepEqual(planFromToolPayload(undefined, JSON.stringify({ id: "empty-plan", content: "" })), {
+    title: "Plan", content: "", workspaceLink: "workspace://plan/empty-plan",
   });
 });
 
@@ -384,7 +448,7 @@ test("workspaceIdFromLink reads canvas ids and rejects the other kind", () => {
   );
 });
 
-test("layoutAssistantParts presents todo directly below the latest plan", () => {
+test("layoutAssistantParts preserves task and plan event order", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "tool", id: "todo-final", name: "write_todos", kind: "todo", status: "completed", todos: [{ content: "Ship" }] },
     { type: "tool", id: "plan-final", name: "create_plan", kind: "plan", status: "completed", input: "plan" },
@@ -393,7 +457,7 @@ test("layoutAssistantParts presents todo directly below the latest plan", () => 
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0]?.type, "tools");
   if (blocks[0]?.type === "tools") {
-    assert.deepEqual(blocks[0].tools.map((tool) => tool.kind), ["plan", "todo"]);
+    assert.deepEqual(blocks[0].tools.map((tool) => tool.kind), ["todo", "plan"]);
   }
 });
 
@@ -592,26 +656,22 @@ test("layoutAssistantParts attaches thinking to the following tool group", () =>
  }
 });
 
-test("layoutAssistantParts keeps todos visible outside the following tool activity", () => {
+test("layoutAssistantParts groups tasks with following tool activity and thinking", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "thinking", content: "plan next steps", done: true, durationMs: 3000 },
     { type: "tool", id: "1", name: "write_todos", kind: "todo", status: "completed" },
     { type: "tool", id: "2", name: "read_file", kind: "read", status: "completed" },
     { type: "tool", id: "3", name: "list_directory", kind: "read", status: "completed" },
   ]);
-  assert.equal(blocks.length, 2);
+  assert.equal(blocks.length, 1);
   assert.equal(blocks[0]?.type, "tools");
-  assert.equal(blocks[1]?.type, "tools");
   if (blocks[0]?.type === "tools") {
-    assert.deepEqual(blocks[0].tools.map((tool) => tool.name), ["write_todos"]);
-  }
-  if (blocks[1]?.type === "tools") {
-    assert.deepEqual(blocks[1].tools.map((tool) => tool.name), ["read_file", "list_directory"]);
-    assert.equal(blocks[1].thinking?.durationMs, 3000);
+    assert.deepEqual(blocks[0].tools.map(tool => tool.name), ["write_todos", "read_file", "list_directory"]);
+    assert.equal(blocks[0].thinking?.durationMs, 3000);
   }
 });
 
-test("layoutAssistantParts keeps every created-entity embed outside read activity", () => {
+test("layoutAssistantParts groups all workspace, automation, note and read calls together", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "tool", id: "plan", name: "create_plan", kind: "plan", status: "completed", input: "plan" },
     { type: "tool", id: "automation", name: "create_automation", kind: "automation", status: "completed" },
@@ -621,8 +681,42 @@ test("layoutAssistantParts keeps every created-entity embed outside read activit
   ]);
   assert.deepEqual(
     blocks.map((block) => block.type === "tools" ? block.tools.map((tool) => tool.kind) : []),
-    [["plan"], ["automation"], ["canvas"], ["note"], ["read"]],
+    [["plan", "automation", "canvas", "note", "read"]],
   );
+});
+
+test("note calls join neighboring tools in order and retain thinking and failed calls", () => {
+  const parts = layoutAssistantParts<LayoutTool>([
+    {type:"thinking",content:"Find and save the report",done:true,durationMs:800},
+    {type:"tool",id:"list",name:"mcp__metis_ai__list_notes",kind:"mcp",status:"completed"},
+    {type:"tool",id:"read",name:"read_file",kind:"read",status:"completed"},
+    {type:"tool",id:"create",name:"create_note",kind:"note",status:"completed"},
+    {type:"tool",id:"update",name:"update_note",kind:"note",status:"error"},
+  ]);
+  assert.equal(parts.length,1);
+  assert.equal(parts[0].type,"tools");
+  if(parts[0].type === "tools") {
+    assert.deepEqual(parts[0].tools.map(tool=>tool.id),["list","read","create","update"]);
+    assert.equal(parts[0].thinking?.durationMs,800);
+    assert.equal(parts[0].tools.at(-1)?.status,"error");
+  }
+  const enriched=enrichToolDisplay({name:"create_note",kind:"mcp",input:JSON.stringify({title:"Checklist",todos:[{content:"Keep task",status:"pending"}]})});
+  assert.equal(enriched.kind,"note");
+  assert.equal(enriched.todos,undefined);
+});
+
+test("saved note links unwrap MCP responses and list results without guessing from input", () => {
+  const note={id:"report one",title:"Report.md"};
+  const expected=[{id:"report one",title:"Report",noteLink:"note://report%20one"}];
+  assert.deepEqual(noteReferencesFromToolPayload({note}),expected);
+  assert.deepEqual(noteReferencesFromToolPayload(JSON.stringify({content:[{type:"text",text:JSON.stringify({note})}]})),expected);
+  assert.deepEqual(noteReferencesFromToolPayload({value:{note}}),expected);
+  assert.deepEqual(noteReferencesFromToolPayload({structuredContent:{notes:[note,note]}}),expected);
+  assert.deepEqual(noteReferencesFromToolPayload({notes:[note,{id:"second",title:"Other"}]}).map(item=>item.id),["report one","second"]);
+  for(const result of [undefined,"streaming…",{id:"input-id",title:"Unconfirmed"},{error:"Save failed",note},{isError:true,content:[{type:"text",text:JSON.stringify({note})}]},{note:{id:"bad/id",title:"Invalid"}}]) {
+    assert.deepEqual(noteReferencesFromToolPayload(result),[]);
+  }
+  assert.deepEqual(noteReferencesFromToolPayload({note},"failed"),[]);
 });
 
 test("layoutAssistantParts merges live and snapshot copies by call id", () => {
@@ -639,22 +733,17 @@ test("layoutAssistantParts merges live and snapshot copies by call id", () => {
   }
 });
 
-test("layoutAssistantParts keeps memory visible outside following tool activity", () => {
+test("layoutAssistantParts includes memory calls in the same activity group", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "thinking", content: "remember this", done: true, durationMs: 1200 },
     { type: "tool", id: "1", name: "add_memory", kind: "memory", status: "completed" },
     { type: "tool", id: "2", name: "read_file", kind: "read", status: "completed" },
     { type: "tool", id: "3", name: "list_directory", kind: "read", status: "completed" },
   ]);
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[0]?.type, "tools");
-  assert.equal(blocks[1]?.type, "tools");
+  assert.equal(blocks.length, 1);
   if (blocks[0]?.type === "tools") {
-    assert.deepEqual(blocks[0].tools.map((tool) => tool.name), ["add_memory"]);
-  }
-  if (blocks[1]?.type === "tools") {
-    assert.deepEqual(blocks[1].tools.map((tool) => tool.name), ["read_file", "list_directory"]);
-    assert.equal(blocks[1].thinking?.content, "remember this");
+    assert.deepEqual(blocks[0].tools.map(tool => tool.name), ["add_memory", "read_file", "list_directory"]);
+    assert.equal(blocks[0].thinking?.content, "remember this");
   }
 });
 
@@ -692,16 +781,15 @@ test("toolGroupLabel counts memory updates", () => {
 
 
 
-test("layoutAssistantParts never folds the latest Tasks state into edit activity", () => {
+test("layoutAssistantParts includes task updates in edit activity", () => {
   const blocks = layoutAssistantParts<LayoutTool>([
     { type: "tool", id: "todo", name: "write_todos", kind: "todo", status: "completed", todos: [{ content: "Ship UI" }] },
     { type: "tool", id: "edit", name: "edit_file", kind: "edit", status: "completed" },
     { type: "tool", id: "shell", name: "execute_command", kind: "shell", status: "completed" },
   ]);
   const toolBlocks = blocks.filter((block) => block.type === "tools");
-  assert.equal(toolBlocks.length, 2);
-  if (toolBlocks[0]?.type === "tools") assert.deepEqual(toolBlocks[0].tools.map((tool) => tool.kind), ["todo"]);
-  if (toolBlocks[1]?.type === "tools") assert.deepEqual(toolBlocks[1].tools.map((tool) => tool.kind), ["edit", "shell"]);
+  assert.equal(toolBlocks.length, 1);
+  if (toolBlocks[0]?.type === "tools") assert.deepEqual(toolBlocks[0].tools.map(tool => tool.kind), ["todo", "edit", "shell"]);
 });
 
 

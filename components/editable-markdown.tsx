@@ -1,355 +1,43 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useRef, useState, type PointerEventHandler } from "react";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
-import { EditorState, type Range } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, keymap, placeholder as editorPlaceholder, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import { Eye, Loader2, Paperclip, Pencil } from "lucide-react";
-import { fileEmbedMarkdown } from "@/lib/file-types";
-import { Markdown } from "@/components/markdown";
-import { minimalMarkdownChange, replaceEmbeddedSource, toggleMarkdownTask } from "@/lib/markdown-editor";
+import dynamic from "next/dynamic";
+import type { PointerEventHandler } from "react";
 import { cn } from "@/lib/utils";
-import { startUpload, waitForUpload } from "@/lib/background-uploads";
-import { registerFileDrop } from "@/lib/file-drop";
+import type { NotesBlockEditorProps } from "@/components/notes/block-editor";
+import type { WorkspaceFileLocation } from "@/lib/workspace-file-link";
 
-type EditableMarkdownProps = {
+// Every Markdown editing surface shares the actual Shared Notes implementation.
+// Keep this boundary lazy so read-only chat and workspace previews stay lightweight.
+const SharedMarkdownEditor = dynamic<NotesBlockEditorProps>(
+  () => import("@/components/notes/block-editor").then((module) => module.NotesBlockEditor),
+  { ssr: false, loading: () => <div role="status" className="p-3 text-xs text-muted-foreground">Opening editor…</div> },
+);
+
+export type EditableMarkdownProps = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
   "aria-label"?: string;
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
+  /** Checkboxes are editable blocks in the shared engine; kept for caller compatibility. */
   interactiveTasks?: boolean;
   noteId?: string;
-  workspace?: {chatId:string;id:string};
+  workspace?: { chatId: string; id: string };
+  editorId?: string;
   hideAttachmentButton?: boolean;
-  onFiles?: (files: File[]) => void;
+  onFiles?: (files: File[]) => void | Promise<void>;
+  disabled?: boolean;
+  readOnly?: boolean;
+  maxLength?: number;
+  autoFocus?: boolean;
+  initialMode?: "blocks" | "markdown" | "source";
+  sourceLocation?: WorkspaceFileLocation | null;
+  resolveUrl?: (url: string, kind: "image" | "link") => string;
 };
 
-function markdownDecorations(view: EditorView): DecorationSet {
-  const ranges: Range<Decoration>[] = [];
-  for (const visible of view.visibleRanges) {
-    for (let position = visible.from; position <= visible.to;) {
-      const line = view.state.doc.lineAt(position);
-      const heading = /^(#{1,6})(?=\s)/.exec(line.text);
-      if (heading) {
-        ranges.push(Decoration.line({ attributes: { class: "cm-md-heading cm-md-h" + heading[1].length } }).range(line.from));
-      }
-      if (line.to >= visible.to || line.number === view.state.doc.lines) break;
-      position = line.to + 1;
-    }
-    syntaxTree(view.state).iterate({
-      from: visible.from,
-      to: visible.to,
-      enter(node) {
-        const className = node.name === "StrongEmphasis" ? "cm-md-strong"
-          : node.name === "Emphasis" ? "cm-md-emphasis"
-          : node.name === "InlineCode" ? "cm-md-inline-code"
-          : node.name === "Link" ? "cm-md-link"
-          : ["HeaderMark", "EmphasisMark", "CodeMark", "LinkMark", "ListMark", "QuoteMark", "TaskMarker", "CodeInfo"].includes(node.name) ? "cm-md-syntax"
-          : "";
-        if (className && node.from < node.to) {
-          ranges.push(Decoration.mark({ class: className }).range(node.from, node.to));
-        }
-      },
-    });
-  }
-  return Decoration.set(ranges, true);
-}
-
-const markdownStyling = ViewPlugin.fromClass(class {
-  decorations: DecorationSet;
-
-  constructor(view: EditorView) {
-    this.decorations = markdownDecorations(view);
-  }
-
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.viewportChanged) this.decorations = markdownDecorations(update.view);
-  }
-}, { decorations: (plugin) => plugin.decorations });
-
-export function EditableMarkdown({
-  value,
-  onChange,
-  placeholder,
-  className,
-  "aria-label": ariaLabel,
-  onPointerDown,
-  interactiveTasks = false,
-  noteId,
-  onFiles,
-  workspace,
-  hideAttachmentButton = false,
-}: EditableMarkdownProps) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const editorHostRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const draftRef = useRef(value);
-  const lastExternalValueRef = useRef(value);
-  const onChangeRef = useRef(onChange);
-  const syncingRef = useRef(false);
-  const [draft, setDraft] = useState(value);
-  const [preview, setPreview] = useState(true);
-  const previewDraft = useDeferredValue(draft);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadingRef = useRef(false);
-  const uploadPositionRef = useRef<number | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [fileDrag, setFileDrag] = useState(false);
-
-  const uploadFiles = async (files: File[]) => {
-    if (!files.length) return;
-    if (onFiles) { onFiles(files); return; }
-    if (!noteId && !workspace) return;
-    if (uploadingRef.current) {
-      setUploadError("Wait for the current upload, then add these files again.");
-      return;
-    }
-    uploadingRef.current = true;
-    setUploading(true);
-    setUploadError("");
-    // Track the insertion point through edits made while the upload is running.
-    const view = viewRef.current;
-    uploadPositionRef.current = preview ? view?.state.doc.length ?? draftRef.current.length : view?.state.selection.main.head ?? 0;
-    try {
-      const taskIds = files.slice(0, 10).map((file) => startUpload(file, {
-        label: workspace ? "Workspace attachment" : "Note attachment",
-        onComplete: async (asset) => {
-          const markdown = fileEmbedMarkdown({ ...asset, url: `/api/file-uploads/${asset.id}/file` });
-          for (let attempt = 0; attempt < 3; attempt++) {
-            const response = await fetch(workspace ? `/api/workspaces?chatId=${encodeURIComponent(workspace.chatId)}&id=${encodeURIComponent(workspace.id)}` : `/api/notes/${encodeURIComponent(noteId!)}`, { cache: "no-store" });
-            const body = await response.json();
-            if (!response.ok) throw new Error(body.error || "Could not load note.");
-            const record = workspace ? body.workspace : body.note;
-            const current = viewRef.current;
-            const mounted = Boolean(current?.dom.isConnected);
-            const base = mounted ? current!.state.doc.toString() : record.content;
-            const insert = "\n\n" + markdown + "\n\n";
-            if ((base + insert).length > (workspace ? 100_000 : 50_000)) throw new Error("Document is full. Remove some content before retrying.");
-            const saved = await fetch(workspace ? "/api/workspaces" : `/api/notes/${encodeURIComponent(noteId!)}`, {
-              method: "PATCH", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: base + insert, version: record.version, ...(workspace ? {chatId:workspace.chatId,id:workspace.id}: {}) }),
-            });
-            if (saved.status === 409) continue;
-            if (!saved.ok) throw new Error((await saved.json()).error || "Could not save attachment.");
-            const result = await saved.json();
-            if(workspace)window.dispatchEvent(new CustomEvent("metis:workspace-upload-complete",{detail:{chatId:workspace.chatId,workspace:result.workspace}}));
-            if (mounted && current?.dom.isConnected) current.dispatch({ changes: { from: current.state.doc.length, insert } });
-            window.dispatchEvent(new Event("metis:notes-changed"));
-            return;
-          }
-          throw new Error("Note changed during upload. Retry to attach the file.");
-        },
-      }));
-      await Promise.all(taskIds.map(waitForUpload));
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : "Could not upload files.");
-    } finally {
-      uploadPositionRef.current = null;
-      uploadingRef.current = false;
-      setUploading(false);
-    }
-  };
-  const uploadFilesRef = useRef(uploadFiles);
-  uploadFilesRef.current = uploadFiles;
-  onChangeRef.current = onChange;
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || (!noteId && !workspace)) return;
-    const card = root.closest("[data-note-drop-target]")?.closest(".sticky-note") || root;
-    return registerFileDrop(card, {
-      containsTarget: (target) => target instanceof Node && card.contains(target),
-      onActive: setFileDrag,
-      onFiles: (files) => { void uploadFilesRef.current(Array.from(files)); },
-      resetTarget: window,
-    });
-  }, [noteId, workspace?.id, workspace?.chatId]);
-
-  useEffect(() => {
-    const host = editorHostRef.current;
-    if (!host) return;
-    const state = EditorState.create({
-      doc: draftRef.current,
-      extensions: [
-        history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        markdown(),
-        EditorView.lineWrapping,
-        editorPlaceholder(placeholder || "Write Markdown…"),
-        EditorView.contentAttributes.of({
-          "aria-label": ariaLabel || "Markdown editor",
-          spellcheck: "true",
-        }),
-        markdownStyling,
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged && uploadPositionRef.current !== null) {
-            uploadPositionRef.current = update.changes.mapPos(uploadPositionRef.current, 1);
-          }
-          if (!update.docChanged || syncingRef.current) return;
-          const next = update.state.doc.toString();
-          draftRef.current = next;
-          lastExternalValueRef.current = next;
-          setDraft(next);
-          onChangeRef.current(next);
-        }),
-      ],
-    });
-    const view = new EditorView({ state, parent: host });
-    viewRef.current = view;
-    return () => {
-      viewRef.current = null;
-      view.destroy();
-    };
-    // The editor instance owns cursor and undo state. External value changes sync below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (value === lastExternalValueRef.current) return;
-    lastExternalValueRef.current = value;
-    draftRef.current = value;
-    setDraft(value);
-    const view = viewRef.current;
-    if (!view) return;
-    const change = minimalMarkdownChange(view.state.doc.toString(), value);
-    if (!change) return;
-    syncingRef.current = true;
-    try {
-      view.dispatch({ changes: change });
-    } finally {
-      syncingRef.current = false;
-    }
-  }, [value]);
-
-  const commit = useCallback((next: string) => {
-    if (next === draftRef.current) return;
-    const view = viewRef.current;
-    if (view) {
-      const change = minimalMarkdownChange(view.state.doc.toString(), next);
-      if (change) view.dispatch({ changes: change });
-      return;
-    }
-    draftRef.current = next;
-    lastExternalValueRef.current = next;
-    setDraft(next);
-    onChangeRef.current(next);
-  }, []);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const onEmbedChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ kind?: string; source?: string }>).detail;
-      const kind = detail?.kind;
-      if (kind !== "chart" && kind !== "graph" && kind !== "mermaid" && kind !== "file") return;
-      if (typeof detail.source !== "string") return;
-      const boards = Array.from(root.querySelectorAll<HTMLElement>(
-        '[data-markdown-preview] [data-editor-control="' + kind + '"]',
-      ));
-      const index = boards.indexOf(event.target as HTMLElement);
-      if (index < 0) return;
-      const next = replaceEmbeddedSource(draftRef.current, kind, index, detail.source);
-      if(next.length > (noteId ? 50_000 : 100_000)) { setUploadError("Document is full. Remove some content before saving this embedding."); return; }
-      commit(next);
-    };
-    root.addEventListener("metis:markdown-embed-change", onEmbedChange);
-    return () => root.removeEventListener("metis:markdown-embed-change", onEmbedChange);
-  }, [commit, noteId]);
-
-  return (
-    <div
-      ref={rootRef}
-      data-note-drop-target={noteId || workspace?.id || undefined}
-      className={cn("editable-markdown group relative min-h-0 w-full flex-1 overflow-hidden rounded-md", className)}
-      onPointerDown={onPointerDown}
-      tabIndex={noteId || workspace ? 0 : undefined}
-      onPasteCapture={(event) => {
-        if (!noteId && !workspace) return;
-        const files = Array.from(event.clipboardData.files);
-        if (files.length) {
-          event.preventDefault();
-          event.stopPropagation();
-          void uploadFiles(files);
-        } else if (preview && event.clipboardData.getData("text/plain")) {
-          event.preventDefault();
-          event.stopPropagation();
-          commit(draftRef.current + (draftRef.current ? "\n\n" : "") + event.clipboardData.getData("text/plain"));
-        }
-      }}
-      onChangeCapture={(event) => {
-        if (!interactiveTasks) return;
-        const target = event.target;
-        if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") return;
-        if (target.closest("[data-editor-control]")) return;
-        const root = rootRef.current;
-        if (!root) return;
-        const tasks = Array.from(root.querySelectorAll<HTMLInputElement>(
-          '[data-markdown-preview] input[type="checkbox"]',
-        )).filter((task) => !task.closest("[data-editor-control]"));
-        const index = tasks.indexOf(target);
-        if (index >= 0) commit(toggleMarkdownTask(draftRef.current, index, target.checked));
-      }}
-    >
-      <button
-        type="button"
-        className="editable-markdown-toggle"
-        aria-label={preview ? "Edit Markdown" : "Preview Markdown"}
-        title={preview ? "Edit Markdown" : "Preview Markdown"}
-        onClick={() => {
-          setPreview((current) => !current);
-          if (preview) requestAnimationFrame(() => {
-            viewRef.current?.requestMeasure();
-            viewRef.current?.focus();
-          });
-        }}
-      >
-        {preview ? <Pencil className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
-      </button>
-      {(noteId || workspace) && (
-        <>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              void uploadFiles(Array.from(event.currentTarget.files || []));
-              event.currentTarget.value = "";
-            }}
-          />
-          {!hideAttachmentButton && <button
-            type="button"
-            data-editor-control
-            className="absolute top-2 right-10 z-10 rounded-md bg-background/90 p-1.5 text-foreground shadow-sm hover:bg-secondary focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
-            aria-label={uploading ? "Uploading files" : "Attach images or files"}
-            title="Attach images or files · up to 10 files, 1 GB each"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {uploading ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
-          </button>}
-          {uploading && <div role="status" className="absolute bottom-2 left-2 rounded bg-background px-2 py-1 text-xs text-foreground">Uploading…</div>}
-          {uploadError && <div role="alert" className="absolute inset-x-2 bottom-10 z-20 rounded bg-background p-2 text-xs text-destructive">{uploadError}</div>}
-          {fileDrag && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-current bg-background/90 p-3 text-sm text-foreground">Drop images or files here</div>}
-        </>
-      )}
-      <div ref={editorHostRef} className="editable-markdown-editor" hidden={preview} />
-      {preview && (
-        <div
-          data-markdown-preview
-          aria-label={ariaLabel ? ariaLabel + " preview" : "Markdown preview"}
-          className="editable-markdown-preview"
-        >
-          {previewDraft ? <Markdown content={previewDraft} interactiveTasks={interactiveTasks} editableFiles /> : (
-            <span className="text-muted-foreground/70">{placeholder || "Nothing to preview yet."}</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
+export function EditableMarkdown({ className, interactiveTasks: _interactiveTasks, ...props }: EditableMarkdownProps) {
+  return <div className={cn("editable-markdown shared-markdown-surface relative min-h-0 w-full", className)}>
+    <SharedMarkdownEditor {...props}/>
+  </div>;
 }

@@ -32,7 +32,8 @@ test("streaming markdown flushes replacements and throttles appends", () => {
 
 test("app shell wires batched streams and browser viewport phases", () => {
   assert.match(shell, /createStreamTextBatcher\(applyStreamText\)/);
-  assert.match(shell, /if \(!liveRun\) \{\s*setMessages\(\(current\) => mergeMessages/);
+  assert.ok(shell.includes("createBrowserFramePresenter(screenshotNode, markBrowserFrameVisible)"));
+  assert.ok(shell.includes("if (!browserStreamVisible || !browserEnabled || !activeChatId || loadingChatId) return;"));
   assert.match(shell, /data-browser-phase=\{browserPhase\}/);
   assert.match(shell, /<BrowserPageSkeleton \/>/);
   assert.match(shell, /<BrowserPageEmpty \/>/);

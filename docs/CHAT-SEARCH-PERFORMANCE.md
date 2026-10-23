@@ -1,0 +1,27 @@
+# Chat search performance
+
+The command palette previously loaded and parsed every canonical chat history on the web event loop for each query. It also fetched every matching note with its complete content and highlighted the hidden text, even though CSS clamped the visible preview.
+
+The search endpoint now runs on one bounded worker, with a queue of at most 16 requests and a 192 MiB V8 old-generation limit. It uses an additive SQLite projection containing message text, separate from tool results and nested agents. An FTS5 trigram index narrows literal substring queries; one- and two-character searches scan the plain-text projection in the worker. Candidate verification preserves case-insensitive literal substring matching, including punctuation and Unicode. Titles and keywords remain searchable. Results preserve chat ordering and message IDs.
+
+Canonical writes update the search projection in the same transaction, incrementally for individual message changes. Revision checks detect externally changed histories, including changes with an unchanged timestamp. Legacy preparation uses SQLite json_tree to stage only direct message IDs, roles and content into a TEMP table. Complete histories and tool trees never enter the worker's JavaScript heap. Extraction uses a read snapshot without holding the main database writer lock; a separate transaction checks the revision before publishing plain text and its FTS entries together. Responses are returned after a short preparation slice, with an explicit indexing status; the worker continues preparation in the background. Requests take priority between records. The client displays partial results and refreshes while older chats are being prepared. The initial backfill is a one-time cost; it does not make all old history instantly searchable.
+
+Access is checked from current project ownership and membership, with membership taking precedence over resource creator ownership. Incognito chats and automation runs remain excluded; archived chats remain searchable. Raw histories are preserved. Deletion cascades remove indexed text. Note results respect the notes feature flag and exclude learned facts and archived notes. General notes and projects APIs keep their existing full-content contracts.
+
+The palette fetches one bounded response: up to 30 chat hits, 8 notes and 8 projects, with short snippets. It debounces input, aborts superseded/closed searches, ignores late responses, memoizes bounded highlighting, scrolls the active keyboard item into view, and provides a retry state. API responses and the client both bound text and result counts.
+
+## Evidence
+
+Synthetic data only; production conversations were not used for benchmarks.
+
+- Backend fixture: 400 chats, 386,530,580 bytes of canonical history. Previously, missing-query searches took 1,502–1,657 ms and blocked the web event loop for up to 1,665 ms.
+- Indexed search in the same fixture: 16–41 ms, including common one- and two-character queries, with a maximum observed web-loop pause of 16 ms. First partial response including worker startup: 691 ms. Completing the initial index took 15 seconds in this intentionally large fixture, while partial results remained available.
+- Browser fixture: the real CommandPalette component, production React, 30 synthetic notes of 3,900 characters each. Before: 18,482 DOM elements, 9,030 marks, maximum frame interval 341 ms. After: 246 elements, 104 marks, maximum interval 44 ms and no recorded long tasks.
+- Tests cover full text beyond previews, literal punctuation/short/Unicode queries, current project ACL and revocation, raw preservation, same-timestamp invalidation, appends, deletion, bounded results, note IDs/feature gating, authentication and a 32 MB legacy conversation without a web-thread full-history parse.
+- Built production server with a 32 MB legacy fixture: authenticated HTTP 200, unauthenticated 401, 16 correct message hits in 2,723 bytes, warm HTTP search 15–43 ms, simultaneous other-chat request 16–19 ms.
+- The worker loads its TypeScript engine from source through the existing tsx runtime; this engine is not embedded in Next chunks. Final engine changes were independently typechecked, linted and exercised through the built server.
+- Activation uncovered a worker heap failure on a 74 MB legacy history. The SQLite-only extraction replaces full-history JSON parsing without increasing the 192 MiB V8 limit. An additional 80,009,961-byte regression fixture indexes successfully under that limit, excludes nested tool/subagent content and preserves the raw history. All 58 focused regression tests pass after the correction. Two authenticated searches through the live application completed successfully afterward; these are functional smoke tests, not production latency benchmarks.
+- Activation evidence: `data/tmp/activate-ui-fixes/` contains the pre-switch database/config backup, final source digests, focused tests, types/lint, authenticated live search probes, and verification records. Only the app was restarted; worker and MCP service identities remained unchanged.
+- Artifacts: `data/tmp/chat-search-{before,after,sources}.json`, `chat-search-{tests,regression,types,lint,build}.log`, and `chat-search-preview/`.
+
+These figures describe the synthetic fixtures, not a production-load guarantee. Indexing, database contention, and storage speed affect first-use latency. No 10-hour soak test was performed.

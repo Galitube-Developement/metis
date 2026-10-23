@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { EditableMarkdown } from "@/components/editable-markdown";
 
 type SkillItem = {
   id: string;
@@ -120,8 +121,8 @@ export function SkillsSettings({ hideHeading = false, importOnly = false, onAdde
           setManualFile(file);
           if (file && !manualId) setManualId(file.name.replace(/\.md$/i, ""));
         }} />
-        <textarea className="min-h-28 rounded-md border bg-background p-2 font-mono text-xs" aria-label="Manual skill content" placeholder="Paste SKILL.md content" value={manualContent} onChange={(event) => {
-          setManualContent(event.target.value);
+        <EditableMarkdown editorId="manual-skill" className="min-h-28 rounded-md border bg-background p-2" aria-label="Manual skill content" placeholder="Paste SKILL.md content" value={manualContent} maxLength={200_000} initialMode="markdown" disabled={adding} hideAttachmentButton onChange={(value) => {
+          setManualContent(value);
           setManualFile(null);
         }} />
         <Button type="button" size="sm" className="w-fit" disabled={adding || !manualId.trim() || (!manualFile && !manualContent.trim())} onClick={() => void addSkill()}>{adding ? "Adding…" : "Add skill"}</Button>
