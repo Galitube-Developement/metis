@@ -15,8 +15,10 @@ This option is available for a connected Windows, macOS or Linux X11 client with
 1. Use `list_remote_clients` to select exactly one online client with `desktop_gui`.
 2. Call `computer_use` with `operation: "list_windows"`. Select exactly one returned window ID. Never invent a handle.
 3. Call `computer_use` with `operation: "observe"` and that window ID. Inspect the screenshot and keep its `observation_id`.
-4. Perform exactly one `move`, `click`, `key`, `type`, `scroll`, or `drag` using that observation ID and window-relative coordinates.
+4. Perform exactly one `move`, `click`, `key`, `type`, `scroll`, or `drag` using that observation ID and coordinates in pixels of the returned screenshot, measured from its top-left corner.
 5. Observe again before the next action. Observation IDs expire after 30 seconds and are consumed by one action.
+
+Use the observation's `width` and `height` as the screenshot coordinate range. If the image is displayed at a different size, convert the displayed position to that range. The macOS desktop app captures the whole monitor, including the menu bar and Dock; `windowX`, `windowY`, `windowWidth`, and `windowHeight` describe the selected window separately. Other clients may return a window crop: the returned image determines the origin. Do not subtract menu-bar height or window position from screenshot coordinates. On Retina displays the client converts screenshot pixels to logical input points; do not apply that scaling again.
 
 Before typing, click the observed editable area, observe again, and visually verify focus. `type` sends literal text. Use `key` for Enter, Tab, Escape, arrows, and chords such as `Control+A`.
 
