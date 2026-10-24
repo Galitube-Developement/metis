@@ -4,6 +4,14 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.19 — 2026-10-24
+
+- Introduce Notebooks with separate project and No Project file trees, nested Markdown documents, and migration of existing note hierarchies.
+- Add Issuebooks with issue documents, statuses, priorities, assignees, relations, comments, and agent tools for managing issues.
+- Unify Markdown editing across notebooks, plans, canvases and workspace files with a block editor, attachment support, and draft recovery.
+- Import and export notebook archives, duplicate or move documents, and open notes directly from tool results and internal links.
+- Improve chat search responsiveness with indexed background search, and streamline the command palette, grouped tool details and browser progress feedback.
+
 ## v1.0.18 — 2026-10-21
 
 - Open large chats through indexed message and activity pages, load tool results and subagent histories on demand, and keep unrelated requests responsive during legacy history preparation.
