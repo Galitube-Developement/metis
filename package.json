@@ -1,6 +1,6 @@
 {
   "name": "metis-ai",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "engines": {
