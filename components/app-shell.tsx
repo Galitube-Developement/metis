@@ -9,13 +9,15 @@ import { DEEP_RESEARCH_MODE_ID } from "@/lib/deep-research";
 import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { WorkspaceExportMenu } from "@/components/workspace-export-menu";
 import { createClientId } from "@/lib/client-id";
-import { modelAccountGroups, modelAccountKey, modelMatchesAccount, type ModelAccountGroup } from "@/lib/model-account-groups";
+import { modelAccountGroups, modelAccountKey, modelAccountLabel, modelMatchesAccount, type ModelAccountGroup } from "@/lib/model-account-groups";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { useNotificationInbox } from "@/components/account/use-notification-inbox";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
 import type { AccountView } from "@/components/account/account-panel";
 
 import { useAccountNotifications } from "@/hooks/use-account-notifications";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { SettingsDialog } from "@/components/settings-dialog";
 import { flushNoteEditors } from "@/lib/note-editor-lifecycle";
 import { composerMentionQuery, replaceComposerMention, composerReferenceKeyAction, composerIsComposing } from "@/lib/composer-references";
 import { workspaceFileHref, parseWorkspaceFileLink, type WorkspaceFileRequest } from "@/lib/workspace-file-link";
@@ -178,6 +180,7 @@ import { ProviderLogo } from "@/components/provider-logo";
 import { ProjectModelLock } from "@/components/project-model-select";
 import { projectDefaultModel, projectModelLockMessage } from "@/lib/project-model";
 import { ModelOptionsMenu } from "@/components/model-options-menu";
+import { modelForSelection } from "@/lib/model-selection";
 import type {
   FinishSound,
   ModelInfo,
@@ -200,6 +203,8 @@ import {
   isChildRunLive,
 } from "@/lib/subagent-bar";
 import { ToolCallGroup, type ActivityEntry, type ToolCallData } from "@/components/tool-call-chip";
+import { ProviderRetryEvent } from "@/components/provider-retry-event";
+import type { ProviderRetryPart } from "@/lib/provider-retry";
 import { canvasFromToolPayload, classifyToolKind, isToolRunning, layoutAssistantParts, mergeChatMessages, planFromToolPayload, remoteClientHostnameMap, todosFromToolPayload, workspaceIdFromLink } from "@/lib/tool-call-display";
 import { reconcileMessageParts } from "@/lib/message-parts";
 import { stripTranscriptDump } from "@/lib/agent-transcript";
@@ -397,6 +402,7 @@ type ToolPart = StoredToolPart & {
 };
 
 type MsgPart =
+  | ProviderRetryPart
   | { type: "thinking"; content: string; done?: boolean; durationMs?: number }
   | {
       type: "compaction";
@@ -2106,6 +2112,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const { profile: accountProfile, setProfile: setAccountProfile, error: accountProfileError, retry: retryAccountProfile } = useAccountProfile(Boolean(authed));
   const {unreadCount: unreadNotifications,refresh:refreshNotificationInbox}=useNotificationInbox(Boolean(authed));
   const settingsOpen = accountView === "settings";
+  const isMobileSettings = useIsMobile();
   const setSettingsOpen = useCallback((open: boolean) => {
     setAccountView(current => open ? "settings" : current === "settings" ? null : current);
   }, []);
@@ -2116,6 +2123,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (view === "settings") { void loadMemories(); void refreshStatus(); }
   }
   const [settingsTab, setSettingsTab] = useState("general");
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState<string | null>(null);
   const [settingsUpdateAvailable, setSettingsUpdateAvailable] = useState(false);
   const [chatLogsOpen, setChatLogsOpen] = useState(false);
   const [chatLogs, setChatLogs] = useState<ChatLogEntry[]>([]);
@@ -3793,7 +3801,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         ? localStorage.getItem(MODEL_STORAGE_KEY)
         : null;
     const nextModelId =
-      (savedModel && data.models.some((m) => m.id === savedModel)
+      (savedModel && modelForSelection(data.models, savedModel)
         ? savedModel
         : null) ||
       data.models[0]?.id ||
@@ -3805,7 +3813,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       setModelId(nextModelId);
       if (nextModelId) localStorage.setItem(MODEL_STORAGE_KEY, nextModelId);
     }
-    const meta = data.models.find((m) => m.id === nextModelId);
+    const meta = modelForSelection(data.models, nextModelId);
     let savedParams: ModelParamSelection[] | null = null;
     try {
       const raw = localStorage.getItem(PARAMS_STORAGE_KEY);
@@ -3880,12 +3888,12 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ...current,
         }));
         setSubagentModelEnabled(Boolean(settings.subagentModelEnabled));
-        if (settings.subagentModelId && models.some((model) => model.id === settings.subagentModelId)) {
+        if (settings.subagentModelId && modelForSelection(models, settings.subagentModelId)) {
           setSubagentModelId(settings.subagentModelId);
           setSubagentModelParams(
             Object.prototype.hasOwnProperty.call(paramsByModel, settings.subagentModelId)
               ? paramsByModel[settings.subagentModelId] || []
-              : models.find((model) => model.id === settings.subagentModelId)?.defaultParams || [],
+              : modelForSelection(models, settings.subagentModelId)?.defaultParams || [],
           );
         }
         if (Array.isArray(settings.favoriteModelKeys)) {
@@ -4291,7 +4299,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       const lastEquippedModelId =
         typeof window !== "undefined" ? localStorage.getItem(MODEL_STORAGE_KEY) : null;
       const nextNewChatModelId =
-        (lastEquippedModelId && models.some((model) => model.id === lastEquippedModelId)
+        (lastEquippedModelId && modelForSelection(models, lastEquippedModelId)
           ? lastEquippedModelId
           : null) ||
         stateRef.current.modelId ||
@@ -4302,7 +4310,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ? stateRef.current.modelParams
           : Object.prototype.hasOwnProperty.call(modelParamsByModel, nextNewChatModelId)
             ? modelParamsByModel[nextNewChatModelId] || []
-            : models.find((model) => model.id === nextNewChatModelId)?.defaultParams ?? [];
+            : modelForSelection(models, nextNewChatModelId)?.defaultParams ?? [];
       if (nextNewChatModelId && nextNewChatParams.length) {
         const nextParamMap = { ...modelParamsByModel, [nextNewChatModelId]: nextNewChatParams };
         persistModelParamsByModel(nextParamMap);
@@ -4821,7 +4829,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
 
   function rememberedParamsForModel(
     id: string,
-    fallback: ModelParamSelection[] = models.find((model) => model.id === id)?.defaultParams ?? [],
+    fallback: ModelParamSelection[] = modelForSelection(models, id)?.defaultParams ?? [],
   ) {
     if (Object.prototype.hasOwnProperty.call(modelParamsByModel, id)) {
       return modelParamsByModel[id] || [];
@@ -4920,7 +4928,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     if (modelId) nextMap[modelId] = modelParams;
     const nextParams = Object.prototype.hasOwnProperty.call(nextMap, nextId)
       ? nextMap[nextId] || []
-      : models.find((model) => model.id === nextId)?.defaultParams ?? [];
+      : modelForSelection(models, nextId)?.defaultParams ?? [];
     nextMap[nextId] = nextParams;
     const providerId = parseModelKey(nextId).providerKey;
     const parsedAccount = parseModelKey(nextId);
@@ -6057,6 +6065,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     setPassword("");
+    window.dispatchEvent(new Event("metis:auth-changed"));
     await refreshStatus();
   }
 
@@ -6066,6 +6075,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       return;
     }
     await fetch("/api/auth", { method: "DELETE" });
+    window.dispatchEvent(new Event("metis:auth-changed"));
     setAccountView(null);
     setMobileNavOpen(false);
     authedRef.current = false;
@@ -7512,6 +7522,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       let buffer = "";
       let lastEventId = 0;
       let terminalEventSeen = false;
+      let retryAssistantPending = false;
       let reconnectAttempts = 0;
 
       const reconnectRunStream = async () => {
@@ -7643,13 +7654,27 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           if (event === "assistantId" && typeof payload.messageId === "string") {
             textBatcher.flush();
             const serverMessageId = payload.messageId;
-            setMessages((messages) =>
-              messages.map((message) =>
-                message.id === asstId
-                  ? { ...message, id: serverMessageId }
-                  : message,
-              ),
-            );
+            const previousId = asstId;
+            if (retryAssistantPending && serverMessageId !== previousId) {
+              setMessages(messages => {
+                const finalized = messages.map(message => message.id === previousId
+                  ? { ...message, streaming: false, thinkingDone: true } : message);
+                if (finalized.some(message => message.id === serverMessageId)) return finalized;
+                return [...finalized, {
+                  id: serverMessageId, role: "assistant", content: "", parts: [],
+                  createdAt: new Date().toISOString(), streaming: true,
+                }];
+              });
+            } else {
+              setMessages((messages) =>
+                messages.map((message) =>
+                  message.id === previousId
+                    ? { ...message, id: serverMessageId }
+                    : message,
+                ),
+              );
+            }
+            retryAssistantPending = false;
             asstId = serverMessageId;
           } else if (event === "text" && typeof payload.text === "string") {
             textBatcher.push(payload.text);
@@ -7779,6 +7804,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             (typeof payload.callId === "string" || typeof payload.call_id === "string")
           ) {
             textBatcher.flush();
+            const toolMessageId = asstId;
             const callId =
               typeof payload.callId === "string" ? payload.callId : String(payload.call_id);
             const name =
@@ -7844,7 +7870,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             }
             setMessages((m) =>
               m.map((x) => {
-                if (x.id !== asstId) return x;
+                if (x.id !== toolMessageId) return x;
                 const parts = [...(x.parts ?? partsFromFlat(x))];
                 const exactIndex = parts.findIndex(
                   (p) => p.type === "tool" && p.id === callId,
@@ -8063,8 +8089,26 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           ) {
             if (activeChatIdRef.current === chatId) setAgentId(payload.agentId);
           } else if (event === "status") {
+            if (payload.status === "retrying_provider" && typeof payload.id === "string"
+              && typeof payload.attempt === "number" && typeof payload.maxRetries === "number"
+              && typeof payload.message === "string" && typeof payload.detail === "string") {
+              textBatcher.flush();
+              retryAssistantPending = true;
+              const retryMessageId = asstId;
+              const retryEvent: ProviderRetryPart = {
+                type: "provider-retry", id: payload.id, attempt: payload.attempt,
+                maxRetries: payload.maxRetries, message: payload.message, detail: payload.detail,
+              };
+              setMessages(current => current.map(message => {
+                if (message.id !== retryMessageId) return message;
+                const parts = [...(message.parts ?? partsFromFlat(message))];
+                if (!parts.some(part => part.type === "provider-retry" && part.id === retryEvent.id)) parts.push(retryEvent);
+                return { ...message, ...withSyncedFlat(parts, { streaming: false, thinkingDone: true }) };
+              }));
+            }
             const rawStatus = typeof payload.status === "string" ? payload.status : "";
-            const statusLabel = rawStatus === "waiting_provider_limit" ? "Waiting for provider reset"
+            const statusLabel = rawStatus === "retrying_provider" ? ""
+              : rawStatus === "waiting_provider_limit" ? "Waiting for provider reset"
               : rawStatus.toLowerCase() === "running" ? "Agent running" : rawStatus;
             const label = [statusLabel, typeof payload.message === "string" ? payload.message : ""]
               .filter(Boolean)
@@ -8232,7 +8276,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     ? configuredModelProviders.find((provider) => provider.id === selectedKey.connectionId)
     : undefined;
   const selectedModel =
-    models.find((m) => m.id === modelId) ||
+    modelForSelection(models, modelId) ||
     (() => {
       const displayName = selectedKey.modelId || modelId || "Select a model";
       return {
@@ -8245,7 +8289,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         contextWindow: contextWindowForModel({ id: selectedKey.modelId || modelId, displayName }),
       } satisfies ModelInfo;
     })();
-  const selectedModelLabel = modelDisplayName(selectedModel) + (selectedModel.connectionLabel ? " · " + selectedModel.connectionLabel : "");
+  const selectedAccountLabel = modelAccountLabel(selectedModel, availableProviders);
+  const selectedModelLabel = modelDisplayName(selectedModel) + (selectedAccountLabel ? " · " + selectedAccountLabel : "");
   const measuredRuns = [...messages]
     .reverse()
     .filter((message) =>
@@ -8400,7 +8445,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     return (
       <DropdownMenuItem
         key={model.id}
-        data-model-selected={model.id === modelId ? "true" : "false"}
+        data-model-selected={model.id === selectedModel.id ? "true" : "false"}
         onClick={() => {
           void selectModel(model.id);
           setModelSearch("");
@@ -8410,7 +8455,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <Check
           className={cn(
             "size-3.5 shrink-0",
-            model.id === modelId ? "opacity-100" : "opacity-0",
+            model.id === selectedModel.id ? "opacity-100" : "opacity-0",
           )}
         />
         <ProviderLogo providerId={model.providerId} />
@@ -9453,6 +9498,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
             connectionId={voiceConnectionId}
             onOpenSettings={() => {
               setSettingsTab("general");
+              setSettingsSectionRequest("settings-voice-input");
               setSettingsOpen(true);
             }}
             onRecordingChange={setVoiceRecording}
@@ -10184,6 +10230,65 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     );
   }
 
+  const settingsPanel = settingsOpen ? (
+      <SettingsPanel
+        mobile={isMobileSettings}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settingsTab={settingsTab}
+        onSettingsTabChange={setSettingsTab}
+        sectionRequest={settingsSectionRequest}
+        onSectionRequestHandled={() => setSettingsSectionRequest(null)}
+        memories={memories}
+        soundCuesEnabled={soundCuesEnabled}
+        onSoundCuesEnabledChange={setSoundCuesEnabled}
+        voiceInputEnabled={voiceInputEnabled}
+        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
+        voiceProvider={voiceProvider}
+        voiceModelId={voiceModelId}
+        voiceRealtime={voiceRealtime}
+        voiceEndpoint={voiceEndpoint}
+        onVoiceApiKeySave={saveVoiceApiKey}
+        onVoiceInputSettingsChange={updateVoiceInputSettings}
+        browserEnabled={browserEnabled}
+        browserRealtime={browserRealtime}
+        browserFps={browserFps}
+        browserViewportWidth={browserDefaultViewport.width}
+        browserViewportHeight={browserDefaultViewport.height}
+        onBrowserSettingsChange={updateBrowserSettings}
+        compressionEnabled={compressionEnabled}
+        compressionMode={compressionMode}
+        compressionToolResults={compressionToolResults}
+        compressionChatHistory={compressionChatHistory}
+        onCompressionSettingsChange={updateCompressionSettings}
+        models={models}
+        favoriteModelKeys={favoriteModelKeys}
+        onToggleFavoriteModel={toggleFavoriteModel}
+        subagentModelEnabled={subagentModelEnabled}
+        onSubagentModelEnabledChange={updateSubagentModelEnabled}
+        subagentModelId={subagentModelId}
+        onSubagentModelIdChange={updateSubagentModelId}
+        subagentModelParams={subagentModelParams}
+        onSubagentModelParamsChange={updateSubagentModelParams}
+        finishSound={finishSound}
+        onFinishSoundChange={(sound) => {
+          setFinishSound(sound);
+          saveFinishSound(sound);
+        }}
+        onTestFinishSound={playFinishSound}
+        onMemoriesChanged={() => void loadMemories()}
+        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
+        onChatsChanged={() => void loadChats()}
+        usageSnapshot={planUsageSnapshot}
+        onRefreshUsage={() => refreshPlanUsage(true)}
+        onModelsChanged={() => void loadModels()}
+        onModesChanged={() => void loadModes()}
+        onResetMetis={resetMetis}
+        onUpdateMetis={updateMetis}
+        isHostAdmin={Boolean(status?.isHostAdmin)}
+      />
+  ) : null;
+
   return (
     <InternalLinkPreviewChat.Provider value={activeChatId}>
     <div
@@ -10337,65 +10442,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         enabled={!accountView && !notesOpen && !automationsOpen && !projectHomeId && !settingsOpen && !providerSetupRequired && !loadingChatId}
         onFiles={addPendingFiles}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {accountView ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} onNotificationsChanged={() => void refreshNotificationInbox()} onOpenProject={(id) => {setAccountView(null);openProjectHome(id);}} onOpenChat={(id)=>{setAccountView(null);void loadChat(id);}}>
+        {accountView && (!settingsOpen || isMobileSettings) ? <AccountPanel view={accountView} onClose={() => setAccountView(null)} onOpenNav={() => setMobileNavOpen(true)} profile={accountProfile} onProfileChange={setAccountProfile} profileError={accountProfileError} onRetry={retryAccountProfile} onNotificationsChanged={() => void refreshNotificationInbox()} onOpenProject={(id) => {setAccountView(null);openProjectHome(id);}} onOpenChat={(id)=>{setAccountView(null);void loadChat(id);}}>
           {accountView === "agent-hub" ? <AgentHub isHostAdmin={Boolean(status?.isHostAdmin)} onModesChanged={() => void loadModes()} onTrySkill={(skill) => {
         setAccountView(null); setNotesOpen(false); setAutomationsOpen(false); setProjectHomeId(null);
         if (skill.id === DEEP_RESEARCH_MODE_ID) { void selectMode(DEEP_RESEARCH_MODE_ID).catch(() => toast.error("Could not save agent mode")); return; }
         setInput(current => [current.trim(), skill.id === "skill-creator" ? "Use the skill-creator skill to help me create a new skill. " : "Use the " + skill.title + " skill. "].filter(Boolean).join("\n\n"));
         setComposerSyncNonce(current => current + 1);
-      }} /> : accountView === "settings" ? <SettingsPanel
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        settingsTab={settingsTab}
-        onSettingsTabChange={setSettingsTab}
-        memories={memories}
-        soundCuesEnabled={soundCuesEnabled}
-        onSoundCuesEnabledChange={setSoundCuesEnabled}
-        voiceInputEnabled={voiceInputEnabled}
-        voiceMaxDurationSeconds={voiceMaxDurationSeconds}
-        voiceProvider={voiceProvider}
-        voiceModelId={voiceModelId}
-        voiceRealtime={voiceRealtime}
-        voiceEndpoint={voiceEndpoint}
-        onVoiceApiKeySave={saveVoiceApiKey}
-        onVoiceInputSettingsChange={updateVoiceInputSettings}
-        browserEnabled={browserEnabled}
-        browserRealtime={browserRealtime}
-        browserFps={browserFps}
-        browserViewportWidth={browserDefaultViewport.width}
-        browserViewportHeight={browserDefaultViewport.height}
-        onBrowserSettingsChange={updateBrowserSettings}
-        compressionEnabled={compressionEnabled}
-        compressionMode={compressionMode}
-        compressionToolResults={compressionToolResults}
-        compressionChatHistory={compressionChatHistory}
-        onCompressionSettingsChange={updateCompressionSettings}
-        models={models}
-        favoriteModelKeys={favoriteModelKeys}
-        onToggleFavoriteModel={toggleFavoriteModel}
-        subagentModelEnabled={subagentModelEnabled}
-        onSubagentModelEnabledChange={updateSubagentModelEnabled}
-        subagentModelId={subagentModelId}
-        onSubagentModelIdChange={updateSubagentModelId}
-        subagentModelParams={subagentModelParams}
-        onSubagentModelParamsChange={updateSubagentModelParams}
-        finishSound={finishSound}
-        onFinishSoundChange={(sound) => {
-          setFinishSound(sound);
-          saveFinishSound(sound);
-        }}
-        onTestFinishSound={playFinishSound}
-        onMemoriesChanged={() => void loadMemories()}
-        onMemoryDeleted={(id) => setMemories((current) => current.filter((memory) => memory.id !== id))}
-        onChatsChanged={() => void loadChats()}
-        usageSnapshot={planUsageSnapshot}
-        onRefreshUsage={() => refreshPlanUsage(true)}
-        onModelsChanged={() => void loadModels()}
-        onModesChanged={() => void loadModes()}
-        onResetMetis={resetMetis}
-        onUpdateMetis={updateMetis}
-        isHostAdmin={Boolean(status?.isHostAdmin)}
-      /> : null}
+      }} /> : accountView === "settings" ? settingsPanel : null}
         </AccountPanel> : <>
         {/* Thin top bar */}
         <header className="relative z-20 flex h-14 shrink-0 items-center gap-2.5 border-b border-border/55 bg-background px-3.5 md:h-12 md:gap-2 md:px-4">
@@ -10858,6 +10911,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                           return (
                             <>
                         {viewBlocks.map((block, bi, blocks) => {
+                          if (block.type === "provider-retry") {
+                            return <ProviderRetryEvent key={block.id} event={block} />;
+                          }
                           if (block.type === "compaction") {
                             const running = block.status !== "completed" && block.status !== "error";
                             const detail = [
@@ -11311,6 +11367,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         </div>
         </>}
       </ChatFileDropZone>
+      {settingsOpen && !isMobileSettings ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen}>{settingsPanel}</SettingsDialog> : null}
 
       {!accountView && !notesOpen && !automationsOpen && workspaceMounted && workspaceFullscreen ? (
         <div className="fixed inset-0 z-40 bg-background/55" aria-hidden="true" />

@@ -1,15 +1,14 @@
-export type SettingsSection = { id: string; label: string; keywords?: string };
+export type SettingsSection = { id: string; label: string; keywords?: string; parentSectionId?: string };
 export const SETTINGS_SECTIONS: Record<string, SettingsSection[]> = {
   general: [
+    { id: "settings-appearance", label: "Appearance", keywords: "theme colors colour midnight graphite nord forest sand paper gray grey dark light design custom json import export fonts spacing radius aussehen farben grau schrift abstand" },
     { id: "settings-attachments", label: "Attachments", keywords: "upload file size limit unlimited MB GB anhänge anhaenge dateigröße dateigrosse größe unbegrenzt" },
-    { id: "settings-subagent-model", label: "Subagent model", keywords: "delegation standard model modell unteragent" },
-    { id: "settings-token-compression", label: "Token compression", keywords: "context tool results chat history rtk caveman kompression kontext" },
     { id: "settings-notifications", label: "Notifications", keywords: "sound cues finish sound custom audio browser push remote client toasts benachrichtigungen ton" },
-    { id: "settings-voice-input", label: "Voice input", keywords: "microphone recording transcription speech dictation api key realtime mikrofon sprache diktat" },
-    { id: "settings-dictionary", label: "Dictionary", keywords: "voice words spellings worter wörter worterbuch wörterbuch" },
+    { id: "settings-voice-input", label: "Voice & dictionary", keywords: "voice input microphone recording transcription speech dictation api key realtime mikrofon sprache diktat" },
+    { id: "settings-dictionary", label: "Dictionary", parentSectionId: "settings-voice-input", keywords: "voice words spellings worter wörter worterbuch wörterbuch" },
     { id: "settings-browser", label: "Browser", keywords: "realtime preview stream fps viewport width height echtzeit breite hohe höhe" },
-    { id: "settings-browser-storage", label: "Browser storage", keywords: "cookies persistent website sessions localstorage sessionstorage speicher sitzungen" },
-    { id: "settings-links", label: "Links", keywords: "website github source code webseite quellcode" },
+    { id: "settings-browser-storage", label: "Browser storage", parentSectionId: "settings-browser", keywords: "cookies persistent website sessions localstorage sessionstorage speicher sitzungen" },
+    { id: "settings-links", label: "Website & GitHub", keywords: "links website github source code webseite quellcode" },
   ],
   models: [
     { id: "settings-usage", label: "Usage", keywords: "quota cost limits tokens plan verbrauch kosten kontingent" },
@@ -17,7 +16,9 @@ export const SETTINGS_SECTIONS: Record<string, SettingsSection[]> = {
     { id: "settings-versions", label: "Versions", keywords: "cli installed version update versionen" },
   ],
   agent: [
-    { id: "settings-agent-runtime", label: "Settings", keywords: "runtime unlimited minutes subagents project agents provider limits reset recovery laufzeit zeitlimit warten" },
+    { id: "settings-agent-runtime", label: "Runtime & recovery", keywords: "settings einstellungen runtime unlimited minutes subagents project agents provider limits reset recovery retry errors automatic continuing laufzeit zeitlimit warten fehler fehlerbehandlung wiederholen" },
+    { id: "settings-subagent-model", label: "Subagent model", keywords: "delegation standard model modell unteragent" },
+    { id: "settings-token-compression", label: "Token compression", keywords: "context tool results chat history rtk caveman kompression kontext" },
     { id: "settings-memories", label: "Memories", keywords: "global memory facts preferences erinnerungen gedächtnis" },
   ],
   devices: [
@@ -44,6 +45,10 @@ export function visibleSettingsSections(tab: string, isHostAdmin: boolean) {
   return (SETTINGS_SECTIONS[tab] || []).filter(item =>
     isHostAdmin || (item.id !== "settings-users" && item.id !== "settings-maintenance"),
   );
+}
+
+export function settingsOverviewSections(tab: string, isHostAdmin: boolean) {
+  return visibleSettingsSections(tab, isHostAdmin).filter(item => !item.parentSectionId);
 }
 
 export type SettingsSearchEntry = {

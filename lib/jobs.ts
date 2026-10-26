@@ -16,6 +16,8 @@ export type JobStatus =
   | "error";
 
 export type AgentJob = {
+  /** Automatic transient provider retries consumed by this logical run. */
+  providerRetryCount?: number;
   /** Durable deferred claim metadata; cleared atomically when the reset is due. */
   providerRateLimit?: import("@/lib/provider-rate-limit").ProviderRateLimit;
   id: string;

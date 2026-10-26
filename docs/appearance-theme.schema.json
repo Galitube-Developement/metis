@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Metis appearance theme",
+  "description": "Portable root CSS design variables. Metis additionally validates balanced CSS values and rejects rules, URL/resource functions, scripts, comments, and !important.",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "name",
+    "mode",
+    "variables"
+  ],
+  "properties": {
+    "format": {
+      "const": "metis-theme"
+    },
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "\\S"
+    },
+    "mode": {
+      "enum": [
+        "dark",
+        "light"
+      ]
+    },
+    "variables": {
+      "type": "object",
+      "maxProperties": 2048,
+      "propertyNames": {
+        "pattern": "^--(?:[a-zA-Z0-9_-]|[^\\u0000-\\u007f]|\\\\(?:[0-9a-fA-F]{1,6}[\\t\\n\\f\\r ]?|[^\\n\\r\\f0-9a-fA-F]))+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    }
+  }
+}

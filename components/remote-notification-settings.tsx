@@ -7,7 +7,7 @@ export function NotificationSettingsFeedback({settings}:{settings:NotificationSe
     {settings.error?<div className="flex flex-wrap items-center gap-2"><p role="alert" className="min-w-0 flex-1 text-xs text-destructive">{settings.error}</p><Button size="sm" variant="outline" onClick={()=>void settings.reload()}>Retry</Button></div>:null}
     {settings.notice?<p role="status" aria-live="polite" className="text-xs text-muted-foreground">{settings.notice}</p>:null}</>;
 }
-export function RemoteNotificationSettings({settings}:{settings:NotificationSettingsState}) {
+export function RemoteNotificationSettings({settings,showFeedback=true}:{settings:NotificationSettingsState;showFeedback?:boolean}) {
   const {prefs,busy,save}=settings;
   return <section aria-labelledby="remote-notifications-heading" className="space-y-3">
     <div className="flex items-start justify-between gap-4"><div className="min-w-0">
@@ -15,7 +15,7 @@ export function RemoteNotificationSettings({settings}:{settings:NotificationSett
       <p id="remote-notifications-description" className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">Native alerts for completed tasks and messages from your agent. Requires the Remote Client desktop app running on a selected device.</p>
     </div><Switch id="remote-notifications-global" aria-label="Remote Client notifications" aria-describedby="remote-notifications-description" className="mt-1 shrink-0" checked={prefs?.remoteEnabled??false} disabled={!prefs||busy} onCheckedChange={remoteEnabled=>void save({remoteEnabled})}/></div>
     {prefs?<p className="text-xs text-muted-foreground">{prefs.remoteEnabled ? prefs.remoteClientIds.length ? "Choose below which devices receive alerts. Offline devices receive pending alerts when they reconnect." : "Select a device below to receive notifications." : "All Remote Client notifications are off. Your device selection is kept."}</p>:null}
-    <NotificationSettingsFeedback settings={settings}/>
+    {showFeedback?<NotificationSettingsFeedback settings={settings}/>:null}
   </section>;
 }
 export function RemoteDeviceNotificationSwitch({settings,clientId,clientName}:{settings:NotificationSettingsState;clientId:string;clientName:string}) {

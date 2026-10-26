@@ -11,6 +11,9 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  Gauge,
+  Paperclip,
   Download,
   ExternalLink,
   Globe2,
@@ -19,6 +22,7 @@ import {
   Mic,
   Monitor,
   MoreHorizontal,
+  Palette,
   PlugZap,
   Puzzle,
   Plus,
@@ -64,10 +68,14 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { newProviderConnectionIdentity } from "@/lib/provider-connection-draft";
+import { modelForSelection } from "@/lib/model-selection";
 import type { MemoryItem } from "@/components/memories-panel";
 import { MicrophoneSettings } from "@/components/microphone-settings";
 import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
 import { ProviderLimitSettings } from "@/components/provider-limit-settings";
+import { ProviderRetrySettings } from "@/components/provider-retry-settings";
+import { AppearanceSettings } from "@/components/appearance-settings";
+import { useAppearance } from "@/components/appearance-provider";
 import { NotificationDeliverySettings } from "@/components/notification-delivery-settings";
 import { RemoteNotificationSettings, RemoteDeviceNotificationSwitch } from "@/components/remote-notification-settings";
 import { useNotificationSettings } from "@/hooks/use-notification-settings";
@@ -81,7 +89,7 @@ import { CliVersionsPanel } from "@/components/cli-versions-panel";
 import { BrowserSettingsControls } from "@/components/browser-settings-controls";
 import type { UsageSnapshot } from "@/lib/usage-display";
 import {SettingsSearch} from "@/components/settings-search";
-import {SETTINGS_TABS, visibleSettingsSections, type SettingsSearchEntry} from "@/lib/settings-navigation";
+import {SETTINGS_TABS, settingsOverviewSections, type SettingsSearchEntry} from "@/lib/settings-navigation";
 
 type ProviderDefinition = {
   key: string;
@@ -249,6 +257,7 @@ export type ModelParamSelection = {
 
 export type ModelInfo = {
   id: string;
+  legacyIds?: string[];
   displayName: string;
   contextWindow?: number;
   description?: string;
@@ -271,8 +280,11 @@ export type FinishSound = {
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mobile?: boolean;
   settingsTab: string;
   onSettingsTabChange: (tab: string) => void;
+  sectionRequest?: string | null;
+  onSectionRequestHandled?: () => void;
   memories: MemoryItem[];
   soundCuesEnabled: boolean;
   onSoundCuesEnabledChange: (enabled: boolean) => void;
@@ -348,20 +360,97 @@ function scrollSettingsSection(id: string) {
 type SettingsPaneId =
   | "tab"
   | "browser-storage"
+  | "appearance"
   | "providers"
   | "versions"
   | "memories"
   | "agent-settings"
-  | "dictionary";
+  | "dictionary"
+  | "attachments"
+  | "subagent-model"
+  | "compression"
+  | "notifications"
+  | "voice"
+  | "browser"
+  | "usage"
+  | "remote-clients"
+  | "users"
+  | "archived"
+  | "shared"
+  | "maintenance"
+  | "updates";
 
 const SETTINGS_SECTION_TO_PANE: Partial<Record<string, Exclude<SettingsPaneId, "tab">>> = {
+  "settings-appearance": "appearance",
   "settings-browser-storage": "browser-storage",
   "settings-providers": "providers",
   "settings-versions": "versions",
   "settings-memories": "memories",
   "settings-agent-runtime": "agent-settings",
   "settings-dictionary": "dictionary",
+  "settings-attachments": "attachments",
+  "settings-subagent-model": "subagent-model",
+  "settings-token-compression": "compression",
+  "settings-notifications": "notifications",
+  "settings-voice-input": "voice",
+  "settings-browser": "browser",
+  "settings-usage": "usage",
+  "settings-remote-clients": "remote-clients",
+  "settings-users": "users",
+  "settings-archived": "archived",
+  "settings-shared": "shared",
+  "settings-maintenance": "maintenance",
 };
+
+type SettingsCategory = (typeof SETTINGS_TABS)[number];
+
+function settingsCategoryIcon(value: string): LucideIcon {
+  return value === "general" ? Settings2
+    : value === "models" ? KeyRound
+    : value === "agent" ? Puzzle
+    : value === "devices" ? PlugZap
+    : value === "updates" ? RefreshCw
+    : Users;
+}
+
+function settingsCategoryLabel(tab: SettingsCategory, isHostAdmin: boolean, updateAvailable: boolean) {
+  return tab.value === "updates" && updateAvailable ? "Update Available"
+    : tab.value === "admin" ? (isHostAdmin ? "Admin" : "Chats") : tab.label;
+}
+
+const SETTINGS_CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  general: "Appearance, input and notifications",
+  models: "Providers, usage and CLI versions",
+  agent: "Runtime, delegation and memories",
+  devices: "Remote clients and permissions",
+  admin: "Archived and shared chats",
+  updates: "Update channels, schedule and history",
+};
+
+function SettingsExternalLinks() {
+  return (
+    <div id="settings-links" role="group" aria-label="Website and GitHub" className="grid grid-cols-2 gap-2 px-3 py-3">
+                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
+                    <a href="https://metis.f1shy312.com" target="_blank" rel="noopener noreferrer">
+                      <span className="flex items-center gap-2">
+                        <Globe2 className="size-4" aria-hidden="true" />
+                        Website
+                      </span>
+                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    </a>
+                  </Button>
+                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
+                    <a href="https://github.com/f1shyondrugs/metis-ai" target="_blank" rel="noopener noreferrer">
+                      <span className="flex items-center gap-2">
+                        <GithubLogo className="size-4" aria-hidden="true" />
+                        GitHub
+                      </span>
+                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    </a>
+                  </Button>
+  </div>
+  );
+}
 
 function SettingsTile({
   id,
@@ -372,7 +461,7 @@ function SettingsTile({
 }: {
   id: string;
   title: string;
-  meta: string;
+  meta: ReactNode;
   icon: LucideIcon;
   onOpen: () => void;
 }) {
@@ -383,18 +472,26 @@ function SettingsTile({
       data-settings-tile={id}
       onClick={onOpen}
       className={cn(
-        "flex min-h-[6.25rem] flex-col items-start justify-between rounded-xl px-3.5 py-3 text-left transition-colors",
-        "bg-muted/35 text-foreground hover:bg-muted/55",
+        "flex min-h-16 w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors",
+        "text-foreground hover:bg-muted/50",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
     >
-      <Icon className="size-4 text-muted-foreground" />
-      <span className="mt-3 min-w-0">
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{title}</span>
         <span className="mt-0.5 block text-xs text-muted-foreground">{meta}</span>
       </span>
+      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
     </button>
   );
+}
+
+function SettingsOverview({ title, children }: { title: string; children: ReactNode }) {
+  return <div className="px-3 py-3 sm:px-6 sm:py-5" data-slot="settings-overview">
+    <h2 className="mb-2 px-3 text-sm font-semibold">{title}</h2>
+    <div className="divide-y divide-border/60">{children}</div>
+  </div>;
 }
 
 function SettingsFeaturePane({
@@ -413,10 +510,10 @@ function SettingsFeaturePane({
   children: ReactNode;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5 px-6 py-6 sm:px-8 sm:py-8" data-slot={slot}>
+    <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-8 sm:py-6" data-slot={slot}>
       <button
         type="button"
-        className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        className="inline-flex min-h-9 w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
         onClick={onBack}
       >
         <ArrowLeft className="size-3.5" />
@@ -424,7 +521,7 @@ function SettingsFeaturePane({
       </button>
       {title ? (
       <div>
-        <h3 className="text-sm font-medium">{title}</h3>
+        <h3 tabIndex={-1} data-settings-heading className="text-sm font-medium outline-none">{title}</h3>
         {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
       </div>
       ) : null}
@@ -593,8 +690,11 @@ function RemotePermissionsEditor({
 export function SettingsPanel({
   open,
   onOpenChange,
+  mobile = false,
   settingsTab,
   onSettingsTabChange,
+  sectionRequest,
+  onSectionRequestHandled,
   memories,
   soundCuesEnabled,
   onSoundCuesEnabledChange,
@@ -639,6 +739,7 @@ export function SettingsPanel({
   onUpdateMetis,
   isHostAdmin = false,
 }: Props) {
+  const appearance = useAppearance();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [deletingMemoryIds, setDeletingMemoryIds] = useState<Set<string>>(
@@ -661,27 +762,72 @@ export function SettingsPanel({
   const [browserStorageError, setBrowserStorageError] = useState("");
   const [browserStorageDeleteTarget, setBrowserStorageDeleteTarget] = useState<string | null>(null);
   const [browserStorageClearAll, setBrowserStorageClearAll] = useState(false);
-  const [settingsPane, setSettingsPane] = useState<SettingsPaneId>("tab");
+  const [settingsPane, setSettingsPane] = useState<SettingsPaneId>(() => sectionRequest ? SETTINGS_SECTION_TO_PANE[sectionRequest] ?? "tab" : "tab");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(!sectionRequest);
   const [settingsSearchTarget, setSettingsSearchTarget] = useState<string | null>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (!open || !sectionRequest) return;
+    const pane = SETTINGS_SECTION_TO_PANE[sectionRequest];
+    if (pane) { setMobileMenuOpen(false); setSettingsPane(pane); setSettingsSearchTarget("pane"); }
+    onSectionRequestHandled?.();
+  }, [open, sectionRequest, onSectionRequestHandled]);
+
   function openSettingsSearchResult(entry: SettingsSearchEntry) {
+    if (mobile && entry.sectionId === "settings-links") {
+      setSettingsPane("tab");
+      setMobileMenuOpen(true);
+      setSettingsSearchTarget("settings-links");
+      return;
+    }
+    setMobileMenuOpen(false);
     const pane = entry.sectionId ? SETTINGS_SECTION_TO_PANE[entry.sectionId] : undefined;
     onSettingsTabChange(entry.tab);
     setSettingsPane(pane ?? "tab");
     setBrowserStorageQuery("");
-    setSettingsSearchTarget(pane ? "top" : entry.sectionId ?? "top");
+    setSettingsSearchTarget(pane ? "pane" : entry.sectionId ?? "top");
+  }
+
+  function openSettingsCategory(tab: string) {
+    setMobileMenuOpen(false);
+    setSettingsPane("tab");
+    setBrowserStorageQuery("");
+    setSettingsSearchTarget("top");
+    onSettingsTabChange(tab);
+  }
+
+  function backToSettingsMenu() {
+    setSettingsPane("tab");
+    setMobileMenuOpen(true);
+    setSettingsSearchTarget(`settings-category-${settingsTab}`);
+  }
+
+  function openSettingsPane(pane: SettingsPaneId, tab = settingsTab) {
+    setMobileMenuOpen(false);
+    onSettingsTabChange(tab);
+    setSettingsPane(pane);
+    setSettingsSearchTarget("pane");
+  }
+
+  function backToSettings(sectionId: string) {
+    setMobileMenuOpen(false);
+    setSettingsPane("tab");
+    setSettingsSearchTarget(sectionId);
   }
 
   useEffect(() => {
     if (!open || !settingsSearchTarget) return;
     const frame = window.requestAnimationFrame(() => {
-      if (settingsSearchTarget === "top") settingsContentRef.current?.scrollTo({top: 0, behavior: "instant"});
-      else scrollSettingsSection(settingsSearchTarget);
+      if (settingsSearchTarget === "top" || settingsSearchTarget === "pane") {
+        settingsContentRef.current?.scrollTo({top: 0, behavior: "instant"});
+        const heading = settingsContentRef.current?.querySelector<HTMLElement>("[data-settings-heading], h2, h3");
+        if (heading) { heading.tabIndex = -1; heading.focus({preventScroll: true}); }
+      } else scrollSettingsSection(settingsSearchTarget);
       setSettingsSearchTarget(null);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [open, settingsTab, settingsPane, settingsSearchTarget]);
+  }, [open, settingsTab, settingsPane, settingsSearchTarget, mobileMenuOpen]);
 
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [browserStorageQuery, setBrowserStorageQuery] = useState("");
@@ -1449,21 +1595,46 @@ export function SettingsPanel({
   return (
     <>
       <section aria-labelledby="settings-page-title" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="shrink-0 border-b border-border px-5 py-6 sm:px-8">
-          <h1 id="settings-page-title" className="flex items-center gap-2 text-2xl font-semibold">
+        <header className="shrink-0 border-b border-border px-4 py-3 sm:px-8 sm:py-5 sm:pr-12">
+          <h1 id="settings-page-title" className="flex items-center gap-2 text-xl font-semibold sm:text-2xl">
             <Settings2 className="size-5" />
             Settings
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">Manage your workspace in one place.</p>
-          <SettingsSearch key={String(open)} isHostAdmin={isHostAdmin} onSelect={openSettingsSearchResult} />
+          <p className="mt-1 hidden text-sm text-muted-foreground sm:block">Manage your workspace in one place.</p>
+          <SettingsSearch key={String(open)} isHostAdmin={isHostAdmin} mobile={mobile} onSelect={openSettingsSearchResult} />
         </header>
 
-        <Tabs value={settingsTab} onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }} className="min-h-0 flex-1 gap-0 lg:grid lg:items-stretch lg:grid-cols-[13rem_minmax(0,1fr)]">
-          <UpdateStatusProbe isHostAdmin={Boolean(isHostAdmin)} onUpdateAvailableChange={setUpdateAvailable} />
-          <div className="border-b border-border bg-muted/20 p-3 lg:hidden">
+        <UpdateStatusProbe isHostAdmin={Boolean(isHostAdmin)} onUpdateAvailableChange={setUpdateAvailable} />
+        {mobile && mobileMenuOpen ? (
+          <div ref={settingsContentRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto" data-slot="settings-mobile-menu">
+            <div className="flex min-h-full flex-col gap-4 px-3 py-3">
+              <nav aria-label="Settings categories" className="divide-y divide-border/60">
+                {SETTINGS_TABS.map(tab => (
+                  <SettingsTile key={tab.value} id={`settings-category-${tab.value}`}
+                    title={settingsCategoryLabel(tab, isHostAdmin, updateAvailable)}
+                    meta={tab.value === "admin" && isHostAdmin ? "Users, chats and maintenance" : tab.value === "updates" && !isHostAdmin ? "Managed by your host administrator" : SETTINGS_CATEGORY_DESCRIPTIONS[tab.value]}
+                    icon={settingsCategoryIcon(tab.value)}
+                    onOpen={() => openSettingsCategory(tab.value)} />
+                ))}
+              </nav>
+              <div className="mt-auto border-t border-border/60 pt-2 pb-[env(safe-area-inset-bottom)]">
+                <SettingsExternalLinks />
+              </div>
+            </div>
+          </div>
+        ) : (
+        <Tabs value={settingsTab} onValueChange={openSettingsCategory} className="min-h-0 flex-1 gap-0 lg:grid lg:items-stretch lg:grid-cols-[13rem_minmax(0,1fr)]">
+          {mobile ? settingsPane === "tab" ? (
+            <div className="shrink-0 border-b border-border px-4 py-1">
+              <button type="button" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={backToSettingsMenu}>
+                <ArrowLeft aria-hidden="true" className="size-4" /> Back to Settings
+              </button>
+            </div>
+          ) : null : (
+          <div className="border-b border-border px-4 py-2 lg:hidden">
             <CustomSelect
               value={settingsTab}
-              onValueChange={(tab) => { setSettingsPane("tab"); setBrowserStorageQuery(""); onSettingsTabChange(tab); }}
+              onValueChange={openSettingsCategory}
               ariaLabel="Settings section"
               className="h-10 w-full"
               options={[
@@ -1476,23 +1647,17 @@ export function SettingsPanel({
               ]}
             />
           </div>
+          )}
           <TabsList className="hidden h-auto w-full shrink-0 flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-muted/20 px-3 py-3 lg:flex lg:h-full lg:min-h-0 lg:flex-nowrap lg:flex-col lg:items-stretch lg:justify-start lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
            {SETTINGS_TABS.map((tab) => {
-           const Icon =
-           tab.value === "general" ? Settings2
-           : tab.value === "models" ? KeyRound
-           : tab.value === "agent" ? Puzzle
-           : tab.value === "devices" ? PlugZap
-           : tab.value === "updates" ? RefreshCw
-           : Users;
-           const label = tab.value === "updates" && updateAvailable
-             ? "Update Available"
-             : tab.value === "admin" ? (isHostAdmin ? "Admin" : "Chats") : tab.label;
+           const Icon = settingsCategoryIcon(tab.value);
+           const label = settingsCategoryLabel(tab, isHostAdmin, updateAvailable);
            const expanded = settingsTab === tab.value;
            return (
            <Fragment key={tab.value}>
            <TabsTrigger
              value={tab.value}
+             onClick={() => openSettingsCategory(tab.value)}
              className={cn(
                "min-h-10 w-full justify-start px-2.5 py-2.5 pl-4 has-data-[icon=inline-start]:pl-4 lg:h-auto lg:flex-none",
                tab.value === "updates" && updateAvailable && "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
@@ -1502,7 +1667,7 @@ export function SettingsPanel({
            {label}
            </TabsTrigger>
            {expanded
-           ? visibleSettingsSections(tab.value, isHostAdmin).map((item) => (
+           ? settingsOverviewSections(tab.value, isHostAdmin).map((item) => (
            <button
             key={item.id}
             type="button"
@@ -1513,11 +1678,11 @@ export function SettingsPanel({
             onClick={() => {
             const pane = SETTINGS_SECTION_TO_PANE[item.id];
             if (pane) {
-            setSettingsPane(pane);
+            openSettingsPane(pane);
             return;
             }
             setSettingsPane("tab");
-            scrollSettingsSection(item.id);
+            setSettingsSearchTarget(item.id);
             }}
             >
            {item.label}
@@ -1538,10 +1703,10 @@ export function SettingsPanel({
  <button
  type="button"
  className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
- onClick={() => setSettingsPane("tab")}
+ onClick={() => openSettingsPane("browser")}
  >
  <ArrowLeft className="size-3.5" />
- Back to General
+ Back to Browser
  </button>
  <div className="flex items-start justify-between gap-3">
  <div>
@@ -1645,7 +1810,7 @@ export function SettingsPanel({
  <SettingsFeaturePane
  backLabel="Models"
  slot="providers-manager"
- onBack={() => setSettingsPane("tab")}
+ onBack={() => backToSettings("settings-providers")}
  >
 <section className="flex flex-col gap-4">
                 <div>
@@ -1906,7 +2071,7 @@ export function SettingsPanel({
  title="CLI versions"
  description="Installed agent CLI and SDK versions on this server."
  slot="versions-manager"
- onBack={() => setSettingsPane("tab")}
+ onBack={() => backToSettings("settings-versions")}
  >
  <CliVersionsPanel isHostAdmin={Boolean(isHostAdmin)} />
  </SettingsFeaturePane>
@@ -1914,7 +2079,7 @@ export function SettingsPanel({
  <SettingsFeaturePane
  backLabel="Agent"
  slot="memories-manager"
- onBack={() => setSettingsPane("tab")}
+ onBack={() => backToSettings("settings-memories")}
  >
 <section className="flex flex-col gap-3">
                 <div>
@@ -1981,31 +2146,26 @@ export function SettingsPanel({
                 </ul>
               </section>
  </SettingsFeaturePane>
+ ) : settingsPane === "appearance" ? (
+   <SettingsFeaturePane backLabel="General" title="Appearance" description="Choose a preset or create, import and export a custom JSON theme." slot="appearance-manager" onBack={() => backToSettings("settings-appearance")}>
+     <AppearanceSettings />
+   </SettingsFeaturePane>
  ) : settingsPane === "dictionary" ? (
-   <SettingsFeaturePane backLabel="General" title="Dictionary" description="Manage words and phrases for voice transcription." slot="voice-dictionary" onBack={() => setSettingsPane("tab")}>
+   <SettingsFeaturePane backLabel="Voice & dictionary" title="Dictionary" description="Manage words and phrases for voice transcription." slot="voice-dictionary" onBack={() => openSettingsPane("voice")}>
      <VoiceDictionarySettings />
    </SettingsFeaturePane>
  ) : settingsPane === "agent-settings" ? (
-   <SettingsFeaturePane backLabel="Agent" title="Settings" description="Choose runtime limits and how agents recover from provider limits." slot="agent-settings" onBack={() => setSettingsPane("tab")}>
+   <SettingsFeaturePane backLabel="Agent" title="Runtime & recovery" description="Choose runtime limits and how agents recover from provider limits." slot="agent-settings" onBack={() => backToSettings("settings-agent-runtime")}>
      <AgentRuntimeSettings />
      <ProviderLimitSettings />
+     <ProviderRetrySettings />
    </SettingsFeaturePane>
- ) : (
- <>
-<TabsContent value="updates" className="mt-0 px-6 py-6 sm:px-8 sm:py-8">
-  <UpdateSettingsPanel
-    isHostAdmin={Boolean(isHostAdmin)}
-    onUpdateAvailableChange={setUpdateAvailable}
-  />
-</TabsContent>
-
-<TabsContent value="general" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
-
- <section className="flex flex-col gap-4" aria-labelledby="settings-attachments">
-   <h3 id="settings-attachments" className="text-sm font-medium">Attachments</h3>
-   <AttachmentSettings />
- </section>
-
+ ) : settingsPane === "attachments" ? (
+ <SettingsFeaturePane backLabel="General" title="Attachments" slot="attachment-settings" onBack={() => backToSettings("settings-attachments")}>
+ <AttachmentSettings />
+ </SettingsFeaturePane>
+ ) : settingsPane === "subagent-model" ? (
+ <SettingsFeaturePane backLabel="Agent" slot="subagent-model-settings" onBack={() => backToSettings("settings-subagent-model")}>
  <section className="flex flex-col gap-4">
                   <h3 id="settings-subagent-model" className="text-sm font-medium">Subagent model</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2033,9 +2193,9 @@ export function SettingsPanel({
                       disabled={!subagentModelEnabled}
                       className="min-w-0 flex-1"
                     />
-                    {models.find((model) => model.id === subagentModelId) ? (
+                    {modelForSelection(models, subagentModelId) ? (
                       <ModelOptionsMenu
-                        model={models.find((model) => model.id === subagentModelId)!}
+                        model={modelForSelection(models, subagentModelId)!}
                         modelParams={subagentModelParams}
                         onModelParamsChange={onSubagentModelParamsChange}
                         className="opacity-100"
@@ -2043,8 +2203,10 @@ export function SettingsPanel({
                     ) : null}
                   </div>
  </section>
-
-              <section className="flex flex-col gap-5">
+ </SettingsFeaturePane>
+ ) : settingsPane === "compression" ? (
+ <SettingsFeaturePane backLabel="Agent" slot="compression-settings" onBack={() => backToSettings("settings-token-compression")}>
+ <section className="flex flex-col gap-5">
                 <div>
                   <h3 id="settings-token-compression" className="text-sm font-medium">Token compression</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2131,8 +2293,10 @@ export function SettingsPanel({
                   Aggressive and ultra modes can remove wording. Code blocks, URLs, paths and structured data are protected where possible.
                 </p>
               </section>
-
-              <section className="flex flex-col gap-4">
+ </SettingsFeaturePane>
+ ) : settingsPane === "notifications" ? (
+ <SettingsFeaturePane backLabel="General" slot="notification-settings" onBack={() => backToSettings("settings-notifications")}>
+ <section className="flex flex-col gap-4">
                 <div>
                   <h3 id="settings-notifications" className="text-sm font-medium">Notifications</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2140,7 +2304,8 @@ export function SettingsPanel({
                     response.
                   </p>
                 </div>
-                <NotificationDeliverySettings settings={notificationSettings} onOpenDevices={() => { onSettingsTabChange("devices"); setSettingsPane("tab"); setSettingsSearchTarget("settings-remote-clients"); }} />
+                <RemoteNotificationSettings settings={notificationSettings} showFeedback={false} />
+                <NotificationDeliverySettings settings={notificationSettings} onOpenDevices={() => openSettingsPane("remote-clients", "devices")} />
                 <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
                   <div>
                     <p className="text-xs text-muted-foreground">Sound cues</p>
@@ -2189,11 +2354,23 @@ export function SettingsPanel({
                     ? `Custom sound: ${finishSound.name}`
                     : "No custom sound uploaded. The default completion sound plays when sound cues are on. Removing a custom file restores that default."}
                 </p>
- </section>
-
-              <section className="flex flex-col gap-4">
+  <section aria-label="Notification devices" className="space-y-3 border-t border-border/60 pt-4">
+    <h4 className="text-sm font-medium">Delivery devices</h4>
+    {notificationSettings.clients.length ? notificationSettings.clients.map(client => (
+      <div key={client.id} className="rounded-lg border border-border/60 p-3">
+        <p className="text-sm font-medium">{client.name}</p>
+        <p className="text-xs text-muted-foreground">{client.status}</p>
+        <RemoteDeviceNotificationSwitch settings={notificationSettings} clientId={client.id} clientName={client.name} />
+      </div>
+    )) : notificationSettings.prefs ? <p className="text-xs text-muted-foreground">No remote clients enrolled yet. Connect a device to receive native alerts.</p> : null}
+  </section>
+</section>
+ </SettingsFeaturePane>
+ ) : settingsPane === "voice" ? (
+ <SettingsFeaturePane backLabel="General" slot="voice-settings" onBack={() => backToSettings("settings-voice-input")}>
+ <section className="flex flex-col gap-4">
                 <div>
-                  <h3 id="settings-voice-input" className="text-sm font-medium">Voice input</h3>
+                  <h3 id="settings-voice-input" className="text-sm font-medium">Voice &amp; dictionary</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Choose how speech is transcribed before it is inserted into the composer.
                   </p>
@@ -2301,10 +2478,12 @@ export function SettingsPanel({
                   Maximum recording length (seconds)
                   <Input type="number" min={1} max={3600} value={voiceMaxDurationSeconds} disabled={!voiceInputEnabled} onChange={(event) => onVoiceInputSettingsChange({ maxDurationSeconds: Math.max(1, Math.min(3600, Number(event.target.value) || 300)) })} />
                 </label>
-                <SettingsTile id="settings-dictionary" title="Dictionary" meta="Add words and preferred spellings" icon={BookOpen} onOpen={() => setSettingsPane("dictionary")} />
+                <SettingsTile id="settings-dictionary" title="Dictionary" meta="Add words and preferred spellings" icon={BookOpen} onOpen={() => openSettingsPane("dictionary")} />
               </section>
-
-              <section className="flex flex-col gap-4">
+ </SettingsFeaturePane>
+ ) : settingsPane === "browser" ? (
+ <SettingsFeaturePane backLabel="General" slot="browser-settings" onBack={() => backToSettings("settings-browser")}>
+ <section className="flex flex-col gap-4">
                 <div>
                   <h3 id="settings-browser" className="text-sm font-medium">Browser</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -2320,93 +2499,17 @@ export function SettingsPanel({
                   browserViewportHeight={browserViewportHeight}
                   onChange={onBrowserSettingsChange}
                 />
-              </section>
+  <SettingsTile id="settings-browser-storage" title="Browser storage" meta={browserStorageError ? "Unavailable · open to retry" : browserStorageLoading ? "Loading…" : `${browserStorage.length} stored website${browserStorage.length === 1 ? "" : "s"}`} icon={Globe2} onOpen={() => openSettingsPane("browser-storage")} />
+</section>
+ </SettingsFeaturePane>
 
- <section className="flex flex-col gap-4">
- <div className="flex items-start justify-between gap-3">
- <div>
- <h3 id="settings-browser-storage" className="text-sm font-medium">Browser storage</h3>
- <p className="mt-1 text-xs text-muted-foreground">
- Persistent website sessions for the embedded browser. Search and clear origins in a dedicated view so General stays short.
- </p>
- </div>
- <Button type="button" variant="outline" size="sm" onClick={() => setSettingsPane("browser-storage")}>
- Manage
- </Button>
- </div>
- <p className="text-xs text-muted-foreground">
- {browserStorageLoading
- ? "Loading stored websites…"
- : browserStorage.length
- ? `${browserStorage.length} website${browserStorage.length === 1 ? "" : "s"} stored`
- : "No persistent website data stored yet."}
- </p>
- </section>
-
-              <section className="flex flex-col gap-3">
-                <div>
-                  <h3 id="settings-links" className="text-sm font-medium">Links</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Visit the Metis website or view the source code on GitHub.
-                  </p>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
-                    <a href="https://metis.f1shy312.com" target="_blank" rel="noopener noreferrer">
-                      <span className="flex items-center gap-2">
-                        <Globe2 className="size-4" aria-hidden="true" />
-                        Website
-                      </span>
-                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    </a>
-                  </Button>
-                  <Button asChild variant="outline" className="h-11 w-full justify-between px-3">
-                    <a href="https://github.com/f1shyondrugs/metis-ai" target="_blank" rel="noopener noreferrer">
-                      <span className="flex items-center gap-2">
-                        <GithubLogo className="size-4" aria-hidden="true" />
-                        GitHub
-                      </span>
-                      <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    </a>
-                  </Button>
-                </div>
-              </section>
-
- </TabsContent>
-<TabsContent value="models" className="mt-0 space-y-8 px-6 py-6 sm:px-8 sm:py-8 min-w-0">
-              <div id="settings-usage"><PlanUsagePanel snapshot={usageSnapshot} onRefresh={onRefreshUsage} /></div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SettingsTile
-                  id="settings-providers"
-                  title="AI providers and connections"
-                  meta={providersLoaded ? `${providerConnections.length} connection${providerConnections.length === 1 ? "" : "s"}` : "Loading…"}
-                  icon={KeyRound}
-                  onOpen={() => setSettingsPane("providers")}
-                />
-                <SettingsTile
-                  id="settings-versions"
-                  title="CLI versions"
-                  meta="Installed agent CLI and SDK versions"
-                  icon={Download}
-                  onOpen={() => setSettingsPane("versions")}
-                />
-              </div>
- </TabsContent>
-<TabsContent value="agent" className="mt-0 px-6 py-6 sm:px-8 sm:py-8">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SettingsTile id="settings-agent-runtime" title="Settings" meta="Runtime limits for subagents and project agents" icon={Settings2} onOpen={() => setSettingsPane("agent-settings")} />
-                <SettingsTile
-                  id="settings-memories"
-                  title="Memories"
-                  meta={memories.length ? `${memories.length} ${memories.length === 1 ? "memory" : "memories"}` : "No memories yet"}
-                  icon={Brain}
-                  onOpen={() => setSettingsPane("memories")}
-                />
-              </div>
- </TabsContent>
-<TabsContent value="devices" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
-
-              <section className="flex flex-col gap-5">
+ ) : settingsPane === "usage" ? (
+ <SettingsFeaturePane backLabel="Models" title="Usage" slot="usage-settings" onBack={() => backToSettings("settings-usage")}>
+ <PlanUsagePanel snapshot={usageSnapshot} onRefresh={onRefreshUsage} />
+ </SettingsFeaturePane>
+ ) : settingsPane === "remote-clients" ? (
+ <SettingsFeaturePane backLabel="Devices" slot="remote-client-settings" onBack={() => backToSettings("settings-remote-clients")}>
+ <section className="flex flex-col gap-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 id="settings-remote-clients" className="text-sm font-medium">Remote Clients</h3>
@@ -2419,7 +2522,7 @@ export function SettingsPanel({
                     Add client
                   </Button>
                 </div>
-                <RemoteNotificationSettings settings={notificationSettings} />
+                <SettingsTile id="settings-device-notifications" title="Notifications" meta="Choose alerts, sounds and delivery devices" icon={Bell} onOpen={() => openSettingsPane("notifications", "general")} />
                 <div className="rounded-lg border bg-card/40 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -2492,19 +2595,21 @@ export function SettingsPanel({
                         {client.version ? <span>v{client.version}</span> : null}
                         {client.lastSeenAt ? <span>seen {new Date(client.lastSeenAt).toLocaleString()}</span> : null}
                       </div>
-                      <RemoteDeviceNotificationSwitch settings={notificationSettings} clientId={client.id} clientName={client.name} />
+
                     </div>
                   )) : (
                     <p className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">No remote clients enrolled yet.</p>
                   )}
                 </div>
               </section>
- </TabsContent>
-<TabsContent value="admin" className="mt-0 space-y-10 px-6 py-6 sm:px-8 sm:py-8">
-{isHostAdmin ? (
-                <div id="settings-users"><AdminUsersPanel /></div>) : null}
-
-              <section className="flex flex-col gap-4">
+ </SettingsFeaturePane>
+ ) : isHostAdmin && settingsPane === "users" ? (
+ <SettingsFeaturePane backLabel="Admin" title="Users" slot="users-settings" onBack={() => backToSettings("settings-users")}>
+ <AdminUsersPanel />
+ </SettingsFeaturePane>
+ ) : settingsPane === "archived" ? (
+ <SettingsFeaturePane backLabel={isHostAdmin ? "Admin" : "Chats"} slot="archived-chat-settings" onBack={() => backToSettings("settings-archived")}>
+ <section className="flex flex-col gap-4">
                 <div>
                   <h3 id="settings-archived" className="flex items-center gap-2 text-sm font-medium">
                     <Archive className="size-4 text-muted-foreground" />
@@ -2557,7 +2662,11 @@ export function SettingsPanel({
                     ))}
                   </ul>
                 )}
-                <div className="border-t border-border/60 pt-5">
+                </section>
+ </SettingsFeaturePane>
+ ) : settingsPane === "shared" ? (
+ <SettingsFeaturePane backLabel={isHostAdmin ? "Admin" : "Chats"} slot="shared-chat-settings" onBack={() => backToSettings("settings-shared")}>
+ <section className="flex flex-col gap-4"><div>
                   <div>
                     <h3 id="settings-shared" className="flex items-center gap-2 text-sm font-medium">
                       <Link2 className="size-4 text-muted-foreground" />
@@ -2601,9 +2710,10 @@ export function SettingsPanel({
                   )}
                 </div>
               </section>
-
-{isHostAdmin ? (
-                  <div className="mt-3 border-t border-destructive/30 pt-4">
+ </SettingsFeaturePane>
+ ) : isHostAdmin && settingsPane === "maintenance" ? (
+ <SettingsFeaturePane backLabel="Admin" slot="maintenance-settings" onBack={() => backToSettings("settings-maintenance")}>
+ <div className="mt-3 border-t border-destructive/30 pt-4">
                     <h3 id="settings-maintenance" className="text-sm font-medium">Metis maintenance</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Prepare a production update or reset Metis to its clean initial state.
@@ -2619,12 +2729,66 @@ export function SettingsPanel({
                       </Button>
                     </div>
                   </div>
-                ) : null}
- </TabsContent>
+ </SettingsFeaturePane>
+ ) : settingsPane === "updates" ? (
+ <SettingsFeaturePane backLabel="Updates" slot="update-settings" onBack={() => backToSettings("settings-update-preferences")}>
+ <UpdateSettingsPanel
+    isHostAdmin={Boolean(isHostAdmin)}
+    onUpdateAvailableChange={setUpdateAvailable}
+  />
+ </SettingsFeaturePane>
+ ) : (
+ <>
+
+<TabsContent value="general" className="mt-0">
+ <SettingsOverview title="General">
+  <SettingsTile id="settings-appearance" title="Appearance" meta={appearance.ready ? appearance.theme.name : "Loading…"} icon={Palette} onOpen={() => openSettingsPane("appearance")} />
+  <SettingsTile id="settings-attachments" title="Attachments" meta={<AttachmentSettings summary />} icon={Paperclip} onOpen={() => openSettingsPane("attachments")} />
+  <SettingsTile id="settings-notifications" title="Notifications" meta={notificationSettings.error ? "Unavailable · open to retry" : !notificationSettings.prefs ? "Loading…" : `Sounds ${soundCuesEnabled ? "on" : "off"} · ${notificationSettings.prefs.remoteClientIds.length} delivery devices`} icon={Bell} onOpen={() => openSettingsPane("notifications")} />
+  <SettingsTile id="settings-voice-input" title="Voice & dictionary" meta={voiceInputEnabled ? `On · ${voiceModelId || "Transcription settings"}` : "Voice input off"} icon={Mic} onOpen={() => openSettingsPane("voice")} />
+  <SettingsTile id="settings-browser" title="Browser" meta={browserEnabled ? `On · ${browserViewportWidth} × ${browserViewportHeight}` : "Browser workspace off"} icon={Globe2} onOpen={() => openSettingsPane("browser")} />
+  {!mobile ? <SettingsExternalLinks /> : null}
+ </SettingsOverview>
+</TabsContent>
+<TabsContent value="models" className="mt-0">
+ <SettingsOverview title="Models">
+  <SettingsTile id="settings-usage" title="Usage" meta={usageSnapshot?.providers.length ? `${usageSnapshot.providers.length} providers · quotas and reset times` : "Provider quotas and reset times"} icon={Gauge} onOpen={() => openSettingsPane("usage")} />
+  <SettingsTile id="settings-providers" title="AI providers and connections" meta={providersLoaded ? `${providerConnections.length} connection${providerConnections.length === 1 ? "" : "s"}` : "Loading…"} icon={KeyRound} onOpen={() => openSettingsPane("providers")} />
+  <SettingsTile id="settings-versions" title="CLI versions" meta="Installed agent CLI and SDK versions" icon={Download} onOpen={() => openSettingsPane("versions")} />
+ </SettingsOverview>
+</TabsContent>
+<TabsContent value="agent" className="mt-0">
+ <SettingsOverview title="Agent">
+  <SettingsTile id="settings-agent-runtime" title="Runtime & recovery" meta="Runtime limits, provider waits and retries" icon={Settings2} onOpen={() => openSettingsPane("agent-settings")} />
+  <SettingsTile id="settings-subagent-model" title="Subagent model" meta={subagentModelEnabled ? modelForSelection(models, subagentModelId)?.displayName || "Selected model unavailable" : "Agent chooses the model"} icon={Puzzle} onOpen={() => openSettingsPane("subagent-model")} />
+  <SettingsTile id="settings-token-compression" title="Token compression" meta={compressionEnabled ? `On · ${compressionMode}` : "Off"} icon={Gauge} onOpen={() => openSettingsPane("compression")} />
+  <SettingsTile id="settings-memories" title="Memories" meta={memories.length ? `${memories.length} ${memories.length === 1 ? "memory" : "memories"}` : "No memories yet"} icon={Brain} onOpen={() => openSettingsPane("memories")} />
+ </SettingsOverview>
+</TabsContent>
+<TabsContent value="devices" className="mt-0">
+ <SettingsOverview title="Devices">
+  <SettingsTile id="settings-remote-clients" title="Remote clients" meta="Connected devices, permissions and pairing" icon={Monitor} onOpen={() => openSettingsPane("remote-clients")} />
+  <SettingsTile id="settings-device-notifications-link" title="Notifications" meta="Alerts, sounds and delivery devices" icon={Bell} onOpen={() => openSettingsPane("notifications", "general")} />
+ </SettingsOverview>
+</TabsContent>
+<TabsContent value="admin" className="mt-0">
+ <SettingsOverview title={isHostAdmin ? "Admin" : "Chats"}>
+  {isHostAdmin ? <SettingsTile id="settings-users" title="Users" meta="Accounts and access" icon={Users} onOpen={() => openSettingsPane("users")} /> : null}
+  <SettingsTile id="settings-archived" title="Archived chats" meta={archivedChatsLoaded ? `${archivedChats.length} archived chats` : "Restore or remove archived chats"} icon={Archive} onOpen={() => openSettingsPane("archived")} />
+  <SettingsTile id="settings-shared" title="Shared chats" meta="Manage read-only chat links" icon={Link2} onOpen={() => openSettingsPane("shared")} />
+  {isHostAdmin ? <SettingsTile id="settings-maintenance" title="Maintenance" meta="Update preparation and data reset" icon={Settings2} onOpen={() => openSettingsPane("maintenance")} /> : null}
+ </SettingsOverview>
+</TabsContent>
+<TabsContent value="updates" className="mt-0">
+ <SettingsOverview title="Updates">
+  <SettingsTile id="settings-update-preferences" title="Updates" meta={isHostAdmin ? updateAvailable ? "Update available" : "Update channels, schedule and history" : "Available to host administrators"} icon={RefreshCw} onOpen={() => openSettingsPane("updates")} />
+ </SettingsOverview>
+</TabsContent>
  </>
  )}
           </div>
         </Tabs>
+        )}
       </section>
       <Dialog open={remotePairStep !== "idle"} onOpenChange={(value) => !value && setRemotePairStep("idle")}>
         <DialogContent className="box-border w-[calc(100vw_-_2rem)] max-w-[calc(100vw_-_2rem)] gap-0 overflow-x-hidden overflow-y-auto rounded-2xl p-0 sm:w-[min(56rem,calc(100vw_-_2rem))] sm:max-w-[min(56rem,calc(100vw_-_2rem))]">

@@ -1,5 +1,5 @@
 import {
-  getChat,
+  getChatMetadata,
   normalizeChatKeywords,
   normalizeChatTitle,
   searchChatsForUser,
@@ -7,6 +7,8 @@ import {
 } from "@/lib/db-store";
 import { bearerTokenMatches } from "@/lib/security";
 import { internalRunLeaseAuthorized } from "@/lib/internal-run-lease";
+import { getJob } from "@/lib/db-jobs";
+import { ChatProjectError, chatProjectChoices, moveChatToProject } from "@/lib/chat-projects";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,13 +29,36 @@ export async function POST(req: Request) {
   const userId = req.headers.get("x-ai-chat-user-id")?.trim() || undefined;
   const jobId = req.headers.get("x-ai-chat-job-id")?.trim() || "";
   if (!jobId) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const chat = chatId ? getChat(chatId, userId) : null;
+  const chat = chatId ? getChatMetadata(chatId, userId) : null;
   if (!chat || !jobId) return Response.json({ error: "Invalid chat context" }, { status: 400 });
   if (!internalRunLeaseAuthorized(req, jobId)) {
     return Response.json({ error: "Worker run lease is expired or invalid" }, { status: 409 });
   }
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (body.action === "projects" || body.action === "move-project") {
+    if (!userId) return Response.json({ error: "Authenticated account required" }, { status: 401 });
+    const job = getJob(jobId);
+    if (!job || job.chatId !== chatId || job.userId !== userId) {
+      return Response.json({ error: "Invalid run context" }, { status: 403 });
+    }
+    if (chat.incognito || job.incognito) {
+      return Response.json({ error: "Project tools are unavailable in Incognito." }, { status: 400 });
+    }
+    if (body.action === "projects") {
+      return Response.json({ projects: chatProjectChoices(userId), currentProjectId: chat.projectId || null });
+    }
+    if (body.projectId !== null && (typeof body.projectId !== "string" || !body.projectId.trim())) {
+      return Response.json({ error: "projectId must be an existing project ID or null" }, { status: 400 });
+    }
+    try {
+      const result = moveChatToProject(chatId, typeof body.projectId === "string" ? body.projectId.trim() : null, userId);
+      return Response.json({ ...result, actor: "agent", jobId });
+    } catch (error) {
+      if (error instanceof ChatProjectError) return Response.json({ error: error.message }, { status: error.status });
+      throw error;
+    }
+  }
   const action = body.action === "search" ? "search" : body.action === "title" ? "title" : "update";
   if (action === "search") {
     const query = typeof body.query === "string" ? body.query.trim().slice(0, 200) : "";

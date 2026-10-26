@@ -42,6 +42,22 @@ do not receive synthetic review prompts.
 `reconcileSubagentParent` appends the lifecycle-review message with
 `appendMessageInTransaction` inside the enqueue transaction. `transaction()`
 nests with SAVEPOINT so a nested writer cannot fatal-exit the worker.
+## Provider reset waits and transient retries
+
+Settings → Agent → Settings keeps provider reset waits enabled by default. When
+an exhausted provider window includes a real future reset time, the same job is
+queued until that time and releases its worker slot. Its saved provider session
+and checkpoint are retained. Stop cancels the waiting job. An unknown reset time
+never becomes an assumed five-hour wait.
+
+Automatic retries for transient provider errors are a separate setting, disabled
+by default. When enabled, a run gets at most three additional provider attempts;
+its retry count persists, and its worker lease and runtime budget remain in
+force. Each retry starts after the failed attempt finishes cleanup and appears
+as a collapsible chat event with the provider error details. No user message is
+inserted. Usage limits, billing/authentication failures, tool failures and unknown
+errors do not use this retry policy.
+
 ## Resource limits
 
 The Linux systemd templates provide `MemoryHigh`, `MemoryMax`, and `TasksMax`.

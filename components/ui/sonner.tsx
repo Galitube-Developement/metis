@@ -1,6 +1,7 @@
 "use client"
 
 import { Toaster as Sonner, type ToasterProps } from "sonner"
+import { useAppearance } from "@/components/appearance-provider"
 import {
   CircleCheckIcon,
   InfoIcon,
@@ -9,10 +10,11 @@ import {
   Loader2Icon,
 } from "lucide-react"
 
-const Toaster = ({ theme = "dark", ...props }: Omit<ToasterProps, "position">) => {
+const Toaster = ({ theme, ...props }: Omit<ToasterProps, "position">) => {
+  const appearance = useAppearance()
   return (
     <Sonner
-      theme={theme}
+      theme={theme ?? appearance.theme.mode}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,

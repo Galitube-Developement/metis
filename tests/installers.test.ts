@@ -162,6 +162,10 @@ test("production build finds bundled pnpm with no pnpm on inherited PATH", { ski
     mkdirSync(pnpmDir, { recursive: true });
     mkdirSync(toolDir);
     writeFileSync(path.join(scriptDir, "build-production-slot.sh"), readFileSync(path.join(root, "scripts", "build-production-slot.sh")));
+    writeFileSync(path.join(scriptDir, "build-node-options.cjs"), readFileSync(path.join(root, "scripts", "build-node-options.cjs")));
+    const nodeDir = path.join(temp, ".runtime", "node", "bin");
+    mkdirSync(nodeDir, { recursive: true });
+    symlinkSync(process.execPath, path.join(nodeDir, "node"));
     writeFileSync(path.join(temp, "tsconfig.json"), "{}\n");
     for (const tool of ["dirname", "mktemp", "cp", "rm", "mv", "mkdir"]) {
       symlinkSync(`/usr/bin/${tool}`, path.join(toolDir, tool));

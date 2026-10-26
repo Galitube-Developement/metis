@@ -1,4 +1,5 @@
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
+import { requestProviderRetry, runWithProviderRetries } from "@/lib/provider-retry-runner";
 import {
   appendMessage,
   getChat,
@@ -64,7 +65,12 @@ async function runProvider(context: ProviderContext): Promise<ProviderResult> {
   return providerAdapterForExecution(providerExecution(providerKey)).runTurn(context);
 }
 
-export async function runAlternativeProviderJob(
+export async function runAlternativeProviderJob(job: AgentJob, initialChat: Chat) {
+  return runWithProviderRetries(job, current =>
+    runAlternativeProviderAttempt(current, getChat(current.chatId, current.userId) || initialChat));
+}
+
+async function runAlternativeProviderAttempt(
   job: AgentJob,
   initialChat: Chat,
 ) {
@@ -616,10 +622,19 @@ export async function runAlternativeProviderJob(
           : error instanceof Error
             ? error.message
             : "Provider run failed.";
+    const interruptedTools = tools.filter(tool => tool.status === "running");
     finalizeAlternativeTools(tools);
     if (!cancelled && !interrupted && !runtimeFailure) {
       checkpoint(true);
       if (deferProviderLimitedJob(job.id, error)) return true;
+      if (requestProviderRetry(job.id, error, event => {
+        for (const tool of interruptedTools) emit("tool", {
+          callId: tool.id, name: tool.name, status: tool.status, kind: tool.kind,
+          ...(tool.result ? { result: tool.result } : {}),
+        });
+        parts.push(event);
+        checkpoint(true);
+      })) return true;
     }
     recordSignal({
       modelId: parsed.modelId,

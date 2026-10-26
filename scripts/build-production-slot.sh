@@ -65,7 +65,8 @@ restore_build_slot() {
 trap 'restore_build_slot; restore_tsconfig' EXIT INT TERM
 export NEXT_DIST_DIR="$BUILD_DIR"
 export NODE_ENV=production
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+build_node_options="$(node "$SCRIPT_DIR/build-node-options.cjs")"
+export NODE_OPTIONS="$build_node_options"
 # Normal optimized production build. Tailwind source detection is explicitly
 # bounded in app/globals.css, which avoids scanning runtime/workspace trees.
 "$PNPM_BIN" build

@@ -119,6 +119,7 @@ export type ChatMessage = {
 };
 
 export type MessagePart =
+ | import("./provider-retry").ProviderRetryPart
  | { type: "thinking"; content: string; done?: boolean; durationMs?: number }
  | ({ type: "tool" } & ToolPart)
  | {

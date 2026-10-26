@@ -4,6 +4,9 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import { parseModelKey as parseAccountModelKey } from "../lib/providers/types";
+import { modelForSelection } from "../lib/model-selection";
+import type { ProjectModelSelection } from "../lib/project-model";
+import { modelParametersForModel, sanitizeModelParams } from "../lib/model-params";
 
 const source = ts.createSourceFile("app-shell.tsx", readFileSync("components/app-shell.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let handler: ts.FunctionDeclaration | undefined;
@@ -14,17 +17,24 @@ function visit(node: ts.Node) {
 visit(source);
 assert.ok(handler);
 const js = ts.transpileModule(handler.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-type Params = Array<{ id: string; value: string }>;
+type Params = ProjectModelSelection["modelParams"];
+type ModelSelectionRequest = {
+  version: number;
+  chatId: string | null;
+  chatVersion: number;
+  pending: boolean;
+  confirmed: ProjectModelSelection;
+};
 function fixture(chatId: string | null = "chat") {
-  const calls: Array<{ url: string; body: any; resolve: (response: Response) => void; reject: (error: Error) => void }> = [];
+  const calls: Array<{ url: string; body: ProjectModelSelection; resolve: (response: Response) => void; reject: (error: Error) => void }> = [];
   const errors: string[] = [];
   const storage = new Map<string, string>();
   const context = {
-    Error, projectModel: null, modelId: "p/a", modelParams: [{ id: "effort", value: "low" }] as Params,
+    Error, modelForSelection, projectModel: null as ProjectModelSelection | null, modelId: "p/a", modelParams: [{ id: "effort", value: "low" }] as Params,
     modelParamsByModel: {} as Record<string, Params>, lastModelByProvider: {} as Record<string, string>,
     models: ["p/b", "p/c"].map(id => ({ id, defaultParams: [{ id: "effort", value: "high" }] })),
     activeChatIdRef: { current: chatId }, chatLoadRequestRef: { current: 1 },
-    modelSelectionRequestRef: { current: null as any },
+    modelSelectionRequestRef: { current: null as ModelSelectionRequest | null },
     parseModelKey: (id: string) => ({ providerKey: id.split("/")[0] }),
     MODEL_STORAGE_KEY: "model", PARAMS_STORAGE_KEY: "params",
     localStorage: { setItem: (key: string, value: string) => storage.set(key, value) },
@@ -35,7 +45,7 @@ function fixture(chatId: string | null = "chat") {
     toast: { error: (message: string) => errors.push(message) },
     fetch: (url: string, init: { body: string }) => {
       if (url === "/api/preferences") return Promise.resolve(Response.json({}));
-      return new Promise<Response>((resolve, reject) => calls.push({ url, body: JSON.parse(init.body), resolve, reject }));
+      return new Promise<Response>((resolve, reject) => calls.push({ url, body: JSON.parse(init.body) as ProjectModelSelection, resolve, reject }));
     },
   };
   const select = vm.runInNewContext(js + "; selectModel", context) as (id: string) => Promise<void>;
@@ -143,7 +153,7 @@ test("draft selections remain local without a chat PATCH; project lock stays eff
   assert.equal(f.calls.length, 0);
   assert.equal(f.context.modelId, "p/b");
   assert.equal(f.storage.get("model"), "p/b");
-  f.context.projectModel = {} as any;
+  f.context.projectModel = { modelId: "p/b", modelParams: f.context.modelParams };
   await f.select("p/c");
   assert.equal(f.context.modelId, "p/b");
 });
@@ -157,4 +167,40 @@ test("new-chat selection remembers the same model separately for each provider a
   assert.equal(f.context.lastModelByProvider["codex:work"],"codex:work:shared-model");
   assert.equal(f.context.modelId,"codex:work:shared-model");
   assert.equal(f.storage.get("model"),"codex:work:shared-model");
+});
+
+test("legacy keys recover the active account's advertised reasoning contract without changing identity", () => {
+  const a = { id: "codex:personal:shared", parameters: [{ id: "effort", values: [{ value: "personal-effort" }] }] };
+  const b = { id: "codex:work:shared", legacyIds: ["codex:shared"], parameters: [{ id: "effort", values: [{ value: "work-effort" }] }] };
+  const models = [a, b];
+  const legacy = modelForSelection(models, "codex:shared");
+  assert.equal(legacy, b);
+  assert.equal(modelForSelection([...models].reverse(), "codex:shared"), b, "list order must not choose an account");
+  assert.deepEqual(modelParametersForModel(legacy!), b.parameters.map(p => ({ ...p, displayName: "Reasoning" })));
+  assert.deepEqual(sanitizeModelParams(legacy!, [{ id: "effort", value: "work-effort" }, { id: "effort", value: "personal-effort" }]), [{ id: "effort", value: "work-effort" }]);
+  assert.equal(modelForSelection(models, a.id), a, "an explicit selection keeps its own account contract");
+  assert.equal(modelForSelection(models, "codex:removed:shared"), undefined);
+  assert.equal(modelForSelection(models, "openai:shared"), undefined);
+});
+
+test("metadata aliases stay explicit, unique and preserve opaque provider-native IDs", () => {
+  const model = { id: "ollama:local:fixture:tag", legacyIds: ["ollama:fixture:tag"] };
+  assert.equal(modelForSelection([model], "ollama:fixture:tag"), model);
+  assert.equal(modelForSelection([{ id: "fixture:scoped", legacyIds: ["raw-model"] }], "raw-model")?.id, "fixture:scoped");
+  assert.equal(modelForSelection([{ id: "codex:work:shared" }], "codex:shared"), undefined, "no inferred aliases");
+  assert.equal(modelForSelection([{ id: "a", legacyIds: ["legacy"] }, { id: "b", legacyIds: ["legacy"] }], "legacy"), undefined);
+  const exact = { id: "legacy" };
+  assert.equal(modelForSelection([model, { id: "b", legacyIds: ["legacy"] }, exact], "legacy"), exact);
+  assert.equal(modelForSelection([model], ""), undefined);
+  assert.equal(modelForSelection([model], undefined), undefined);
+});
+
+test("the real selection callback loads defaults through a legacy alias and preserves its saved key", async () => {
+  const f = fixture(null);
+  const meta = { id: "cursor:account:legacy", legacyIds: ["legacy"], defaultParams: [{ id: "effort", value: "live-advertised" }] };
+  f.context.models = [meta];
+  await f.select("legacy");
+  assert.equal(f.context.modelId, "legacy");
+  assert.deepEqual(f.context.modelParams, meta.defaultParams);
+  assert.equal(f.storage.get("model"), "legacy");
 });

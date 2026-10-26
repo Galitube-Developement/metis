@@ -9,6 +9,7 @@ import { createCodexHome } from "@/lib/providers/codex-home";
 import { codexCachedContextWindow } from "@/lib/providers/codex-context";
 import { codexCliExecutable, codexCliVersion } from "@/lib/providers/codex-cli";
 import { providerProcessEnv } from "@/lib/providers/process-env";
+import { ollamaBaseUrls, ollamaModelDetails } from "@/lib/providers/ollama";
 import {
   listProviderModels,
   saveProviderModels,
@@ -21,6 +22,8 @@ import {
   modelKey,
   type ProviderModel,
   type ProviderModelDefinition,
+  type ProviderDefinition,
+  type ProviderCapabilities,
 } from "@/lib/providers/types";
 
 export function normalizeBaseUrl(baseUrl: string | undefined) {
@@ -220,12 +223,13 @@ export function mergeDiscoveredContextWindow(options: {
  return valid(options.discovered) ?? valid(options.stored) ?? valid(options.catalog);
 }
 
-async function fetchJson(url: string, headers: Record<string, string>) {
+async function fetchJson(url: string, headers: Record<string, string>, requestBody?: Record<string, unknown>) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   try {
     const response = await fetch(url, {
-      headers: { Accept: "application/json", ...headers },
+      headers: { Accept: "application/json", ...(requestBody ? { "Content-Type": "application/json" } : {}), ...headers },
+      ...(requestBody ? { method: "POST", body: JSON.stringify(requestBody) } : {}),
       signal: controller.signal,
     });
     const body = await response.text();
@@ -442,9 +446,49 @@ async function discoverCodexModelsViaAppServer(connection: ProviderConnectionWit
   }
 }
 
+async function discoverOllamaModels(connection: ProviderConnectionWithSecret) {
+  const baseUrl = connection.baseUrl || getProviderDefinition("ollama")?.defaultBaseUrl;
+  if (!baseUrl) throw new Error("An Ollama connection requires a base URL.");
+  const urls = ollamaBaseUrls(baseUrl);
+  let values: unknown[];
+  try {
+    try {
+      const body = await fetchDiscoveryJson([`${urls.native}/api/tags`], "ollama", connection.secret) as { models?: unknown[] };
+      if (!Array.isArray(body?.models)) throw new Error("Ollama did not return an installed model list.");
+      values = body.models;
+    } catch {
+      // Some Ollama proxies expose only the OpenAI-compatible API.
+      const body = await fetchDiscoveryJson([`${urls.compatible}/models`], "ollama", connection.secret) as { data?: unknown[] };
+      if (!Array.isArray(body?.data)) throw new Error("Ollama did not return a model list.");
+      values = body.data;
+    }
+  } catch (error) {
+    throw new Error(`Could not list Ollama models at ${urls.native}: ${error instanceof Error ? error.message : String(error)}. Localhost refers to the machine running Metis.`);
+  }
+  const models = values.map(parseDiscoveredModel).filter((model): model is DiscoveredModel => Boolean(model));
+  const discovered = await Promise.all(models.map(async (model) => {
+    const details = await fetchJson(
+      `${urls.native}/api/show`, authHeaders("ollama", connection.secret), { model: model.id },
+    ).catch(() => undefined);
+    const { completion, ...metadata } = ollamaModelDetails(details);
+    if (completion === false) return null;
+    return {
+      ...model,
+      ...metadata,
+      // Compatible-only proxies can advertise explicit capability fields.
+      capabilities: details
+        ? { ...(model.capabilities || {}), ...metadata.capabilities }
+        : { ...metadata.capabilities, ...(model.capabilities || {}) },
+      ...(metadata.contextWindow ? { contextWindowDiscovered: true } : {}),
+    };
+  }));
+  return discovered.filter((model) => model !== null);
+}
+
 export async function discoverProviderModels(connection: ProviderConnectionWithSecret) {
   const provider = getProviderDefinition(connection.providerKey);
   if (!provider) throw new Error(`Unknown provider: ${connection.providerKey}`);
+  if (connection.providerKey === "ollama") return discoverOllamaModels(connection);
   if (connection.providerKey === "codex" && (connection.authType === "oauth" || connection.authType === "account")) {
     try {
       return await discoverCodexModelsViaAppServer(connection);
@@ -563,6 +607,15 @@ export function providerModelCacheState(connectionId: string): "empty" | "stale"
   return "fresh";
 }
 
+function providerModelCapabilityBaseline(provider: ProviderDefinition): Partial<ProviderCapabilities> {
+  const capabilities: Partial<ProviderCapabilities> = { ...provider.capabilities };
+  if (provider.key === "ollama") {
+    // These depend on the installed model, not the compatible HTTP transport.
+    for (const key of ["tools", "vision", "mcp", "reasoning", "fast"] as const) delete capabilities[key];
+  }
+  return capabilities;
+}
+
 export async function refreshProviderModels(connection: ProviderConnectionWithSecret) {
   const models = await discoverProviderModels(connection);
   const provider = getProviderDefinition(connection.providerKey);
@@ -571,7 +624,7 @@ export async function refreshProviderModels(connection: ProviderConnectionWithSe
     models.map((model) => ({
       ...model,
       capabilities: {
-        ...provider?.capabilities,
+        ...(provider ? providerModelCapabilityBaseline(provider) : {}),
         ...(model.capabilities || {}),
       },
     })),
@@ -693,7 +746,7 @@ export function providerModelsForConnection(connection: ProviderConnectionWithSe
             };
           })(),
           capabilities: {
-            ...provider.capabilities,
+            ...providerModelCapabilityBaseline(provider),
             ...(family?.capabilities || {}),
             ...(catalog?.capabilities || {}),
             ...(model.capabilities || {}),
@@ -721,7 +774,12 @@ export function providerModelsForConnection(connection: ProviderConnectionWithSe
       });
   return sourceModels.map((model) => ({
     ...model,
-    capabilities: getVerifiedProviderCapabilities(provider.key, model.id)?.verified ?? provider.capabilities,
+    capabilities: {
+      ...(provider.key === "ollama"
+        ? providerModelCapabilityBaseline(provider)
+        : getVerifiedProviderCapabilities(provider.key, model.id)?.verified ?? provider.capabilities),
+      ...(model.capabilities || {}),
+    },
     key: modelKey(provider.key, model.id, connection.id),
     providerKey: provider.key,
     providerName: provider.name,
@@ -781,7 +839,7 @@ export async function testProviderConnection(connection: ProviderConnectionWithS
     }
     return { ok: true, detail: "Supported Antigravity SDK credentials are configured." };
   }
-  const models = await discoverProviderModels(connection);
+  const models = await refreshProviderModels(connection);
   return {
     ok: true,
     detail: `${models.length} model${models.length === 1 ? "" : "s"} available.`,

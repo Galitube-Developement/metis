@@ -6,7 +6,7 @@ import { canAccessChat } from "@/lib/project-access";
 import { withChatProgramEvents } from "@/lib/chat-program-events-server";
 import { archiveProjectAgent, getProjectAgentForChat } from "@/lib/project-team";
 import { materializeQueuedUploads, type QueuedUploadMessage } from "@/lib/queued-uploads";
-import { getProject } from "@/lib/projects";
+import { ChatProjectError, validateChatProjectMove } from "@/lib/chat-projects";
 import { projectModelOverride } from "@/lib/project-model-server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import {
@@ -125,8 +125,16 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   const teamAgent = getProjectAgentForChat(id, ownerId);
-  if (teamAgent && body.projectId !== undefined && body.projectId !== teamAgent.projectId) return Response.json({ error: "Agent chats remain in their project." }, { status: 400 });
-  if (!teamAgent && body.projectId && getProject(body.projectId, ownerId)?.mode === "agents") return Response.json({ error: "Create an agent to join an agent-oriented project." }, { status: 400 });
+  if (body.projectId !== undefined) {
+    if (body.projectId !== null && (typeof body.projectId !== "string" || !body.projectId.trim())) {
+      return Response.json({ error: "Invalid project ID" }, { status: 400 });
+    }
+    try { validateChatProjectMove(id, body.projectId, ownerId); }
+    catch (error) {
+      if (error instanceof ChatProjectError) return Response.json({ error: error.message }, { status: error.status });
+      throw error;
+    }
+  }
   if (body.readRevision !== undefined && (!Number.isSafeInteger(body.readRevision) || body.readRevision < 0)) return Response.json({ error: "Invalid read revision" }, { status: 400 });
   const requestedModelId =
     typeof body.modelId === "string" ? body.modelId.trim() : "";

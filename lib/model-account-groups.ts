@@ -45,6 +45,14 @@ export function modelAccountGroups(models: AccountModel[], connections: Connecti
   });
 }
 
+/** Only add account names when the same provider has multiple connections. */
+export function modelAccountLabel(model: AccountModel, groups: ModelAccountGroup[]): string | undefined {
+  const providerId = model.providerId || parseModelKey(model.id).providerKey;
+  const accounts = groups.filter(group => group.providerId === providerId && group.connectionId);
+  if (new Set(accounts.map(group => group.connectionId)).size < 2) return undefined;
+  return accounts.find(group => group.value === modelAccountKey(model))?.label || model.connectionLabel;
+}
+
 export function modelMatchesAccount(model: AccountModel, filter: string): boolean {
   return filter === "all" || modelAccountKey(model) === filter ||
     (model.providerId || parseModelKey(model.id).providerKey) === filter;
