@@ -33,6 +33,7 @@ import {
   type ModelParamSelection,
 } from "@/lib/model-params";
 import { modelAttrSummary } from "@/lib/model-label";
+import { modelForSelection } from "@/lib/model-selection";
 
 type AutomationRun = {
   id: string;
@@ -226,7 +227,7 @@ function toDatetimeLocal(value?: string) {
 
 function modelLabel(id: string | undefined, models: ModelInfo[]) {
   if (!id) return "Not set";
-  return models.find((model) => model.id === id)?.displayName || id;
+  return modelForSelection(models, id)?.displayName || id;
 }
 
 function toModelOption(model: ModelInfo): ModelInfo {
@@ -244,8 +245,8 @@ function paramsForSelectedModel(model: ModelInfo | undefined, stored?: ModelPara
 
 function draftFromAutomation(automation: Automation, fallbackModeId: string, models: ModelInfo[] = []): EditDraft {
   const scheduleKind = automation.schedule.kind;
-  const selectedModel = models.find((model) => model.id === automation.modelId);
-  const selectedExtendedModel = models.find((model) => model.id === automation.extendedModelId);
+  const selectedModel = modelForSelection(models, automation.modelId);
+  const selectedExtendedModel = modelForSelection(models, automation.extendedModelId);
   return {
     name: automation.name,
     prompt: automation.prompt,
@@ -749,11 +750,11 @@ export function AutomationsPanel({
   const hasActiveRun = selectedRuns.some((run) => run.status === "running" || run.status === "queued");
   const currentModelName = modelLabel(currentDetail?.modelId, modelOptions);
   const extendedModelName = currentDetail?.extendedModelId ? modelLabel(currentDetail.extendedModelId, modelOptions) : "";
-  const currentModel = modelOptions.find((model) => model.id === currentDetail?.modelId);
+  const currentModel = modelForSelection(modelOptions, currentDetail?.modelId);
   const currentModelOptionsLabel = currentModel
     ? modelAttrSummary(currentModel, currentDetail?.modelParams || [])
     : "";
-  const currentExtendedModel = modelOptions.find((model) => model.id === currentDetail?.extendedModelId);
+  const currentExtendedModel = modelForSelection(modelOptions, currentDetail?.extendedModelId);
   const extendedModelOptionsLabel = currentExtendedModel
     ? modelAttrSummary(currentExtendedModel, currentDetail?.extendedModelParams || [])
     : "";
@@ -962,7 +963,7 @@ export function AutomationsPanel({
                       models={modelOptions}
                       value={draft.modelId}
                       onValueChange={(modelId) => {
-                        const nextModel = modelOptions.find((model) => model.id === modelId);
+                        const nextModel = modelForSelection(modelOptions, modelId);
                         setDraft({ ...draft, modelId, modelParams: paramsForSelectedModel(nextModel) });
                       }}
                       favoriteModelKeys={favoriteModelKeys}
@@ -972,9 +973,9 @@ export function AutomationsPanel({
                       ariaLabel="Model"
                       className="min-w-0 flex-1"
                     />
-                    {modelOptions.find((model) => model.id === draft.modelId) ? (
+                    {modelForSelection(modelOptions, draft.modelId) ? (
                       <ModelOptionsMenu
-                        model={modelOptions.find((model) => model.id === draft.modelId)!}
+                        model={modelForSelection(modelOptions, draft.modelId)!}
                         modelParams={draft.modelParams}
                         onModelParamsChange={(modelParams) => setDraft({ ...draft, modelParams })}
                         className="opacity-100"
@@ -1005,7 +1006,7 @@ export function AutomationsPanel({
                           return;
                         }
                         const nextId = lastExtendedModelRef.current.id || modelOptions[0]?.id || "";
-                        const nextModel = modelOptions.find((model) => model.id === nextId);
+                        const nextModel = modelForSelection(modelOptions, nextId);
                         setDraft({
                           ...draft,
                           extendedModelId: nextId,
@@ -1022,7 +1023,7 @@ export function AutomationsPanel({
                       models={modelOptions}
                       value={draft.extendedModelId}
                       onValueChange={(extendedModelId) => {
-                        const nextModel = modelOptions.find((model) => model.id === extendedModelId);
+                        const nextModel = modelForSelection(modelOptions, extendedModelId);
                         setDraft({
                           ...draft,
                           extendedModelId,
@@ -1036,9 +1037,9 @@ export function AutomationsPanel({
                       ariaLabel="Subagent model"
                       className="min-w-0 flex-1"
                     />
-                    {modelOptions.find((model) => model.id === draft.extendedModelId) ? (
+                    {modelForSelection(modelOptions, draft.extendedModelId) ? (
                       <ModelOptionsMenu
-                        model={modelOptions.find((model) => model.id === draft.extendedModelId)!}
+                        model={modelForSelection(modelOptions, draft.extendedModelId)!}
                         modelParams={draft.extendedModelParams}
                         onModelParamsChange={(extendedModelParams) => setDraft({ ...draft, extendedModelParams })}
                         className="opacity-100"
@@ -1058,7 +1059,7 @@ export function AutomationsPanel({
                     <div><dt>Project</dt><dd>{targetProject?.name || "No project"}</dd></div>
                     <div><dt>{isAgentProject ? "Agent" : "Context"}</dt><dd>{targetAgents.find((agent) => agent.chatId === draft.chatId)?.name || targetChats.find((chat) => chat.id === draft.chatId)?.title || "New automation chat"}</dd></div>
                     <div><dt>Schedule</dt><dd>{formatSchedule({ ...currentDetail, schedule: scheduleFromDraft(draft), timezone: draft.timezone })}</dd></div>
-                    <div><dt>Model</dt><dd>{modelOptions.find((model) => model.id === draft.modelId)?.displayName || "From destination or Settings"}</dd></div>
+                    <div><dt>Model</dt><dd>{modelForSelection(modelOptions, draft.modelId)?.displayName || "From destination or Settings"}</dd></div>
                     <div><dt>Timezone</dt><dd>{draft.timezone}</dd></div>
                   </dl>
                   <p className="automation-editor-review-prompt">{draft.prompt}</p>

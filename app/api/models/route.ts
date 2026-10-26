@@ -7,6 +7,7 @@ import {
 } from "@/lib/model-params";
 import {
   getProviderConnectionSecret,
+  findActiveConnection,
   listChatProviderConnections,
   listProviderModels,
   providerAuthPriority,
@@ -17,7 +18,7 @@ import {
   providerModelsForConnection,
   scheduleProviderModelRefresh,
 } from "@/lib/providers/discovery";
-import { modelKey } from "@/lib/providers/types";
+import { modelKey, parseModelKey } from "@/lib/providers/types";
 import { contextWindowOf as providerContextWindow } from "@/lib/context-window";
 import { resolveModelContextMetadata } from "@/lib/model-context-metadata";
 import { getVerifiedProviderCapabilities } from "@/lib/providers/registry";
@@ -43,6 +44,7 @@ export type ModelParamSelection = {
 
 export type ModelInfo = {
   id: string;
+  legacyIds?: string[];
   displayName: string;
   description?: string;
   providerId?: string;
@@ -257,7 +259,16 @@ export async function GET(req: Request) {
   }
 
   const allModels = [...cursorModels, ...connectionModels];
-  const allowedModels = filterAllowedModels(userId ?? undefined, allModels);
+  const activeConnections = new Map([...new Set(connections.map((connection) => connection.providerKey))]
+    .map((providerKey) => [providerKey, userId ? findActiveConnection(userId, providerKey)?.id : undefined]));
+  const allowedModels = filterAllowedModels(userId ?? undefined, allModels).map((model) => {
+    if (model.connectionId !== activeConnections.get(model.providerId || "")) return model;
+    const parsed = parseModelKey(model.id);
+    const legacyId = modelKey(parsed.providerKey, parsed.modelId);
+    const legacyKey = parseModelKey(legacyId);
+    if (legacyKey.connectionId || legacyKey.providerKey !== parsed.providerKey || legacyKey.modelId !== parsed.modelId) return model;
+    return { ...model, legacyIds: [legacyId] };
+  });
   return Response.json({
     models: allowedModels,
     defaultModelId: allowedModels[0]?.id || "",

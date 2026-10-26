@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { DEFAULT_ATTACHMENT_MAX_BYTES, formatFileBytes } from "@/lib/upload-limits";
 
-export function AttachmentSettings() {
+export function AttachmentSettings({ summary = false }: { summary?: boolean }) {
   const [amount, setAmount] = useState("1");
   const [unit, setUnit] = useState("GB");
   const [unlimited, setUnlimited] = useState(false);
@@ -68,6 +68,7 @@ export function AttachmentSettings() {
   }
 
   const disabled = saved === null || busy;
+  if (summary) return <span>{error ? "Unavailable · open to retry" : saved === null ? "Loading…" : saved === 0 ? "Unlimited" : `${formatFileBytes(saved)} per file`}</span>;
   return <div className="flex max-w-2xl flex-col gap-4">
     <p id="attachment-size-help" className="text-xs leading-relaxed text-muted-foreground">
       Set the maximum size per file for your account. Applies to new uploads in chats, notes and file transfers.

@@ -14,9 +14,9 @@ export function NotificationDeliverySettings({settings,onOpenDevices}:{settings:
     try{
       const response=await fetch("/api/notifications",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,body})});const data=await response.json().catch(()=>null);
       if(!response.ok)throw new Error(data?.error||"Could not send notification. Try again.");
-      if(!data?.notification)throw new Error("Could not confirm the notification. Check Remote Devices before sending again.");
+      if(!data?.notification)throw new Error("Could not confirm the notification. Check your delivery devices below before sending again.");
       const status=data.delivery?.status;
-      setNotice(status==="disabled"?"Remote notifications are off. Enable them in Remote Devices.":status==="no_devices"?"Select a device in Remote Devices first.":status==="delivered"?"Notification delivered.":status==="queued"?"Notification queued for your selected devices.":"Notification saved. Check delivery in Remote Devices.");
+      setNotice(status==="disabled"?"Remote notifications are off. Enable them above.":status==="no_devices"?"Select a delivery device below first.":status==="delivered"?"Notification delivered.":status==="queued"?"Notification queued for your selected devices.":"Notification saved. Check your delivery devices below.");
     }catch(cause){setError(cause instanceof Error?cause.message:"Could not send notification.")}
     finally{setSending(false)}
   }

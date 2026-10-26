@@ -26,6 +26,7 @@ export function isToolRunning(status?: string): boolean {
 }
 
 export type AssistantViewBlock<TTool> =
+  | import("./provider-retry").ProviderRetryPart
   | { type: "thinking"; content: string; done?: boolean; durationMs?: number }
   | {
       type: "compaction";
@@ -44,6 +45,7 @@ export type AssistantViewBlock<TTool> =
  };
 
 type LayoutPart<TTool> =
+  | import("./provider-retry").ProviderRetryPart
   | { type: "thinking"; content: string; done?: boolean; durationMs?: number }
   | {
       type: "compaction";
@@ -489,7 +491,7 @@ export function layoutAssistantParts<TTool extends { kind?: string }>(
     if (part.type === "thinking") {
       flushTools();
       thinking = mergeBlockThinking(thinking, part);
-    } else if (part.type === "compaction") {
+    } else if (part.type === "compaction" || part.type === "provider-retry") {
       flushTools();
       flushThinking();
       blocks.push(part);

@@ -196,11 +196,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     authTypes: ["local", "api_key"],
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
     capabilities: compatibleCapabilities,
-    models: models(
-      { id: "llama3.2", displayName: "Llama 3.2", tags: ["local", "fast"] },
-      { id: "qwen2.5-coder", displayName: "Qwen 2.5 Coder", tags: ["local", "coding"] },
-    ),
-    setupHint: "Start Ollama locally. Use local mode without a key, or API-key mode when your endpoint requires one.",
+    models: [],
+    setupHint: "Start Ollama on the machine running Metis, or enter an Ollama endpoint reachable from that machine. Localhost refers to the Metis host. Installed models are discovered from Ollama; local mode needs no key.",
   },
   {
     key: "compatible",

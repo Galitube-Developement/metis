@@ -31,6 +31,10 @@ const chipSource = readFileSync(
   new URL("../components/tool-call-chip.tsx", import.meta.url),
   "utf8",
 );
+const toolPreviewSource = readFileSync(
+  new URL("../components/tool-call-preview.tsx", import.meta.url),
+  "utf8",
+);
 const quotaSource = readFileSync(
   new URL("../components/quota-gauges.tsx", import.meta.url),
   "utf8",
@@ -41,8 +45,10 @@ test("automation markdown links dispatch open-automations and the shell opens th
   assert.deepEqual(internalLinkNavigation(target), {
     href: "#automation-linked-automation", event: "ai-chat:open-automations", detail: { id: "linked-automation" },
   });
-  assert.match(markdownSource, /internalLinkNavigation/);
-  assert.match(chipSource, /ai-chat:open-automations/);
+  assert.match(markdownSource, /internalLinkNavigation\(internalTarget\)/);
+  assert.match(markdownSource, /window\.dispatchEvent\(new CustomEvent\(navigation\.event, \{ detail: navigation\.detail \}\)\)/);
+  assert.match(chipSource, /<ToolCallPreview tool=/);
+  assert.match(toolPreviewSource, /new CustomEvent\("ai-chat:open-automations", \{ detail: \{ id: automation\.id \} \}\)/);
   assert.match(shellSource, /ai-chat:open-automations/);
   assert.match(shellSource, /const openLinkedAutomation/);
   assert.match(shellSource, /navigateChat\("automations"\)/);
@@ -190,12 +196,18 @@ test("mobile composer uses a centered header model picker and progressive second
 });
 
 
-test("model selector remembers the last model per provider and keeps search collapsed by default", () => {
+test("model selector remembers the last model per provider account and keeps search collapsed on desktop and mobile", () => {
   assert.match(shellSource, /const \[lastModelByProvider, setLastModelByProvider\] = useState<Record<string, string>>\(\{\}\)/);
   assert.match(shellSource, /lastModelByProvider: nextLastModelByProvider/);
   assert.match(shellSource, /const rememberedModelId = lastModelByProvider\[provider\.value\]/);
   assert.match(shellSource, /void selectModel\(rememberedModelId\)/);
-  assert.match(shellSource, /setModelSearchOpen\(false\);[\s\S]*setModelProviderFilter\(selectedKey\.providerKey\)/);
+  assert.match(shellSource, /modelMatchesAccount\(\{ id: rememberedModelId \}, provider\.value\)/);
+  assert.match(shellSource, /models\.some\(\(model\) => model\.id === rememberedModelId\)/);
+  assert.equal(
+    shellSource.match(/setModelSearchOpen\(false\);\s*setModelProviderFilter\(modelAccountKey\(\{ id: modelId \}\)\)/g)?.length,
+    2,
+    "desktop and mobile menus must start with collapsed search and the selected account",
+  );
   assert.match(shellSource, /if \(modelSearchOpen\) modelSearchRef\.current\?\.focus\(\)/);
   assert.match(shellSource, /modelSearchOpen \? \([\s\S]*aria-label="Search models"[\s\S]*Search models/);
 });

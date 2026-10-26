@@ -178,8 +178,9 @@ async function handleBrowserEngine(request, response) {
 }
 
 async function sendFrame(socket, context, tabId, quality, streamState, includeMetadata = false) {
-  if (socket.readyState !== 1 || socket.bufferedAmount > 2_000_000) return tabId;
+  if (socket.readyState !== 1 || socket.bufferedAmount > 2_000_000) return;
   const frame = await captureBrowserFrame(context.userId, context.chatId, tabId, quality, includeMetadata);
+  if (socket.readyState !== 1) return;
   if (includeMetadata) {
     const metadataKey = JSON.stringify({
       tabId: frame.tabId,
@@ -202,6 +203,7 @@ async function sendFrame(socket, context, tabId, quality, streamState, includeMe
       }));
     }
   }
+  if (socket.readyState !== 1) return;
   socket.send(frame.data, { binary: true });
   return frame.tabId;
 }
@@ -212,13 +214,18 @@ websocketServer.on("connection", async (socket, request, context, options) => {
   let stopped = false;
   let pendingPush = false;
   let pendingMetadata = false;
+  let timer;
+  let startupTimer = null;
+  let initialRetryTimer = null;
+  let initialFrameSent = false;
+  let initialCaptureRetries = 0;
   const streamState = { metadataKey: "" };
   const fps = Math.max(1, Math.min(Number(options.fps) || 5, 30));
   const quality = Math.max(35, Math.min(Number(options.quality) || 70, 90));
   const realtime = options.realtime !== false;
 
   const push = async (includeMetadata = false) => {
-    if (stopped || socket.readyState !== 1) return;
+    if (stopped || socket.readyState !== 1 || initialRetryTimer) return;
     if (inFlight) {
       pendingPush = true;
       pendingMetadata ||= includeMetadata;
@@ -226,12 +233,31 @@ websocketServer.on("connection", async (socket, request, context, options) => {
     }
     inFlight = true;
     try {
-      tabId = await sendFrame(socket, context, tabId, quality, streamState, includeMetadata);
+      const sentTabId = await sendFrame(socket, context, tabId, quality, streamState, includeMetadata);
+      if (sentTabId !== undefined && !stopped) {
+        tabId = sentTabId;
+        initialFrameSent = true;
+        if (startupTimer) clearTimeout(startupTimer);
+        startupTimer = null;
+      }
     } catch (error) {
-      socket.send(JSON.stringify({ type: "error", message: error instanceof Error ? error.message : "Browser stream failed" }));
+      if (stopped || socket.readyState !== 1) return;
+      if (!initialFrameSent && initialCaptureRetries === 0) {
+        // One transient first-frame failure should recover without an action or
+        // leaving an error banner over the successful retry.
+        initialCaptureRetries += 1;
+        pendingPush = false;
+        pendingMetadata = false;
+        initialRetryTimer = setTimeout(() => {
+          initialRetryTimer = null;
+          void push(true);
+        }, 500);
+      } else {
+        failStream(error);
+      }
     } finally {
       inFlight = false;
-      if (pendingPush && !stopped) {
+      if (pendingPush && !stopped && !initialRetryTimer) {
         const nextMetadata = pendingMetadata;
         pendingPush = false;
         pendingMetadata = false;
@@ -244,6 +270,7 @@ websocketServer.on("connection", async (socket, request, context, options) => {
   const subscribers = browserStreamSubscribers.get(subscriberKey) || new Set();
   let notifyTimer = null;
   const notify = (event) => {
+    if (stopped) return;
     if (event?.tabId) tabId = event.tabId;
     streamState.metadataKey = "";
     // Small debounce lets the DOM settle after a click/type while preserving a
@@ -258,7 +285,32 @@ websocketServer.on("connection", async (socket, request, context, options) => {
   subscribers.add(notify);
   browserStreamSubscribers.set(subscriberKey, subscribers);
 
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(timer);
+    if (notifyTimer) clearTimeout(notifyTimer);
+    if (startupTimer) clearTimeout(startupTimer);
+    if (initialRetryTimer) clearTimeout(initialRetryTimer);
+    notifyTimer = startupTimer = initialRetryTimer = null;
+    pendingPush = pendingMetadata = false;
+    subscribers.delete(notify);
+    if (!subscribers.size) browserStreamSubscribers.delete(subscriberKey);
+  };
+  const failStream = (error) => {
+    if (stopped) return;
+    stop();
+    if (socket.readyState !== 1) return;
+    try {
+      socket.send(JSON.stringify({ type: "error", message: error instanceof Error ? error.message : "Browser stream failed" }));
+    } catch {
+      // The image client may disconnect while the capture is in flight.
+    }
+    try { socket.close(1011, "Browser stream failed"); } catch { /* Already closed. */ }
+  };
+
   socket.on("message", async (raw) => {
+    if (stopped || socket.readyState !== 1) return;
     let message;
     try { message = JSON.parse(raw.toString()); } catch { return; }
     if (message.type !== "action" || !message.action) return;
@@ -276,6 +328,7 @@ websocketServer.on("connection", async (socket, request, context, options) => {
         width: message.width,
         height: message.height,
       });
+      if (stopped || socket.readyState !== 1) return;
       tabId = result.tabId;
       socket.send(JSON.stringify({
         type: "meta",
@@ -287,39 +340,28 @@ websocketServer.on("connection", async (socket, request, context, options) => {
         tabs: result.tabs,
       }));
     } catch (error) {
-      socket.send(JSON.stringify({ type: "error", message: error instanceof Error ? error.message : "Browser action failed" }));
+      if (stopped || socket.readyState !== 1) return;
+      try {
+        socket.send(JSON.stringify({ type: "error", message: error instanceof Error ? error.message : "Browser action failed" }));
+      } catch { stop(); }
     }
   });
 
-  socket.on("close", () => {
-    stopped = true;
-    if (notifyTimer) clearTimeout(notifyTimer);
-    notifyTimer = null;
-    subscribers.delete(notify);
-    if (!subscribers.size) browserStreamSubscribers.delete(subscriberKey);
-  });
+  socket.on("close", stop);
+  socket.on("error", stop);
+  // Capture/session startup can stall before Playwright's screenshot timeout.
+  // Close only the image socket so the client can reconnect to the same tabs.
+  startupTimer = setTimeout(() => failStream(new Error("Browser image startup timed out")), 30_000);
   try {
     if (options.width && options.height) {
       await setBrowserViewport(context.userId, context.chatId, options.width, options.height);
     }
     await push(true);
   } catch (error) {
-    stopped = true;
-    if (socket.readyState === 1) {
-      try {
-        socket.send(JSON.stringify({
-          type: "error",
-          message: error instanceof Error ? error.message : "Browser stream failed",
-        }));
-      } catch {
-        // The socket may have closed while the frame was being prepared.
-      }
-      socket.close();
-    }
+    failStream(error);
     return;
   }
-  let timer;
-  if (!realtime) return;
+  if (!realtime || stopped) return;
   const scheduleNextFrame = () => {
     if (stopped) return;
     timer = setTimeout(async () => {
@@ -328,7 +370,6 @@ websocketServer.on("connection", async (socket, request, context, options) => {
     }, Math.round(1000 / fps));
   };
   scheduleNextFrame();
-  socket.on("close", () => clearTimeout(timer));
 });
 
 remoteClientWebsocketServer.on("connection", (socket, request) => {

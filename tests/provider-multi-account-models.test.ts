@@ -151,6 +151,77 @@ test("real models API discovers both Cursor accounts without deduplicating other
   assert.ok(body.models.some((m: { id: string }) => m.id === body.defaultModelId));
 });
 
+test("legacy API model aliases use the runner's active account and retain advertised options", async () => {
+  const db = modules[7].getDatabase();
+  const accountIds = [first, second, otherA, otherB];
+  const timestamps = accountIds.map(id => ({
+    id, updatedAt: modules[1].getProviderConnection(id, owner)!.updatedAt,
+  }));
+  try {
+    // Picker order is alphabetical, while legacy runs choose the latest account.
+    for (const [id, updatedAt] of [
+      [first, "2000-01-01T00:00:00.000Z"], [second, "2001-01-01T00:00:00.000Z"],
+      [otherA, "2000-01-01T00:00:00.000Z"], [otherB, "2001-01-01T00:00:00.000Z"],
+    ]) db.prepare("UPDATE provider_connections SET updated_at = ? WHERE id = ?").run(updatedAt, id);
+    assert.equal(modules[1].listChatProviderConnections(owner, false)
+      .find(connection => connection.providerKey === "cursor")!.id, first);
+    const body = await (await get()).json();
+    for (const [providerKey, activeId] of [["cursor", second], ["compatible", otherB]]) {
+      assert.equal(modules[1].findActiveConnection(owner, providerKey)!.id, activeId);
+      const legacyId = modules[4].modelKey(providerKey, shared);
+      const matching = body.models.filter((model: { legacyIds?: string[] }) => model.legacyIds?.includes(legacyId));
+      assert.deepEqual(matching.map((model: { connectionId: string }) => model.connectionId), [activeId]);
+      const accounts = body.models.filter((model: { providerId: string }) => model.providerId === providerKey);
+      for (const model of accounts) {
+        assert.deepEqual(model.legacyIds || [], model.connectionId === activeId ? [legacyId] : []);
+        if (providerKey === "cursor") {
+          assert.deepEqual(model.parameters, [{
+            id: "effort", displayName: "Reasoning", values: [{ value: "fixture-effort" }],
+          }]);
+          assert.deepEqual(model.defaultParams, [{ id: "effort", value: "fixture-effort" }]);
+        }
+      }
+    }
+    for (const id of [first, second, foreignConnection, disabled, "missing-connection", otherA]) {
+      const scopedId = modules[4].modelKey("cursor", shared, id);
+      assert.equal(body.models.some((model: { legacyIds?: string[] }) => model.legacyIds?.includes(scopedId)), false,
+        "explicit account scopes must never become aliases to another account");
+    }
+  } finally {
+    for (const { id, updatedAt } of timestamps) {
+      db.prepare("UPDATE provider_connections SET updated_at = ? WHERE id = ?").run(updatedAt, id);
+    }
+  }
+});
+
+test("legacy API aliases stay unavailable when the runner's active account fails discovery", async () => {
+  const active = modules[1].findActiveConnection(owner, "cursor")!;
+  const otherId = active.id === first ? second : first;
+  failingKey = active.id === first ? "cursor-a-key" : "cursor-b-key";
+  try {
+    const body = await (await get()).json();
+    assert.ok(body.models.some((model: { connectionId: string }) => model.connectionId === otherId));
+    assert.equal(body.models.some((model: { connectionId: string }) => model.connectionId === active.id), false);
+    assert.equal(body.models.some((model: { legacyIds?: string[] }) => model.legacyIds?.includes(shared)), false,
+      "legacy model metadata must not silently resolve to a different account");
+  } finally { failingKey = ""; }
+});
+
+test("provider-native colons never turn an explicit account scope into a legacy alias", async () => {
+  const active = modules[1].findActiveConnection(owner, "compatible")!;
+  const previous = modules[1].listProviderModels(active.id);
+  const nativeId = otherA + ":tag";
+  try {
+    modules[2].persistDiscoveredModels(active.id, [{ id: nativeId, displayName: "Opaque fixture" }]);
+    const body = await (await get()).json();
+    const model = body.models.find((entry: { id: string }) => entry.id === modules[4].modelKey("compatible", nativeId, active.id));
+    assert.ok(model);
+    assert.deepEqual(model.legacyIds || [], [], "a key parsed as an explicit account cannot alias to a different account");
+  } finally {
+    modules[1].saveProviderModels(active.id, previous);
+  }
+});
+
 test("one Cursor discovery failure preserves the other account", async () => {
   failingKey = "cursor-a-key";
   try {

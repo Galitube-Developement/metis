@@ -34,6 +34,7 @@ import { skillsCatalogPrompt } from "@/lib/skills";
 import { getJob, appendRunEvent, updateJob } from "@/lib/db-jobs";
 import { buildAttachmentPrompt } from "@/lib/uploads";
 import { providerModelsForConnection } from "@/lib/providers/discovery";
+import { ollamaBaseUrls } from "@/lib/providers/ollama";
 import {
   findActiveConnection,
   getProviderConnection,
@@ -870,7 +871,9 @@ export function aiModel(
   connection: ProviderConnectionWithSecret,
 ): LanguageModel {
   const secret = connection.secret;
-  const baseURL = connection.baseUrl;
+  const baseURL = providerKey === "ollama" && connection.baseUrl
+    ? ollamaBaseUrls(connection.baseUrl).compatible
+    : connection.baseUrl;
   if (
     providerKey === "openai" ||
     (providerKey === "codex" && connection.authType === "api_key")

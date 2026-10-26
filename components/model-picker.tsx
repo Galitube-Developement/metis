@@ -13,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { ProviderLogo } from "@/components/provider-logo";
 import type { ModelInfo } from "@/components/settings-panel";
 import { cn } from "@/lib/utils";
-import { modelAccountGroups, modelAccountKey, modelMatchesAccount } from "@/lib/model-account-groups";
+import { modelForSelection } from "@/lib/model-selection";
+import { modelAccountGroups, modelAccountKey, modelAccountLabel, modelMatchesAccount } from "@/lib/model-account-groups";
 
 export function ModelPicker({
   models,
@@ -42,9 +43,10 @@ export function ModelPicker({
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const searchRef = useRef<HTMLInputElement>(null);
-  const selected = models.find((model) => model.id === value);
+  const selected = modelForSelection(models, value);
   const normalized = String(search ?? "").trim().toLowerCase();
   const providers = modelAccountGroups(models);
+  const selectedAccountLabel = selected ? modelAccountLabel(selected, providers) : undefined;
   const providerQueryMatch = normalized.match(/^([a-z0-9_-]+):(.*)$/);
   const providerQuery = providerQueryMatch && providers.some((provider) => provider.providerId === providerQueryMatch[1])
     ? providerQueryMatch[1]
@@ -84,7 +86,7 @@ export function ModelPicker({
         }}
         className="gap-2"
       >
-        <Check className={cn("size-3.5 shrink-0", model.id === value ? "opacity-100" : "opacity-0")} />
+        <Check className={cn("size-3.5 shrink-0", model.id === selected?.id ? "opacity-100" : "opacity-0")} />
         <ProviderLogo providerId={providerId} />
         <span className="min-w-0 flex-1 truncate">{model.displayName}{model.connectionLabel ? <span className="ml-1 text-xs text-muted-foreground">· {model.connectionLabel}</span> : null}</span>
         <button
@@ -116,8 +118,8 @@ export function ModelPicker({
           <span className="flex min-w-0 items-center gap-2 truncate">
             <ProviderLogo providerId={selected?.providerId} />
             <span className="truncate">{selected?.displayName || placeholder}</span>
-            {selected?.connectionLabel || selected?.providerName ? (
-              <span className="truncate text-xs text-muted-foreground">· {selected.connectionLabel || selected.providerName}</span>
+            {selectedAccountLabel ? (
+              <span className="truncate text-xs text-muted-foreground">· {selectedAccountLabel}</span>
             ) : null}
           </span>
           <ChevronDown className="size-3.5 shrink-0 opacity-60" />

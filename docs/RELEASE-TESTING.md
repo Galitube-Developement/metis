@@ -22,6 +22,7 @@ pnpm exec tsc --noEmit --pretty false
 ## Updater-Regressionen
 
 ```bash
+node --test tests/build-node-options.test.cjs
 pnpm exec tsx --test tests/updater-stability.test.ts tests/installer-update.test.ts tests/update-job.test.ts tests/installers.test.ts tests/installer-dirty-checkout.test.ts tests/update-history.test.ts
 ```
 
@@ -30,6 +31,12 @@ lange Logs, dauerhafte Exit-Codes, parallele Starts und das Weiterlaufen des Ins
 nach Beenden seines Elternprozesses. Ein fehlgeschlagener Build stellt den vorherigen
 Build-Slot und `tsconfig.json` wieder her. Installer-Builds beginnen standardmäßig mit
 einem leeren Cache; lokale Rebuilds können `METIS_REUSE_BUILD_CACHE=1` setzen.
+Native Builds auf Linux, macOS und Windows wählen ohne explizites Heap-Limit
+75 % des erkannten RAM-/Containerlimits bis maximal 8192 MiB für Nodes Old Space.
+Ein vorhandenes `--max-old-space-size` in `NODE_OPTIONS` bleibt erhalten;
+weitere Node-Optionen werden um das berechnete Limit ergänzt. Exit-Code 134
+weist auf einen Prozessabbruch hin und beweist allein keinen Speichermangel;
+für die Ursache sind die zugehörigen Build-Logs erforderlich.
 
 Diese Tests führen keine echten Service-Neustarts aus. Native Updates auf macOS und
 Windows sowie vollständige Docker-Upgrades müssen zusätzlich in separaten Testinstallationen

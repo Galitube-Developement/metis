@@ -7,8 +7,9 @@ import {Popover, PopoverAnchor, PopoverContent} from "@/components/ui/popover";
 import {searchSettings, settingsSearchEntries, type SettingsSearchEntry} from "@/lib/settings-navigation";
 import {cn} from "@/lib/utils";
 
-export function SettingsSearch({isHostAdmin, onSelect}: {
+export function SettingsSearch({isHostAdmin, mobile = false, onSelect}: {
   isHostAdmin: boolean;
+  mobile?: boolean;
   onSelect: (entry: SettingsSearchEntry) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -16,7 +17,8 @@ export function SettingsSearch({isHostAdmin, onSelect}: {
   const [activeIndex, setActiveIndex] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
-  const entries = useMemo(() => settingsSearchEntries(isHostAdmin), [isHostAdmin]);
+  const entries = useMemo(() => settingsSearchEntries(isHostAdmin).map(entry =>
+    mobile && entry.sectionId === "settings-links" ? {...entry, category: "Settings"} : entry), [isHostAdmin, mobile]);
   const results = useMemo(() => searchSettings(entries, query), [entries, query]);
   const showingResults = open && Boolean(query.trim());
   const activeResult = results[activeIndex];
@@ -37,7 +39,7 @@ export function SettingsSearch({isHostAdmin, onSelect}: {
   return (
     <Popover open={showingResults} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        <div className="relative mt-4">
+        <div className="relative mt-2 sm:mt-3">
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={input}

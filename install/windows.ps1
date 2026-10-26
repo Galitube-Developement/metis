@@ -694,11 +694,16 @@ try {
   }
   $nextDistDir = if ($activeDistDir -eq ".next-a") { ".next-b" } else { ".next-a" }
   $env:NEXT_DIST_DIR = $nextDistDir
+  $previousNodeOptions = $env:NODE_OPTIONS
   try {
+    $buildNodeOptions = & node scripts/build-node-options.cjs
+    if ($LASTEXITCODE -ne 0) { throw "Could not determine the production build memory limit." }
+    $env:NODE_OPTIONS = $buildNodeOptions
     & $pnpmCommand build
     if ($LASTEXITCODE -ne 0) { throw "Production build failed; existing services were not restarted." }
   } finally {
     if ($null -ne $previousDistDir) { $env:NEXT_DIST_DIR = $previousDistDir } else { Remove-Item Env:NEXT_DIST_DIR -ErrorAction SilentlyContinue }
+    if ($null -ne $previousNodeOptions) { $env:NODE_OPTIONS = $previousNodeOptions } else { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
   }
   $runtimeEnv = @(Get-Content -LiteralPath $mergedEnv | Where-Object { $_ -notmatch '^NEXT_DIST_DIR=' })
   [IO.File]::WriteAllText($mergedEnv, ($runtimeEnv + "NEXT_DIST_DIR=$nextDistDir") -join [Environment]::NewLine, $utf8NoBom)

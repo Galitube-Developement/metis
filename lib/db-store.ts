@@ -470,7 +470,7 @@ export function getChatPage(
 }
 
 /** Read only metadata even when the canonical transcript exceeds the worker heap. */
-function getChatMetadata(id: string, ownerId?: string): Chat | null {
+export function getChatMetadata(id: string, ownerId?: string): Chat | null {
   if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id, ownerId)) return null;
   const chat = rowChat(getDatabase().prepare("SELECT json_remove(data,'$.messages') AS data FROM chats WHERE id=?").get(id));
   if (!chat) return null;

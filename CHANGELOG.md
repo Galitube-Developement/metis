@@ -4,13 +4,18 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
-## v1.0.19 — 2026-10-24
+## v1.0.19 — 2026-10-24 (updated 2026-10-26)
 
 - Introduce Notebooks with separate project and No Project file trees, nested Markdown documents, and migration of existing note hierarchies.
 - Add Issuebooks with issue documents, statuses, priorities, assignees, relations, comments, and agent tools for managing issues.
 - Unify Markdown editing across notebooks, plans, canvases and workspace files with a block editor, attachment support, and draft recovery.
 - Import and export notebook archives, duplicate or move documents, and open notes directly from tool results and internal links.
 - Improve chat search responsiveness with indexed background search, and streamline the command palette, grouped tool details and browser progress feedback.
+- Save theme selection and custom JSON themes per account, with import/export and synchronization between sessions.
+- Organize Settings into compact category overviews and detail pages, with a dedicated mobile main menu and Website/GitHub links at its bottom.
+- Add optional automatic provider-error retries with up to three attempts and expandable error details, while preserving provider-limit waiting and cancellation.
+- Let agents move chats between existing projects through account-scoped tools.
+- Improve local Ollama discovery, provider-account model selection, browser stream cleanup, and memory-aware installer builds.
 
 ## v1.0.18 — 2026-10-21
 

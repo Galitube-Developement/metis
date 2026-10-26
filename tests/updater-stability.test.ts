@@ -158,6 +158,7 @@ test("failed clean slot rebuild restores previous artifacts and tsconfig", { ski
     await writeFile(path.join(temp, "next-env.d.ts"), "original-env");
     const script = path.join(temp, "scripts/build-production-slot.sh");
     await writeFile(script, await readFile(path.join(root, "scripts/build-production-slot.sh")));
+    await writeFile(path.join(temp, "scripts/build-node-options.cjs"), await readFile(path.join(root, "scripts/build-node-options.cjs")));
     const pnpm = path.join(temp, "fake-pnpm");
     await writeFile(pnpm, '#!/bin/sh\n[ ! -e .next-a/cache/stale ] || exit 99\necho changed > tsconfig.json\necho changed > next-env.d.ts\necho incomplete-new-build > .next-a/BUILD_ID\necho CLEAN_CACHE_CONFIRMED\nexit 42\n', { mode: 0o700 });
     const result = spawnSync("/bin/bash", [script, ".next-a"], { cwd: temp, env: { ...process.env, AI_CHAT_ROOT: temp, PNPM_BIN: pnpm, METIS_REUSE_BUILD_CACHE: "0" }, encoding: "utf8" });

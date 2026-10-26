@@ -4,6 +4,7 @@ import { modeById } from "@/lib/modes";
 import { hasUserInputResponse, userInputProgress, type UserInputProgress } from "@/lib/user-input-progress";
 import { providerRateLimit, type ProviderRateLimit } from "@/lib/provider-rate-limit";
 import { getProviderLimitResumeEnabled } from "@/lib/provider-rate-limit-settings";
+import { providerContinuationPrompt } from "@/lib/provider-continuation";
 import { randomUUID } from "node:crypto";
 import { syncHandoffForJob } from "@/lib/project-team-lifecycle";
 import { resolveAgentRuntimeMs } from "@/lib/agent-runtime-policy.mjs";
@@ -643,6 +644,7 @@ export function updateJob(
       | "agentRuntimeDeadlineAt"
       | "cancellationCause"
       | "subagentAutoReview"
+      | "providerRetryCount"
     >
   > & { providerRateLimit?: ProviderRateLimit },
   options: { expectedRevision?: number; control?: boolean } = {},
@@ -1255,7 +1257,7 @@ export function deferProviderLimitedJob(jobId: string, error: unknown) {
     });
     const updated = updateJob(current.id, {
       status: "queued", error: undefined, providerRateLimit: limit,
-      resumePrompt: "The provider usage limit has reset. Continue this same run from its saved provider session and durable checkpoint. Do not repeat completed tools or user-facing work.",
+      resumePrompt: providerContinuationPrompt(current, "The provider usage limit has reset. Continue this same run."),
       resumeRequestedAt: iso(),
     }, { expectedRevision: jobRevision(current) });
     if (!updated) throw new Error("Provider-limit pause lost its job revision.");

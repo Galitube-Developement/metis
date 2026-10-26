@@ -267,6 +267,8 @@ export const CORE_MCP_TOOL_ALLOWLIST = [
   "write_todos",
   "update_chat_title",
   "update_chat_keywords",
+  "list_projects",
+  "move_chat_to_project",
   "create_plan",
   "edit_plan",
   "list_workspaces",

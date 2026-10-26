@@ -4,6 +4,7 @@ import { projectModelOverride, validateProjectModelSelection } from "@/lib/proje
 import { payloadRecord, payloadText as asText } from "@/lib/agent-payload";
 import { isProviderUsageLimit } from "@/lib/provider-rate-limit";
 import { deferProviderLimitedJob } from "@/lib/db-jobs";
+import { requestProviderRetry, runWithProviderRetries } from "@/lib/provider-retry-runner";
 import { readFileSync } from "node:fs";
 import { Agent } from "@cursor/sdk";
 import {
@@ -523,6 +524,10 @@ async function resolveAutoModel(job: AgentJob, chat: Chat): Promise<string | nul
 }
 
 export async function runQueuedJob(job: AgentJob) {
+  return runWithProviderRetries(job, runQueuedJobAttempt);
+}
+
+async function runQueuedJobAttempt(job: AgentJob) {
   const runStartedAt = Date.now();
   const chat = getChat(job.chatId, job.userId);
   if (!chat) {
@@ -839,7 +844,12 @@ export async function runQueuedJob(job: AgentJob) {
     const legacyCursorAgentId = !modelReference.connectionId
       ? job.agentId || chat.agentId || undefined
       : undefined;
-    const nativeAgentId = cursorBinding?.lastKnownGoodCursor || legacyCursorAgentId;
+    // An interrupted first turn has a confirmed initialized session, but no
+    // completed turn to promote yet. Resume that candidate only for this same
+    // durable job and account, preserving in-flight work after a reset/retry.
+    const interruptedCursor = job.resumePrompt && job.agentId
+      && cursorBinding?.candidateCursor === job.agentId ? job.agentId : undefined;
+    const nativeAgentId = interruptedCursor || cursorBinding?.lastKnownGoodCursor || legacyCursorAgentId;
     let nativeResumed = false;
     let recoveryBootstrapRecap: string | null = null;
     const buildRecoveryBootstrapRecap = () => {
@@ -1630,6 +1640,10 @@ export async function runQueuedJob(job: AgentJob) {
     }
     checkpoint(true);
     if (result.status === "error" && deferProviderLimitedJob(job.id, result.error)) return;
+    if (result.status === "error" && requestProviderRetry(job.id, result.error, event => {
+      parts.push(event);
+      checkpoint(true);
+    })) return;
     let resultError = result.status === "error"
       ? result.error?.message || "Agent run failed."
       : undefined;
@@ -1833,6 +1847,16 @@ export async function runQueuedJob(job: AgentJob) {
   } catch (error) {
     checkpoint(true);
     if (deferProviderLimitedJob(job.id, error)) return;
+    if (requestProviderRetry(job.id, error, event => {
+      const interruptedTools = tools.filter(tool => isActiveToolStatus(tool.status));
+      closeRunningTools(tools, "error");
+      for (const tool of interruptedTools) emit("tool", {
+        callId: tool.id, name: tool.name, status: tool.status, kind: tool.kind,
+        ...(tool.result ? { result: tool.result } : {}),
+      });
+      parts.push(event);
+      checkpoint(true);
+    })) return;
     const message = error instanceof Error ? error.message : "Agent run failed.";
     recordSignal({
       modelId: job.modelId || chat.modelId || "unknown",

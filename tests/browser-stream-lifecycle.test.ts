@@ -46,3 +46,190 @@ test("hidden browser never connects; teardown disposes frames and stale messages
   h.cleanup(); assert.equal(h.disposed, 1); assert.equal(socket.closed, true); assert.equal(h.presenterRef.current, null);
   socket.onmessage!({ data: new Blob(["late"]) }); assert.equal(h.frames.length, 1);
 });
+
+
+// Exercise the real server handler with simulated capture and time, without
+// starting a server, a browser, or a database.
+const serverSource = fs.readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
+const serverTree = ts.createSourceFile("server.mjs", serverSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const sendFrameDeclaration = serverTree.statements.find((node): node is ts.FunctionDeclaration =>
+  ts.isFunctionDeclaration(node) && node.name?.text === "sendFrame")!;
+const connectionStatement = serverTree.statements.find((node): node is ts.ExpressionStatement =>
+  ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) &&
+  node.expression.expression.getText(serverTree) === "websocketServer.on" &&
+  node.expression.arguments[0]?.getText(serverTree) === '"connection"')!;
+const connectionCallback = (connectionStatement.expression as ts.CallExpression).arguments[1];
+const streamFrame = () => ({ tabId: "browser-1", activeTabId: "browser-1", url: "https://fixture.test/", title: "Fixture", tabs: [], viewport: { width: 1280, height: 800 }, data: new Uint8Array([1, 2, 3]) });
+type StreamFrame = ReturnType<typeof streamFrame>;
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+async function settleStream() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
+class StreamSocket {
+  readyState = 1;
+  bufferedAmount = 0;
+  sendAttempts = 0;
+  closes: Array<{ code?: number }> = [];
+  sent: Array<{ data: unknown; binary: boolean }> = [];
+  handlers = new Map<"message" | "close" | "error", Array<(raw?: string) => unknown>>();
+  on(event: "message" | "close" | "error", callback: (raw?: string) => unknown) {
+    this.handlers.set(event, [...(this.handlers.get(event) || []), callback]);
+    return this;
+  }
+  send(data: unknown, options?: { binary?: boolean }) {
+    this.sendAttempts++;
+    assert.equal(this.readyState, 1, "a disconnected socket must never receive a send attempt");
+    this.sent.push({ data, binary: options?.binary === true });
+  }
+  close(code?: number) {
+    this.closes.push({ code });
+    this.readyState = 3;
+    for (const callback of this.handlers.get("close") || []) callback();
+  }
+  async message(message: unknown) {
+    await Promise.all((this.handlers.get("message") || []).map(callback => callback(JSON.stringify(message))));
+  }
+  errors() { return this.sent.filter(item => !item.binary).map(item => JSON.parse(String(item.data))).filter(message => message.type === "error"); }
+  frames() { return this.sent.filter(item => item.binary); }
+}
+function backendHarness(capture: (attempt: number) => Promise<StreamFrame>, action = async () => streamFrame()) {
+  const timers = new Map<number, { callback: () => unknown; delay: number }>();
+  const subscribers = new Map<string, Set<(event: { tabId: string }) => void>>();
+  const captures: unknown[][] = [], actions: unknown[][] = [];
+  let nextTimer = 0;
+  const context = {
+    captureBrowserFrame: (...args: unknown[]) => { captures.push(args); return capture(captures.length); },
+    performSharedBrowserAction: (...args: unknown[]) => { actions.push(args); return action(); },
+    setBrowserViewport: async () => {}, browserStreamSubscribers: subscribers,
+    setTimeout: (callback: () => unknown, delay: number) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
+    clearTimeout: (id?: number) => { if (id !== undefined) timers.delete(id); }, queueMicrotask,
+  };
+  const connectHandler = new Function(...Object.keys(context), sendFrameDeclaration.getText(serverTree) + ";return (" + connectionCallback.getText(serverTree) + ");")(...Object.values(context));
+  return {
+    timers, subscribers, captures, actions,
+    connect(options: Record<string, unknown> = {}) {
+      const socket = new StreamSocket();
+      const done = connectHandler(socket, {}, { userId: "owner", chatId: "chat" }, { tabId: "browser-1", realtime: false, ...options }) as Promise<void>;
+      return { socket, done };
+    },
+    notify() { for (const callback of subscribers.get("owner:chat") || []) callback({ tabId: "browser-1" }); },
+    async runTimer(delay: number) {
+      const entry = [...timers.entries()].find(([, timer]) => timer.delay === delay);
+      assert.ok(entry, "expected a " + delay + "ms timer");
+      timers.delete(entry[0]);
+      await entry[1].callback();
+      await settleStream();
+    },
+  };
+}
+
+test("action-driven stream silently retries a transient initial capture without another action", async () => {
+  const h = backendHarness(async attempt => {
+    if (attempt === 1) throw new Error("Temporary screenshot failure");
+    return streamFrame();
+  });
+  const { socket, done } = h.connect();
+  await done;
+  assert.equal(socket.readyState, 1);
+  assert.deepEqual(socket.sent, [], "a recoverable first failure must not leave a stale error banner");
+  h.notify(); h.notify();
+  await h.runTimer(45);
+  assert.equal(h.captures.length, 1, "notifications must respect the retry backoff");
+  await h.runTimer(500);
+  assert.equal(socket.frames().length, 1);
+  assert.equal(socket.errors().length, 0);
+  assert.equal(h.captures.length, 2);
+  assert.equal(h.actions.length, 0);
+  assert.equal(h.timers.size, 0);
+  socket.close();
+});
+
+test("repeated initial capture failure reports diagnostics, closes once, and a new connection recovers", async () => {
+  const h = backendHarness(async attempt => {
+    if (attempt <= 2) throw new Error("Playwright Chromium is not installed. Click Install browser");
+    return streamFrame();
+  });
+  const first = h.connect();
+  await first.done;
+  await h.runTimer(500);
+  assert.deepEqual(first.socket.closes, [{ code: 1011 }]);
+  assert.match(first.socket.errors()[0].message, /Chromium is not installed/);
+  assert.equal(h.subscribers.size, 0);
+  assert.equal(h.timers.size, 0, "a failed socket must not retry in a hot loop");
+  const next = h.connect();
+  await next.done;
+  assert.equal(next.socket.frames().length, 1);
+  assert.equal(h.captures.length, 3);
+  assert.deepEqual(h.captures.map(args => args.slice(0, 3)), Array(3).fill(["owner", "chat", "browser-1"]));
+  assert.equal(h.actions.length, 0, "recovery must retain the session and require no browser action");
+  next.socket.close();
+});
+
+for (const completion of ["resolve", "reject"] as const) {
+  test("disconnect during capture ignores late " + completion + " without sending or rejecting", async () => {
+    const capture = deferred<StreamFrame>();
+    const h = backendHarness(() => capture.promise);
+    const { socket, done } = h.connect();
+    assert.equal(h.captures.length, 1);
+    socket.close();
+    if (completion === "resolve") capture.resolve(streamFrame());
+    else capture.reject(new Error("Capture completed after disconnect"));
+    await assert.doesNotReject(done);
+    await settleStream();
+    assert.equal(socket.sendAttempts, 0);
+    assert.equal(h.subscribers.size, 0);
+    assert.equal(h.timers.size, 0);
+  });
+}
+
+test("disconnect during an asynchronous browser action suppresses its metadata response", async () => {
+  const action = deferred<StreamFrame>();
+  const h = backendHarness(async () => streamFrame(), () => action.promise);
+  const { socket, done } = h.connect();
+  await done;
+  const attempts = socket.sendAttempts;
+  const pending = socket.message({ type: "action", action: "hover" });
+  socket.close();
+  action.resolve(streamFrame());
+  await assert.doesNotReject(pending);
+  assert.equal(socket.sendAttempts, attempts);
+});
+
+test("action bursts coalesce into one capture after the in-flight image", async () => {
+  const first = deferred<StreamFrame>(), second = deferred<StreamFrame>();
+  const h = backendHarness(attempt => attempt === 1 ? first.promise : second.promise);
+  const { socket, done } = h.connect();
+  h.notify(); h.notify(); h.notify();
+  assert.equal([...h.timers.values()].filter(timer => timer.delay === 45).length, 1);
+  await h.runTimer(45);
+  h.notify(); h.notify();
+  await h.runTimer(45);
+  assert.equal(h.captures.length, 1);
+  first.resolve(streamFrame());
+  await done;
+  await settleStream();
+  assert.equal(h.captures.length, 2);
+  second.resolve(streamFrame());
+  await settleStream();
+  assert.equal(socket.frames().length, 2);
+  assert.equal(h.captures.length, 2);
+  assert.equal(h.timers.size, 0);
+  socket.close();
+});
+
+test("a hanging first capture closes only its image socket after the startup deadline", async () => {
+  const capture = deferred<StreamFrame>();
+  const h = backendHarness(() => capture.promise);
+  const { socket, done } = h.connect();
+  await h.runTimer(30_000);
+  assert.deepEqual(socket.closes, [{ code: 1011 }]);
+  assert.match(socket.errors()[0].message, /startup timed out/);
+  assert.equal(h.subscribers.size, 0);
+  capture.resolve(streamFrame());
+  await done;
+  assert.equal(socket.frames().length, 0);
+  assert.equal(h.actions.length, 0);
+  assert.equal(h.timers.size, 0);
+});
