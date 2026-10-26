@@ -117,11 +117,11 @@ test("background work yields, is cancellable before and after idle registration,
 
 test("active view integration deduplicates refreshes and memoizes tool transcript preparation", () => {
   const shell = readFileSync(new URL("../components/app-shell.tsx", import.meta.url), "utf8");
-  assert.ok(shell.includes("acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)"));
+  assert.ok(shell.includes("acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged && !metadataChanged)"));
   assert.ok(shell.includes("chatRefreshInFlightRef.current.has(chatId)"));
   assert.ok(shell.includes("chatRefreshInFlightRef.current.delete(chatId)"));
   assert.ok(shell.includes("deriveAssistantView("));
   assert.ok(shell.includes("deriveMessageSources(m, [m.content]"));
   const chips = readFileSync(new URL("../components/tool-call-chip.tsx", import.meta.url), "utf8");
-  assert.ok(chips.includes("}, [tools, includePlans]);"));
+  assert.ok(chips.includes(")), [tools]);"));
 });

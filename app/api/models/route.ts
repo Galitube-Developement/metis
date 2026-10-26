@@ -6,7 +6,6 @@ import {
   modelParametersForModel,
 } from "@/lib/model-params";
 import {
-  findActiveConnection,
   getProviderConnectionSecret,
   listChatProviderConnections,
   listProviderModels,
@@ -78,27 +77,31 @@ export async function GET(req: Request) {
   }
   const userId = await getAuthenticatedUserId(req);
 
-  const cursorConnection = userId ? findActiveConnection(userId, "cursor") : null;
-  let cursorCredential: string | undefined;
-  try {
-    cursorCredential = cursorConnection && userId
-      ? getProviderConnectionSecret(cursorConnection.id, userId)?.secret
-      : undefined;
-  } catch {
-    cursorCredential = undefined;
-  }
-  const apiKey = cursorCredential;
-  let cursorModels: ModelInfo[] = [];
+  const connections = userId
+    ? listChatProviderConnections(userId, false)
+        .filter((connection) => {
+          if (connection.authType === "local" || connection.authType === "vertex_adc") return true;
+          try {
+            return Boolean(getProviderConnectionSecret(connection.id, userId)?.secret);
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => providerAuthPriority(a.authType) - providerAuthPriority(b.authType))
+    : [];
+  const cursorModels: ModelInfo[] = [];
   let cursorSource: "cursor" | "none" = "none";
   let error: string | undefined;
 
-  if (apiKey) {
+  for (const cursorConnection of connections.filter((connection) => connection.providerKey === "cursor")) {
     try {
+      const apiKey = userId ? getProviderConnectionSecret(cursorConnection.id, userId)?.secret : undefined;
+      if (!apiKey) continue;
       const listed = await Cursor.models.list({ apiKey });
       const storedById = cursorConnection
         ? new Map(listProviderModels(cursorConnection.id).map((model) => [model.id, model]))
         : new Map<string, { contextWindow?: number; contextWindowSource?: ModelInfo["contextWindowSource"] }>();
-      cursorModels = listed.map((m) => {
+      cursorModels.push(...listed.map<ModelInfo>((m) => {
         const defaultVariant =
           m.variants?.find((v) => v.isDefault) ?? m.variants?.[0];
         const cursorParams = (m.parameters ?? []).map((p) => ({
@@ -139,7 +142,9 @@ export async function GET(req: Request) {
           parameters,
         });
         return {
-          id: m.id,
+          id: modelKey("cursor", m.id, cursorConnection.id),
+          connectionId: cursorConnection.id,
+          connectionLabel: cursorConnection.label,
           displayName: m.displayName || m.id,
           ...(contextWindow ? { contextWindow } : {}),
           ...(metadata.source ? { contextWindowSource: metadata.source } : {}),
@@ -152,7 +157,7 @@ export async function GET(req: Request) {
           parameters,
           defaultParams,
         };
-      });
+      }));
       cursorSource = "cursor";
       if (cursorConnection) {
         persistDiscoveredModels(
@@ -191,14 +196,6 @@ export async function GET(req: Request) {
     }
   }
 
-  const connections = userId
-    ? listChatProviderConnections(userId, false)
-        .filter((connection) => {
-          if (connection.authType === "local" || connection.authType === "vertex_adc") return true;
-          return Boolean(getProviderConnectionSecret(connection.id, userId)?.secret);
-        })
-        .sort((a, b) => providerAuthPriority(a.authType) - providerAuthPriority(b.authType))
-    : [];
   if (userId) {
     const emptyRefreshes: Array<Promise<unknown>> = [];
     for (const connection of connections) {

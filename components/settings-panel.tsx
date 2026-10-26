@@ -63,6 +63,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { newProviderConnectionIdentity } from "@/lib/provider-connection-draft";
 import type { MemoryItem } from "@/components/memories-panel";
 import { MicrophoneSettings } from "@/components/microphone-settings";
 import { VoiceDictionarySettings } from "@/components/voice-dictionary-settings";
@@ -721,10 +722,11 @@ export function SettingsPanel({
   const [providerConnections, setProviderConnections] = useState<ProviderConnection[]>([]);
   const [providersLoaded, setProvidersLoaded] = useState(false);
   const providerLoadVersionRef = useRef(0);
+  const providerConnectionsRef = useRef<ProviderConnection[]>([]);
   const [providerDraft, setProviderDraft] = useState({
     id: "",
     providerKey: "openai",
-    slug: "openai-main",
+    slug: "",
     label: "OpenAI",
     authType: "api_key",
     baseUrl: "",
@@ -1028,16 +1030,23 @@ export function SettingsPanel({
       };
       if (loadVersion !== providerLoadVersionRef.current) return;
       setProviderDefinitions(data.providers || []);
-      setProviderConnections(data.connections || []);
+      providerConnectionsRef.current = data.connections || [];
+      setProviderConnections(providerConnectionsRef.current);
       const first = data.providers?.[0];
       if (first) {
         setProviderDraft((current) => {
-          if (current.id || data.providers?.some((provider) => provider.key === current.providerKey)) {
-            return current;
+          if (current.id) return current;
+          if (data.providers?.some((provider) => provider.key === current.providerKey)) {
+            return current.slug ? current : {
+              ...current,
+              ...newProviderConnectionIdentity(current.providerKey, providerConnectionsRef.current),
+            };
           }
           return {
             ...current,
             providerKey: first.key,
+            ...newProviderConnectionIdentity(first.key, providerConnectionsRef.current),
+            label: first.name,
             authType: preferredAuthType(first),
             baseUrl: first.defaultBaseUrl || "",
           };
@@ -1141,6 +1150,21 @@ export function SettingsPanel({
     }
   }
 
+  function resetProviderDraft() {
+    setProviderDraft((current) => {
+      const definition = providerDefinitions.find((provider) => provider.key === current.providerKey);
+      return {
+        ...current,
+        ...newProviderConnectionIdentity(current.providerKey, providerConnectionsRef.current),
+        label: definition?.name || current.providerKey,
+        baseUrl: current.authType === "vertex_adc" ? "" : definition?.defaultBaseUrl || "",
+        secret: "",
+        project: "",
+        location: "",
+      };
+    });
+  }
+
   function selectProvider(providerKey: string) {
     const definition = providerDefinitions.find((provider) => provider.key === providerKey);
     setProviderDraft((current) => ({
@@ -1148,7 +1172,7 @@ export function SettingsPanel({
       providerKey,
       authType: definition ? preferredAuthType(definition) : "api_key",
       baseUrl: definition?.defaultBaseUrl || "",
-      slug: current.id ? current.slug : `${providerKey}-main`,
+      ...(current.id ? {} : newProviderConnectionIdentity(providerKey, providerConnectionsRef.current)),
       label: current.id ? current.label : definition?.name || providerKey,
       secret: "",
       project: "",
@@ -1157,7 +1181,6 @@ export function SettingsPanel({
   }
 
   function editProviderConnection(connection: ProviderConnection) {
-    const definition = providerDefinitions.find((provider) => provider.key === connection.providerKey);
     setProviderDraft({
       id: connection.id,
       providerKey: connection.providerKey,
@@ -1221,18 +1244,7 @@ export function SettingsPanel({
       if (!res.ok) throw new Error(data.error || "Failed to save provider connection");
       await loadProviders();
       onModelsChanged?.();
-      const definition = providerDefinitions.find((provider) => provider.key === providerDraft.providerKey);
-      setProviderDraft((current) => ({
-        id: "",
-        providerKey: current.providerKey,
-        slug: `${current.providerKey}-main`,
-        label: definition?.name || current.providerKey,
-        authType: current.authType,
-        baseUrl: current.authType === "vertex_adc" ? "" : definition?.defaultBaseUrl || "",
-        secret: "",
-        project: "",
-        location: "",
-      }));
+      resetProviderDraft();
       toast.success("Provider connection saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save provider connection");
@@ -1252,6 +1264,7 @@ export function SettingsPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: providerDraft.id,
           providerKey: providerDraft.providerKey,
           slug: providerDraft.slug.trim(),
           label: providerDraft.label.trim(),
@@ -1287,17 +1300,10 @@ export function SettingsPanel({
           if (!popup) toast.info("Open the OAuth link shown below to continue.");
         }
         if (["completed", "error", "cancelled"].includes(nextFlow.status)) {
+          await loadProviders();
+          onModelsChanged?.();
+          resetProviderDraft();
           if (nextFlow.status === "completed") {
-            await loadProviders();
-            onModelsChanged?.();
-            setProviderDraft((current) => ({
-              ...current,
-              id: "",
-              slug: `${current.providerKey}-main`,
-              secret: "",
-              project: "",
-              location: "",
-            }));
             toast.success("OAuth connection completed");
           } else if (nextFlow.error) {
             toast.error(nextFlow.error);
@@ -1382,13 +1388,13 @@ export function SettingsPanel({
     // providers request must not be able to resurrect a connection that was
     // already deleted.
     providerLoadVersionRef.current += 1;
-    setProviderConnections((current) => current.filter((item) => item.id !== connection.id));
+    providerConnectionsRef.current = providerConnectionsRef.current.filter((item) => item.id !== connection.id);
+    setProviderConnections(providerConnectionsRef.current);
     if (providerDraft.id === connection.id) {
       const definition = providerDefinitions.find((provider) => provider.key === connection.providerKey);
       setProviderDraft((current) => ({
         ...current,
-        id: "",
-        slug: `${connection.providerKey}-main`,
+        ...newProviderConnectionIdentity(connection.providerKey, providerConnectionsRef.current),
         label: definition?.name || connection.providerKey,
         authType: definition ? preferredAuthType(definition) : current.authType,
         baseUrl: definition?.defaultBaseUrl || "",
@@ -1659,13 +1665,8 @@ export function SettingsPanel({
                         type="button"
                         size="xs"
                         variant="ghost"
-                        onClick={() => setProviderDraft((current) => ({
-                          ...current,
-                          id: "",
-                          slug: `${current.providerKey}-main`,
-                          label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
-                          secret: "",
-                        }))}
+                        onClick={resetProviderDraft}
+                        disabled={providerBusy || !providersLoaded}
                       >
                         New connection instead
                       </Button>
@@ -1792,13 +1793,8 @@ export function SettingsPanel({
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={() => setProviderDraft((current) => ({
-                      ...current,
-                      id: "",
-                      slug: `${current.providerKey}-main`,
-                      label: providerDefinitions.find((provider) => provider.key === current.providerKey)?.name || current.label,
-                      secret: "",
-                    }))}
+                    onClick={resetProviderDraft}
+                    disabled={providerBusy || !providersLoaded}
                   >
                     Clear
                   </Button>

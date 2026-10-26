@@ -8,7 +8,7 @@ const source = ts.createSourceFile("app-shell.tsx", readFileSync("components/app
 const callbacks = new Map<string, string>();
 function visit(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
-    ["loadChat", "persistActiveSnapshot"].includes(node.name.text) &&
+    ["loadChat", "persistActiveSnapshot", "refreshActiveChatFromServer"].includes(node.name.text) &&
     node.initializer && ts.isCallExpression(node.initializer)) {
     callbacks.set(node.name.text, node.initializer.arguments[0].getText(source));
   }
@@ -79,10 +79,51 @@ test("an outgoing disk-cache read cannot resume loading over a newer chat select
   assert.equal(activeChatIdRef.current, "destination");
   reads.get("outgoing")!(null);
   assert.equal(await outgoing, false);
-  assert.deepEqual(selected, [], "Old cache continuation must not reset destination state");
+  assert.deepEqual(selected, ["outgoing", "destination"], "Navigation selects immediately; the old cache continuation must not select again");
   activeChatIdRef.current = "newest";
   chatLoadRequestRef.current++;
   reads.get("destination")!(null);
   assert.equal(await destination, false);
-  assert.deepEqual(selected, []);
+  assert.deepEqual(selected, ["outgoing", "destination"], "The destination cache continuation must not override the newest selection");
+});
+
+test("fresh ETag applies persisted queue and model even when activity and updatedAt are unchanged", async () => {
+  const selected: string[] = [], queues: unknown[] = [], checks: boolean[] = [];
+  const etags = { current: new Map([["chat", "old-etag"]]) };
+  const context: Record<string, unknown> = {
+    document: { visibilityState: "visible" },
+    chatRefreshInFlightRef: { current: new Set() },
+    chatRefreshEtagRef: etags,
+    activeChatIdRef: { current: "chat" },
+    CHAT_MESSAGE_LOAD_LIMIT: 10,
+    fetchReadWithRetry: async () => ({
+      status: 200, ok: true, headers: { get: () => "new-etag" },
+      json: async () => ({ chat: { updatedAt: "unchanged", modelId: "saved-model", modelParams: [],
+        messages: [], queuedMessages: [{ id: "saved-follow-up", text: "Durable queue" }] } }),
+    }),
+    stateRef: { current: { messages: [] } },
+    chatProgramEventsChanged: () => false,
+    acceptServerSnapshot: (_id: string, _version: string, skipUnchanged: boolean) => {
+      checks.push(skipUnchanged); return !skipUnchanged;
+    },
+    runtimeRef: { current: new Map() }, modelParamsByModel: {},
+    setModelId: (id: string) => selected.push(id),
+    setModelParams: () => {},
+    renderedActivityRef: { current: new Map() },
+    mapApiMessages: (messages: unknown) => messages,
+    mergeMessages: (_before: unknown, next: unknown) => next,
+    applyServerQueuedMessagesRef: { current: (_id: string, queue: unknown) => queues.push(queue) },
+    localStorage: { setItem: () => {} }, MODE_STORAGE_KEY: "mode", RUNTIME_MODE_STORAGE_KEY: "runtime",
+    normalizeRuntimeMode: () => "default", workspacesFromChat: () => [],
+    pendingQuestionIdRef: { current: null }, notifiedQuestionRef: { current: null },
+  };
+  for (const match of callbacks.get("refreshActiveChatFromServer")!.matchAll(/\b(set[A-Z]\w*)\(/g)) {
+    if (!(match[1] in context)) context[match[1]] = () => {};
+  }
+  const refresh = callback("refreshActiveChatFromServer", context) as (id: string) => Promise<void>;
+  await refresh("chat");
+  assert.deepEqual(checks, [false], "Metadata revision must bypass the unchanged activity timestamp");
+  assert.deepEqual(selected, ["saved-model"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(queues)), [[{ id: "saved-follow-up", text: "Durable queue" }]]);
+  assert.equal(etags.current.get("chat"), "new-etag");
 });

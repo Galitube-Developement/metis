@@ -24,6 +24,14 @@ export function isModelAllowed(userId: string | undefined, modelId: string) {
   const parsed = parseModelKey(modelId);
   if (!parsed.modelId.trim()) return false;
 
+  // Explicit Cursor scopes must never fall back to another account, even
+  // when the user has wildcard model permission. Raw legacy IDs retain their
+  // existing permission behavior; the runner resolves their active connection.
+  if (parsed.providerKey === "cursor" && parsed.connectionId) {
+    const connection = getProviderConnection(parsed.connectionId, userId);
+    if (!connection?.enabled || connection.providerKey !== "cursor") return false;
+  }
+
   // Wildcard permission still requires an enabled provider connection.
   // Alias-match or refresh-on-miss so a stale provider_models cache does not
   // reject newly discovered IDs.
@@ -46,9 +54,9 @@ export function isModelAllowed(userId: string | undefined, modelId: string) {
   const row = getDatabase().prepare(
     `SELECT 1
      FROM user_model_permissions
-     WHERE user_id = ? AND (model_id = ? OR model_id = ?)
+     WHERE user_id = ? AND (model_id = ? OR model_id = ? OR model_id = ?)
      LIMIT 1`,
-  ).get(userId, modelId, ALL_MODELS);
+  ).get(userId, modelId, ALL_MODELS, parsed.providerKey === "cursor" ? parsed.modelId : modelId);
   if (row) return true;
 
   if (parsed.providerKey === "cursor") return false;
@@ -65,5 +73,9 @@ export function filterAllowedModels<T extends { id: string }>(userId: string | u
   ).all(userId) as Array<{ modelId: string }>;
   const allowed = new Set(rows.map((row) => row.modelId));
   if (allowed.has(ALL_MODELS)) return models;
-  return models.filter((model) => allowed.has(model.id));
+  return models.filter((model) => {
+    if (allowed.has(model.id)) return true;
+    const parsed = parseModelKey(model.id);
+    return parsed.providerKey === "cursor" && allowed.has(parsed.modelId);
+  });
 }

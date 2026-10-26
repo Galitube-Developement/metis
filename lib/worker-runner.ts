@@ -35,6 +35,7 @@ import { agentRulesPrompt } from "@/lib/agent-rules";
 import type { AgentJob } from "@/lib/jobs";
 import {
   findActiveConnection,
+  getProviderConnection,
   getProviderConnectionSecret,
 } from "@/lib/provider-connections";
 import { parseModelKey } from "@/lib/providers/types";
@@ -591,9 +592,17 @@ export async function runQueuedJob(job: AgentJob) {
     await runAlternativeProviderJob(job, chat);
     return;
   }
+  // Resolve on every job so account edits are visible without a credential cache.
+  // A supplied connection ID is authoritative and must never fall back.
   const cursorConnection = job.userId
-    ? findActiveConnection(job.userId, "cursor")
+    ? modelReference.connectionId
+      ? getProviderConnection(modelReference.connectionId, job.userId)
+      : findActiveConnection(job.userId, "cursor")
     : null;
+  if (!cursorConnection?.enabled || cursorConnection.providerKey !== "cursor") {
+    markJobError(job, "No enabled Cursor SDK connection is configured for this user.");
+    return;
+  }
   const cursorCredential = cursorConnection && job.userId
     ? getProviderConnectionSecret(cursorConnection.id, job.userId)
     : null;
@@ -806,17 +815,17 @@ export async function runQueuedJob(job: AgentJob) {
       job.modelParams?.length ? job.modelParams : chat.modelParams,
     );
     const model = {
-      id: requestedModelId,
+      id: modelReference.modelId,
       ...(modelParams?.length
         ? { params: providerNativeParams(modelParams, { includeContext: true }) }
         : {}),
     };
 
     const cursorModel = cursorCredential
-      ? providerModelsForConnection(cursorCredential).find((candidate) => candidate.id === requestedModelId)
+      ? providerModelsForConnection(cursorCredential).find((candidate) => candidate.id === modelReference.modelId)
       : undefined;
     const contextWindow = contextWindowForSelection(
-      cursorModel || { id: requestedModelId, providerId: "cursor" },
+      cursorModel || { id: modelReference.modelId, providerId: "cursor" },
       modelParams,
     );
     const contextMode = contextModeOf(modelParams);
@@ -825,7 +834,11 @@ export async function runQueuedJob(job: AgentJob) {
     // Native Cursor owns its conversation. Metis stores a provider-specific
     // last-known-good binding so switching providers does not destroy it.
     const cursorBinding = getProviderSessionBinding(chat, "cursor-agent", cursorConnection.id);
-    const legacyCursorAgentId = job.agentId || chat.agentId || undefined;
+    // Unscoped legacy sessions have no account identity. Never resume them
+    // under an explicitly selected account; only that account's binding is safe.
+    const legacyCursorAgentId = !modelReference.connectionId
+      ? job.agentId || chat.agentId || undefined
+      : undefined;
     const nativeAgentId = cursorBinding?.lastKnownGoodCursor || legacyCursorAgentId;
     let nativeResumed = false;
     let recoveryBootstrapRecap: string | null = null;

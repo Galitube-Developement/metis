@@ -1,6 +1,7 @@
 import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
 import {
   getProviderConnection,
+  listProviderConnections,
   upsertProviderConnection,
 } from "@/lib/provider-connections";
 
@@ -23,9 +24,19 @@ export async function POST(req: Request) {
   if (!apiKey) return Response.json({ error: "API key is required." }, { status: 400 });
   const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : "";
   try {
+    // Voice settings replace their dedicated credential explicitly; ordinary
+    // provider creation no longer identifies an account by its slug.
+    const existing = listProviderConnections(ownerId).find(
+      (connection) => (connection.slug === `voice-${provider}`
+        || (connection.slug.startsWith(`voice-${provider}-`)
+          && /^\d+$/.test(connection.slug.slice(`voice-${provider}-`.length))))
+        && connection.providerKey === "openai"
+        && connection.config.purpose === "voice",
+    );
     const saved = upsertProviderConnection(ownerId, {
+      ...(existing ? { id: existing.id } : {}),
       providerKey: "openai",
-      slug: `voice-${provider}`,
+      slug: existing?.slug ?? `voice-${provider}`,
       label: provider === "custom" ? "Voice custom endpoint" : "Voice OpenAI",
       authType: "api_key",
       ...(endpoint ? { baseUrl: endpoint } : {}),

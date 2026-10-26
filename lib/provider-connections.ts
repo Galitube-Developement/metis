@@ -237,11 +237,24 @@ export function upsertProviderConnection(ownerId: string, input: ProviderConnect
   const validated = validateInput(input);
   return transaction(() => {
     const db = getDatabase();
-    const existing = input.id ? getRow(input.id, ownerId) : db.prepare(
-      "SELECT id, owner_id, provider_key, slug, label, auth_type, base_url, config, secret_blob, enabled, last_checked_at, last_error, created_at, updated_at FROM provider_connections WHERE owner_id = ? AND slug = ?",
-    ).get(ownerId, validated.slug) as ConnectionRow | undefined;
+    // Only an explicit, owned ID identifies an update. Slugs and labels are
+    // editable metadata, never an account identity.
+    const existing = input.id !== undefined ? getRow(input.id, ownerId) : undefined;
+    if (input.id !== undefined && !existing) {
+      throw new Error("Provider connection not found.");
+    }
+    let slug = validated.slug;
+    if (!existing) {
+      const slugExists = db.prepare(
+        "SELECT 1 FROM provider_connections WHERE owner_id = ? AND slug = ?",
+      );
+      for (let suffix = 2; slugExists.get(ownerId, slug); suffix++) {
+        const tail = `-${suffix}`;
+        slug = validated.slug.slice(0, 64 - tail.length) + tail;
+      }
+    }
     const now = new Date().toISOString();
-    const id = existing?.id || input.id || randomUUID();
+    const id = existing?.id || randomUUID();
     const secretBlob =
       input.clearSecret
         ? null
@@ -264,12 +277,13 @@ export function upsertProviderConnection(ownerId: string, input: ProviderConnect
          enabled = excluded.enabled,
          last_checked_at = NULL,
          last_error = NULL,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at
+       WHERE provider_connections.owner_id = excluded.owner_id`,
     ).run(
       id,
       ownerId,
       input.providerKey,
-      validated.slug,
+      slug,
       validated.label,
       input.authType,
       validated.baseUrl ?? null,

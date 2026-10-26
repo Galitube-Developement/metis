@@ -9,6 +9,7 @@ import { DEEP_RESEARCH_MODE_ID } from "@/lib/deep-research";
 import { WorkspaceDesktopsPanel } from "@/components/workspace-desktops-panel";
 import { WorkspaceExportMenu } from "@/components/workspace-export-menu";
 import { createClientId } from "@/lib/client-id";
+import { modelAccountGroups, modelAccountKey, modelMatchesAccount, type ModelAccountGroup } from "@/lib/model-account-groups";
 import { notifyClientError } from "@/lib/client-error-notifications";
 import { useNotificationInbox } from "@/components/account/use-notification-inbox";
 import { AccountMenu, useAccountProfile } from "@/components/account/account-menu";
@@ -2293,6 +2294,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const draftInputLoadedRef = useRef(false);
   const notifiedPlanRef = useRef<Set<string>>(new Set());
   const swipeRef = useRef<{ x: number; y: number; ignored: boolean } | null>(null);
+  const modelSelectionRequestRef = useRef<{
+    version: number;
+    chatId: string | null;
+    chatVersion: number;
+    pending: boolean;
+    confirmed: { modelId: string; modelParams: ModelParamSelection[] };
+  } | null>(null);
   const chatLoadRequestRef = useRef(0);
   const chatLoadAbortRef = useRef<AbortController | null>(null);
   const recoveryFingerprintRef = useRef<Map<string, string>>(new Map());
@@ -3864,7 +3872,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
           Object.entries(settings.lastModelByProvider || {}).filter(([providerId, rememberedModelId]) => {
             if (!providerId || !rememberedModelId) return false;
             const parsed = parseModelKey(rememberedModelId);
-            return parsed.providerKey === providerId;
+            return parsed.providerKey === providerId || modelAccountKey({ id: rememberedModelId }) === providerId;
           }),
         );
         setLastModelByProvider((current) => ({
@@ -4834,7 +4842,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     const nextParams = rememberedParamsForModel(nextId);
     const nextMap = { ...modelParamsByModel, [nextId]: nextParams };
     const providerId = parseModelKey(nextId).providerKey;
-    const nextLastModelByProvider = { ...lastModelByProvider, [providerId]: nextId };
+    const parsedAccount = parseModelKey(nextId);
+    const accountKey = parsedAccount.connectionId ? providerId + ":" + parsedAccount.connectionId : providerId;
+    const nextLastModelByProvider = { ...lastModelByProvider, [providerId]: nextId, [accountKey]: nextId };
     setLastModelByProvider(nextLastModelByProvider);
     setDefaultModelId(nextId);
     setDefaultModelParams(nextParams);
@@ -4885,6 +4895,27 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   async function selectModel(nextId: string) {
     if (projectModel) return;
     if (!nextId || nextId === modelId) return;
+    const chatId = activeChatIdRef.current;
+    const chatVersion = chatLoadRequestRef.current;
+    const previous = modelSelectionRequestRef.current;
+    const request = {
+      version: (previous?.version ?? 0) + 1,
+      chatId,
+      chatVersion,
+      pending: true,
+      confirmed: previous?.pending && previous.chatId === chatId && previous.chatVersion === chatVersion
+        ? previous.confirmed
+        : { modelId, modelParams },
+    };
+    modelSelectionRequestRef.current = request;
+    const isCurrent = () => modelSelectionRequestRef.current?.version === request.version
+      && activeChatIdRef.current === chatId && chatLoadRequestRef.current === chatVersion;
+    const applySelection = (id: string, params: ModelParamSelection[]) => {
+      setModelId(id);
+      setModelParams(params);
+      localStorage.setItem(MODEL_STORAGE_KEY, id);
+      localStorage.setItem(PARAMS_STORAGE_KEY, JSON.stringify(params));
+    };
     const nextMap = { ...modelParamsByModel };
     if (modelId) nextMap[modelId] = modelParams;
     const nextParams = Object.prototype.hasOwnProperty.call(nextMap, nextId)
@@ -4892,27 +4923,55 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       : models.find((model) => model.id === nextId)?.defaultParams ?? [];
     nextMap[nextId] = nextParams;
     const providerId = parseModelKey(nextId).providerKey;
-    const nextLastModelByProvider = { ...lastModelByProvider, [providerId]: nextId };
-    setModelParamsByModel(nextMap);
-    setLastModelByProvider(nextLastModelByProvider);
-    void fetch("/api/preferences", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        modelParamsByModel: nextMap,
-        lastModelByProvider: nextLastModelByProvider,
-      }),
-    });
-    setModelId(nextId);
-    localStorage.setItem(MODEL_STORAGE_KEY, nextId);
-    setModelParams(nextParams);
-    localStorage.setItem(PARAMS_STORAGE_KEY, JSON.stringify(nextParams));
-    if (activeChatId) {
-      await fetch(`/api/chats/${activeChatId}`, {
+    const parsedAccount = parseModelKey(nextId);
+    const accountKey = parsedAccount.connectionId ? providerId + ":" + parsedAccount.connectionId : providerId;
+    const nextLastModelByProvider = { ...lastModelByProvider, [providerId]: nextId, [accountKey]: nextId };
+    applySelection(nextId, nextParams);
+    try {
+      let confirmedId = nextId;
+      let confirmedParams = nextParams;
+      if (chatId) {
+        const response = await fetch(`/api/chats/${chatId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId: nextId, modelParams: nextParams }),
+        });
+        if (!response.ok) throw new Error("Could not save model selection");
+        const data = await response.json();
+        if (!isCurrent()) return;
+        if (typeof data.chat?.modelId !== "string" || !data.chat.modelId || !Array.isArray(data.chat.modelParams)) {
+          throw new Error("Invalid model selection response");
+        }
+        confirmedId = data.chat.modelId;
+        confirmedParams = data.chat.modelParams;
+      }
+      if (!isCurrent()) return;
+      request.confirmed = { modelId: confirmedId, modelParams: confirmedParams };
+      request.pending = false;
+      applySelection(confirmedId, confirmedParams);
+      nextMap[confirmedId] = confirmedParams;
+      const confirmedAccount = parseModelKey(confirmedId);
+      nextLastModelByProvider[confirmedAccount.providerKey] = confirmedId;
+      nextLastModelByProvider[confirmedAccount.connectionId ? confirmedAccount.providerKey + ":" + confirmedAccount.connectionId : confirmedAccount.providerKey] = confirmedId;
+      setModelParamsByModel(nextMap);
+      setLastModelByProvider(nextLastModelByProvider);
+      void fetch("/api/preferences", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelId: nextId, modelParams: nextParams }),
+        body: JSON.stringify({
+          modelParamsByModel: nextMap,
+          lastModelByProvider: nextLastModelByProvider,
+        }),
+      }).then((response) => {
+        if (!response.ok) throw new Error("Could not save model preferences");
+      }).catch(() => {
+        if (isCurrent()) toast.error("Could not save model preferences");
       });
+    } catch (error) {
+      if (!isCurrent()) return;
+      request.pending = false;
+      applySelection(request.confirmed.modelId, request.confirmed.modelParams);
+      toast.error(error instanceof Error ? error.message : "Could not save model selection");
     }
   }
 
@@ -5018,7 +5077,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         if(etag){chatRefreshEtagRef.current.set(chatId,etag);if(chatRefreshEtagRef.current.size>32)chatRefreshEtagRef.current.delete(chatRefreshEtagRef.current.keys().next().value!);}
         if (activeChatIdRef.current !== chatId) return;
         const activityChanged = chatProgramEventsChanged(stateRef.current.messages, data.chat.messages);
-        if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged)) return;
+        // Queue/model/session writes deliberately keep the sidebar timestamp.
+        // A new ETag still represents a new durable snapshot of those fields.
+        const metadataChanged = Boolean(etag && etag !== previousEtag);
+        if (!acceptServerSnapshot(chatId, data.chat.updatedAt, !activityChanged && !metadataChanged)) return;
         const liveRun = runtimeRef.current.has(chatId);
         if (data.chat.modelId && !liveRun) {
           setModelId(data.chat.modelId);
@@ -5669,7 +5731,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   ]);
 
   useEffect(() => {
-    if (!activeChatId || isDraft || loadingChatId) return;
+    if (!activeChatId || isDraft || loadingChatId || !queuedMessages.length) return;
     const timer = window.setTimeout(() => persistQueuedFollowUps(activeChatId, queuedMessages), 400);
     return () => window.clearTimeout(timer);
   }, [activeChatId, isDraft, loadingChatId, queuedMessages]);
@@ -6741,6 +6803,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       .map((message) => message.id));
     const removed = removedIdsFor(chatId);
     const payload = items.filter((item) => !consumed.has(item.id) && !removed.has(item.id));
+    // Queue removals use DELETE or dispatch; an empty autosave has no work.
+    if (!payload.length) return;
     void fetch(`/api/chats/${chatId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -6755,6 +6819,10 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         })),
       }),
       keepalive: true,
+    }).then((response) => {
+      if (!response.ok) throw new Error("Could not save queued messages. Keep this chat open and try again.");
+    }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Could not save queued messages.");
     });
   }
 
@@ -8157,21 +8225,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   }, [activeChatId, queuedMessages, persistActiveSnapshot]);
 
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
-  const availableProviderIds = new Set([
-    ...models.map((model) => model.providerId || "cursor"),
-    ...configuredModelProviders.map((provider) => provider.providerKey),
-  ]);
-  const availableProviders = [...availableProviderIds].map((providerId) => {
-    const model = models.find((entry) => (entry.providerId || "cursor") === providerId);
-    const configured = configuredModelProviders.find((provider) => provider.providerKey === providerId);
-    return {
-      value: providerId,
-      label: model?.providerName || configured?.label || (providerId === "codex" ? "Codex" : providerId),
-      connectionId: model?.connectionId || configured?.id,
-    };
-  });
+  const availableProviders = modelAccountGroups(models, configuredModelProviders);
   const selectedKey = parseModelKey(modelId);
-  const selectedProvider = availableProviders.find((provider) => provider.value === selectedKey.providerKey);
+  const selectedProvider = availableProviders.find((provider) => provider.value === modelAccountKey({ id: modelId }));
   const selectedConnection = selectedKey.connectionId
     ? configuredModelProviders.find((provider) => provider.id === selectedKey.connectionId)
     : undefined;
@@ -8189,6 +8245,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         contextWindow: contextWindowForModel({ id: selectedKey.modelId || modelId, displayName }),
       } satisfies ModelInfo;
     })();
+  const selectedModelLabel = modelDisplayName(selectedModel) + (selectedModel.connectionLabel ? " · " + selectedModel.connectionLabel : "");
   const measuredRuns = [...messages]
     .reverse()
     .filter((message) =>
@@ -8265,7 +8322,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
   const projectModelLock = projectModel ? projectModelLockMessage(modeProject?.name || "this project") : undefined;
   const providerQueryMatch = normalizedModelSearch.match(/^([a-z0-9_-]+):(.*)$/);
   const providerQuery = providerQueryMatch &&
-    availableProviders.some((provider) => provider.value === providerQueryMatch[1])
+    availableProviders.some((provider) => provider.providerId === providerQueryMatch[1])
     ? providerQueryMatch[1]
     : null;
   const effectiveProviderFilter = providerQuery || modelProviderFilter;
@@ -8274,9 +8331,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     : normalizedModelSearch;
   const providerModels = effectiveProviderFilter === "all"
     ? models
-    : models.filter((model) => (model.providerId || "cursor") === effectiveProviderFilter);
+    : models.filter((model) => modelMatchesAccount(model, effectiveProviderFilter));
   const matchingModels = providerModels.filter((model) =>
-    `${model.displayName} ${model.id} ${model.description || ""} ${model.providerName || ""}`
+    `${model.displayName} ${model.id} ${model.description || ""} ${model.providerName || ""} ${model.connectionLabel || ""}`
       .toLowerCase()
       .includes(modelSearchTerm),
   );
@@ -8284,19 +8341,20 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
     .filter((key) => !models.some((model) => model.id === key))
     .map((key) => {
       const parsed = parseModelKey(key);
-      const provider = availableProviders.find((entry) => entry.value === parsed.providerKey);
+      const provider = availableProviders.find((entry) => entry.value === modelAccountKey({ id: key }));
       return {
         id: key,
         displayName: parsed.modelId,
         providerId: parsed.providerKey,
         providerName: provider?.label || parsed.providerKey,
         connectionId: parsed.connectionId,
+        connectionLabel: provider?.label,
         source: "discovered" as const,
         contextWindow: contextWindowForModel({ id: parsed.modelId, displayName: parsed.modelId }),
       } satisfies ModelInfo;
     })
     .filter((model) =>
-      (effectiveProviderFilter === "all" || model.providerId === effectiveProviderFilter) &&
+      modelMatchesAccount(model, effectiveProviderFilter) &&
       `${model.displayName} ${model.id} ${model.providerName || ""}`
         .toLowerCase()
         .includes(modelSearchTerm),
@@ -8308,28 +8366,27 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
       ]
     : [];
   const featuredIds = new Set(favoriteEntries.map((entry) => entry.id));
-  const groupedModels = new Map<string, { label: string; models: ModelInfo[] }>();
+  const groupedModels = new Map<string, ModelAccountGroup & { models: ModelInfo[] }>();
   if (!modelSearchTerm || effectiveProviderFilter !== "all") {
     for (const provider of availableProviders) {
-      if (effectiveProviderFilter !== "all" && provider.value !== effectiveProviderFilter) continue;
-      groupedModels.set(provider.value, { label: provider.label, models: [] });
+      if (effectiveProviderFilter !== "all" && provider.value !== effectiveProviderFilter && provider.providerId !== effectiveProviderFilter) continue;
+      groupedModels.set(provider.value, { ...provider, models: [] });
     }
   }
   for (const model of matchingModels.filter((entry) => !featuredIds.has(entry.id))) {
-    const providerId = model.providerId || "cursor";
-    const group = groupedModels.get(providerId);
+    const accountKey = modelAccountKey(model);
+    const group = groupedModels.get(accountKey);
     if (group) {
       group.models.push(model);
     } else {
-      groupedModels.set(providerId, {
-        label: model.providerName || providerId,
-        models: [model],
-      });
+      const account = availableProviders.find(provider => provider.value === accountKey)!;
+      groupedModels.set(accountKey, { ...account, models: [model] });
     }
   }
 
   function useCustomModel(providerId: string, connectionId?: string) {
-    const customId = customModelInputs[providerId]?.trim();
+    const accountKey = connectionId ? providerId + ":" + connectionId : providerId;
+    const customId = customModelInputs[accountKey]?.trim();
     if (!customId) return;
     const nextId = modelKey(providerId, customId, connectionId);
     void selectModel(nextId);
@@ -8359,9 +8416,9 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
         <ProviderLogo providerId={model.providerId} />
         <span className="min-w-0 flex-1 truncate">
           {modelDisplayName(model)}
-          {model.providerName ? (
+          {model.connectionLabel || model.providerName ? (
             <span className="ml-1 text-[10px] text-muted-foreground">
-              · {model.providerName}
+              · {model.connectionLabel || model.providerName}
             </span>
           ) : null}
         </span>
@@ -8892,12 +8949,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 </div>
                 <div className="flex gap-1 overflow-x-auto border-b border-border/60 px-1 pb-1">
                   {[
-                    { value: "all", label: "All" },
+                    { value: "all", providerId: "", label: "All" },
                     ...availableProviders,
                   ].map((provider) => (
                     <button
                       key={provider.value}
                       type="button"
+                      aria-pressed={effectiveProviderFilter === provider.value}
                       className={cn(
                         "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] transition-colors",
                         effectiveProviderFilter === provider.value
@@ -8912,14 +8970,14 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         if (
                           rememberedModelId &&
                           rememberedModelId !== modelId &&
-                          parseModelKey(rememberedModelId).providerKey === provider.value &&
+                          modelMatchesAccount({ id: rememberedModelId }, provider.value) &&
                           models.some((model) => model.id === rememberedModelId)
                         ) {
                           void selectModel(rememberedModelId);
                         }
                       }}
                     >
-                      {provider.value === "all" ? null : <ProviderLogo providerId={provider.value} className="size-3" />}
+                      {provider.value === "all" ? null : <ProviderLogo providerId={provider.providerId} className="size-3" />}
                       {provider.label}
                     </button>
                   ))}
@@ -8934,15 +8992,13 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       {favoriteEntries.map(renderModelOption)}
                     </div>
                   ) : null}
-                  {[...groupedModels.entries()].map(([providerId, group]) => {
-                    const connectionId =
-                      group.models.find((model) => model.connectionId)?.connectionId ||
-                      availableProviders.find((provider) => provider.value === providerId)?.connectionId;
-                    const pinnedCustom = customPinnedEntries.find((model) => model.providerId === providerId);
+                  {[...groupedModels.entries()].map(([accountKey, group]) => {
+                    const { providerId, connectionId } = group;
+                    const pinnedCustom = customPinnedEntries.find((model) => modelAccountKey(model) === accountKey);
                     const customValue =
-                      customModelInputs[providerId] ||
+                      customModelInputs[accountKey] ||
                       pinnedCustom?.displayName ||
-                      (selectedKey.providerKey === providerId && !models.some((model) => model.id === modelId)
+                      (modelAccountKey({ id: modelId }) === accountKey && !models.some((model) => model.id === modelId)
                         ? selectedKey.modelId
                         : "");
                     const customKey = customValue.trim()
@@ -8950,7 +9006,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       : "";
                     const customPinned = customKey ? favoriteModelKeys.includes(customKey) : false;
                     return (
-                      <div key={providerId}>
+                      <div key={accountKey}>
                         <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           <ProviderLogo providerId={providerId} className="size-3" />
                           {group.label}
@@ -8965,7 +9021,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                               onChange={(event) =>
                                 setCustomModelInputs((current) => ({
                                   ...current,
-                                  [providerId]: event.target.value,
+                                  [accountKey]: event.target.value,
                                 }))
                               }
                               onKeyDown={(event) => {
@@ -9510,8 +9566,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               </DropdownMenuContent>
             </DropdownMenu>
             {projectModelLock ? <ProjectModelLock message={projectModelLock} className="hidden min-w-0 md:inline-flex">
-              <Button type="button" variant="ghost" size="sm" disabled aria-label={`Model: ${modelDisplayName(selectedModel)}`} className="h-7 min-w-0 max-w-64 gap-1.5 px-1.5 text-xs">
-                <ProviderLogo providerId={selectedModel.providerId}/><span className="truncate">{modelDisplayName(selectedModel)} {selectedAttrs}</span>
+              <Button type="button" variant="ghost" size="sm" disabled aria-label={`Model: ${selectedModelLabel}`} className="h-7 min-w-0 max-w-64 gap-1.5 px-1.5 text-xs">
+                <ProviderLogo providerId={selectedModel.providerId}/><span className="truncate">{selectedModelLabel} {selectedAttrs}</span>
               </Button>
             </ProjectModelLock> : (
             <DropdownMenu
@@ -9521,7 +9577,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                 if (!open) return;
                 setModelSearch("");
                 setModelSearchOpen(false);
-                setModelProviderFilter(selectedKey.providerKey);
+                setModelProviderFilter(modelAccountKey({ id: modelId }));
               }}
             >
               <DropdownMenuTrigger asChild>
@@ -9530,11 +9586,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                   variant="ghost"
                   size="sm"
                   className="hidden h-7 min-w-0 max-w-[min(100vw-8rem,28rem)] flex-none justify-center gap-1.5 rounded-md px-1.5 text-xs font-normal text-foreground/90 hover:bg-muted/25 hover:text-foreground md:inline-flex"
-                  title={`Model: ${modelDisplayName(selectedModel)}`}
+                  title={`Model: ${selectedModelLabel}`}
                 >
                   {modelId ? <ProviderLogo providerId={selectedModel.providerId} /> : null}
                   <span className="min-w-0 truncate">
-                    <span className="text-foreground">{modelDisplayName(selectedModel)}</span>
+                    <span className="text-foreground">{selectedModelLabel}</span>
                     {selectedAttrs ? (
                       <span className="hidden text-muted-foreground md:inline">{" "}{selectedAttrs}</span>
                     ) : null}
@@ -10369,8 +10425,8 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
               <div className="absolute inset-y-0 left-14 right-[6.75rem] z-10 flex items-center justify-center md:hidden">
                 {modelsLoaded ? (
                   projectModelLock ? <ProjectModelLock message={projectModelLock} className="min-w-0">
-                    <Button type="button" variant="ghost" disabled aria-label={`Model: ${modelDisplayName(selectedModel)}`} className="h-11 max-w-[38vw] gap-1.5 px-2">
-                      <ProviderLogo providerId={selectedModel.providerId}/><span className="truncate">{modelDisplayName(selectedModel)}</span>
+                    <Button type="button" variant="ghost" disabled aria-label={`Model: ${selectedModelLabel}`} className="h-11 max-w-[38vw] gap-1.5 px-2">
+                      <ProviderLogo providerId={selectedModel.providerId}/><span className="truncate">{selectedModelLabel}</span>
                     </Button>
                   </ProjectModelLock> : (
                   <DropdownMenu
@@ -10380,7 +10436,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                       if (!open) return;
                       setModelSearch("");
                       setModelSearchOpen(false);
-                      setModelProviderFilter(selectedKey.providerKey);
+                      setModelProviderFilter(modelAccountKey({ id: modelId }));
                     }}
                   >
                     <DropdownMenuTrigger asChild>
@@ -10389,11 +10445,11 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                         variant="ghost"
                         size="sm"
                         className="mx-auto flex h-11 w-[min(38vw,18rem)] min-w-0 max-w-full items-center justify-center gap-1.5 rounded-xl px-2 text-[14px] font-semibold tracking-[-0.015em] text-foreground/95 hover:bg-muted/30"
-                        title={`Model: ${modelDisplayName(selectedModel)}`}
-                        aria-label={`Model: ${modelDisplayName(selectedModel)}`}
+                        title={`Model: ${selectedModelLabel}`}
+                        aria-label={`Model: ${selectedModelLabel}`}
                       >
                         {modelId ? <ProviderLogo providerId={selectedModel.providerId} className="size-4" /> : null}
-                        <span className="min-w-0 truncate">{modelDisplayName(selectedModel)}</span>
+                        <span className="min-w-0 truncate">{selectedModelLabel}</span>
                         <ChevronDown className="size-3.5 shrink-0 opacity-55" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -10621,7 +10677,7 @@ export default function AppShell({ defaultCwd }: { defaultCwd: string }) {
                     )}
                   >
                     <MessageHistoryControl<Msg> url={m.eventsUrl} label={`Load earlier activity (${m.eventOffset || 0})`} onLoad={older => {if(activeChatIdRef.current!==activeChatId)return;setMessages(current=>current.map(message=>message.id!==m.id?message:{...message,eventsUrl:older.eventsUrl,eventOffset:older.eventOffset,tools:[...(older.tools || []),...(message.tools || [])],parts:[...(older.parts || []),...(message.parts || [])]}));}}/>
-                    <MessageHistoryControl<Partial<Msg>> url={m.contentUrl} label="Read full message" onLoad={full => {if(activeChatIdRef.current!==activeChatId)return;setMessages(current=>current.map(message=>message.id!==m.id?message:{...message,content:full.content ?? message.content,thinking:full.thinking ?? message.thinking,parts:undefined,contentUrl:undefined}));}}/>
+                    <MessageHistoryControl<Partial<Msg>> url={m.contentUrl} label="Read full message" onLoad={full => {if(activeChatIdRef.current!==activeChatId)return;setMessages(current=>current.map(message=>message.id!==m.id?message:{...message,content:full.content ?? message.content,thinking:full.thinking ?? message.thinking,parts:full.parts,tools:full.tools ?? message.tools,eventsUrl:undefined,eventOffset:0,contentUrl:undefined}));}}/>
                     {m.role === "user" ? (
                       <div className="flex flex-col items-end gap-1">
                         {m.references?.length ? (
