@@ -5,7 +5,7 @@ import { writeWorkerHeartbeat } from "@/lib/worker-health";
 import { appendRunEvent, cancelAgentJob, cancelChildJobs, claimNextJob, drainNextQueuedMessage, enqueueJob, getActiveParentJob, getJob, listChildJobs, reapExpiredJobLeases, recoverStaleJobs, requeueSwitchingJob, updateJob } from "@/lib/db-jobs";
 import { snapshotInterruptedJob } from "@/lib/recovery";
 import { appendMessage, appendMessageInTransaction, getChat, listChatsWithQueuedMessages, updateChat } from "@/lib/db-store";
-import { expireProjectHandoffs } from "@/lib/project-team";
+import { expireProjectHandoffs, getProjectAgentForChat } from "@/lib/project-team";
 import {
   claimDueAutomations,
   failAutomationClaim,
@@ -226,6 +226,9 @@ function runJobInIsolatedProcess(claimedJob: Awaited<ReturnType<typeof claimNext
 function reconcileSubagentParent(parentJobId: string) {
  const parent = getJob(parentJobId);
  if (!parent || parent.subagentFollowUp || !["completed", "error", "cancelled", "interrupted"].includes(parent.status)) return;
+ // Normal user chats must not receive synthetic review prompts, even in Agent mode.
+ // Keep reconciliation inside delegated chats and registered project-agent chats.
+ if (!parent.parentJobId && !getProjectAgentForChat(parent.chatId, parent.userId)) return;
  const children = listChildJobs(parent.id, parent.userId);
  const asyncChildren = children.filter((child) => child.subagentAutoReview && !child.subagentFollowUp);
  if (!asyncChildren.length || asyncChildren.some((child) => ["queued", "running", "switching", "waiting_input", "waiting_for_user"].includes(child.status))) return;

@@ -97,7 +97,7 @@ export type ParsedModelKey = {
 };
 
 export function modelKey(providerKey: string, modelId: string, connectionId?: string) {
-  if (providerKey === "cursor") return modelId;
+  if (providerKey === "cursor" && !connectionId) return modelId;
   return connectionId
     ? `${providerKey}:${connectionId}:${modelId}`
     : `${providerKey}:${modelId}`;

@@ -469,7 +469,16 @@ export function getChatPage(
   return {...page,chat:chatForUser({...page.chat,...getChatActivity(id)},ownerId)};
 }
 
-function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; syncKind?: ChatSyncEventKind; pageChange?: { message?: ChatMessage; position?: number; metadataOnly?: boolean } }) {
+/** Read only metadata even when the canonical transcript exceeds the worker heap. */
+function getChatMetadata(id: string, ownerId?: string): Chat | null {
+  if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id, ownerId)) return null;
+  const chat = rowChat(getDatabase().prepare("SELECT json_remove(data,'$.messages') AS data FROM chats WHERE id=?").get(id));
+  if (!chat) return null;
+  if (chat.incognito && chat.expiresAt && Date.parse(chat.expiresAt) <= Date.now()) return null;
+  return chatForUser({ ...chat, ...getChatActivity(id), messages: [] }, ownerId);
+}
+
+function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; syncKind?: ChatSyncEventKind; metadataProjection?: boolean; pageChange?: { message?: ChatMessage; position?: number; metadataOnly?: boolean } }) {
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
@@ -491,7 +500,35 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
     if (remaining.length) updated.queuedMessages = remaining;
     else delete updated.queuedMessages;
   }
-  getDatabase()
+  if (options?.metadataProjection) {
+    const db = getDatabase();
+    const state = pageState(db, updated.id);
+    const { messages: _messages, ...metadata } = updated;
+    // Bind whole top-level values rather than JSON Merge Patch: nested nulls
+    // are legitimate session/workspace data, and messages must never be replaced.
+    const removedKeys = Object.keys(before || {}).filter(key => key !== "messages" && metadata[key as keyof typeof metadata] === undefined);
+    const changedKeys = Object.keys(metadata).filter(key => metadata[key as keyof typeof metadata] !== undefined &&
+      JSON.stringify(metadata[key as keyof typeof metadata]) !== JSON.stringify(before?.[key as keyof Chat]));
+    let expression = "data";
+    const values: string[] = [];
+    if (removedKeys.length) {
+      expression = "json_remove(" + expression + "," + removedKeys.map(() => "?").join(",") + ")";
+      values.push(...removedKeys.map(key => "$." + JSON.stringify(key)));
+    }
+    if (changedKeys.length) {
+      expression = "json_set(" + expression + "," + changedKeys.map(() => "?,json(?)").join(",") + ")";
+      for (const key of changedKeys) values.push("$." + JSON.stringify(key), JSON.stringify(metadata[key as keyof typeof metadata]));
+    }
+    db.prepare("UPDATE chats SET data=" + expression + ",updated_at=? WHERE id=?").run(...values, updated.updatedAt, updated.id);
+    // Metadata writes leave message/search rows unchanged. Advance only indexes
+    // that were already current; stale/legacy pages still require their backfill.
+    db.prepare("UPDATE chat_search_state SET ready_revision=ready_revision+1 WHERE chat_id=? AND ready_revision=?")
+      .run(updated.id, state?.revision ?? -1);
+    if (state?.metadata && state.ready_revision === state.revision) {
+      db.prepare("UPDATE chat_page_state SET metadata=?,ready_revision=revision WHERE chat_id=?")
+        .run(JSON.stringify(metadata), updated.id);
+    }
+  } else getDatabase()
     .prepare(
       `INSERT INTO chats (id, owner_id, data, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
@@ -505,7 +542,7 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
       updated.createdAt,
       updated.updatedAt,
     );
-  syncChatPage(getDatabase(), updated, options?.pageChange);
+  if (!options?.metadataProjection) syncChatPage(getDatabase(), updated, options?.pageChange);
   if(!options?.pageChange?.metadataOnly) recordMessageActivity(updated.id, before?.messages ?? [], updated.messages);
   recordAttentionActivity(updated.id, before, updated);
   Object.assign(updated, getChatActivity(updated.id));
@@ -516,7 +553,8 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
     kind: options?.syncKind || "updated",
     chatUpdatedAt: updated.updatedAt,
   });
-  chatCache.set(updated.id, { updatedAt: updated.updatedAt, revision:pageState(getDatabase(),updated.id)?.revision ?? 0, chat: updated });
+  if (options?.metadataProjection) chatCache.delete(updated.id);
+  else chatCache.set(updated.id, { updatedAt: updated.updatedAt, revision:pageState(getDatabase(),updated.id)?.revision ?? 0, chat: updated });
   chatIndexCache = null;
   return chatForUser(updated,actor);
 }
@@ -589,6 +627,7 @@ export function updateChat(
     agentId?: string | null;
     modelId?: string | null;
     modelParams?: Array<{ id: string; value: string }> | null;
+    mergeQueuedMessages?: boolean;
     queuedMessages?: Array<{
       id: string;
       text: string;
@@ -615,10 +654,11 @@ export function updateChat(
     projectId?: string | null;
   },
   ownerId?: string,
+  options?: { metadataProjection?: boolean },
 ) {
   return transaction(() => {
     if (!workerProjectionLeaseValid(id)) return null;
-    const chat = getChat(id, ownerId);
+    const chat = options?.metadataProjection ? getChatMetadata(id, ownerId) : getChat(id, ownerId);
     if (!chat) return null;
     if(patch.projectId && ownerId && (!projectRole(patch.projectId,ownerId) || chat.incognito)) throw new Error("Project not found or chat is private.");
     if (patch.projectId !== undefined && patch.projectId !== chat.projectId && ownerId && chat.ownerId !== ownerId && !(patch.projectId===null && projectRole(chat.projectId,ownerId)==="owner")) throw new Error("Only the chat creator can move this chat.");
@@ -695,9 +735,22 @@ export function updateChat(
         .filter((item) => item.text.trim() || (Array.isArray(item.attachments) && item.attachments.length))
         .slice(0, 50);
       const consumedIds = new Set(
-        next.messages.filter((message) => message.role === "user").map((message) => message.id),
+        options?.metadataProjection
+          ? (getDatabase().prepare(`SELECT json_extract(value,'$.id') AS id FROM chats,json_each(chats.data,'$.messages')
+              WHERE chats.id=? AND json_extract(value,'$.role')='user'`).all(id) as Array<{ id: string }>).map(row => row.id)
+          : next.messages.filter((message) => message.role === "user").map((message) => message.id),
       );
-      const pending = queued.filter((item) => !consumedIds.has(item.id));
+      // Browser snapshots can arrive out of order (including an empty snapshot
+      // captured before enqueue). Absence is not deletion: DELETE owns removal.
+      // Honor explicit queue reordering, then retain items absent from a stale
+      // snapshot so another save cannot silently delete a queued follow-up.
+      const merged = new Map(queued.map((item) => [item.id, item]));
+      if (patch.mergeQueuedMessages) {
+        for (const item of next.queuedMessages ?? []) {
+          if (!merged.has(item.id)) merged.set(item.id, item);
+        }
+      }
+      const pending = [...merged.values()].filter((item) => !consumedIds.has(item.id)).slice(0, 50);
       if (pending.length) next.queuedMessages = pending;
       else delete next.queuedMessages;
     }
@@ -841,7 +894,7 @@ export function updateChat(
     }
     if (patch.badge === null && (patch.readRevision === undefined || patch.readRevision >= getChatActivity(id).activityRevision)) delete next.badge;
     else if (patch.badge) next.badge = patch.badge;
-    return saveChatInternal(next, { touchUpdatedAt: patch.touchUpdatedAt !== false, pageChange: { metadataOnly: true } });
+    return saveChatInternal(next, { touchUpdatedAt: patch.touchUpdatedAt !== false, metadataProjection: options?.metadataProjection, pageChange: { metadataOnly: true } });
   });
 }
 

@@ -35,6 +35,10 @@ whole pool. Jobs use priority classes: interactive `100`, interactive-heavy `60`
 (parent/subagent or browser-ish mode), background `10`. The reserved slot skips
 heavy and background work (BUG-C3).
 
+Automatic subagent lifecycle reviews run only in delegated chats and registered
+project-agent chats. Normal user chats, including project chats in Agent mode,
+do not receive synthetic review prompts.
+
 `reconcileSubagentParent` appends the lifecycle-review message with
 `appendMessageInTransaction` inside the enqueue transaction. `transaction()`
 nests with SAVEPOINT so a nested writer cannot fatal-exit the worker.

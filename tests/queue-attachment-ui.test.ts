@@ -37,6 +37,19 @@ function fixture() {
   const methods = vm.runInNewContext(js + "; ({queueCurrentMessage, persistQueuedFollowUps, applyServerQueuedMessages})", context);
   return { context, saved, errors, queue: () => queue, cleared: () => cleared, ...methods };
 }
+for (const state of ["empty", "consumed", "removed"] as const) {
+  test(`queue persistence skips ${state} follow-ups without a request or error toast`, async () => {
+    const f = fixture();
+    const item = { id: "queued", text: "follow-up", files: [] };
+    if (state === "consumed") f.context.stateRef.current.messages = [{ id: item.id, role: "user" }];
+    if (state === "removed") f.context.removedIdsFor = () => new Set([item.id]);
+    f.persistQueuedFollowUps("chat", state === "empty" ? [] : [item]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.saved.length, 0, "An empty pending queue must not trigger a PATCH");
+    assert.equal(f.errors.length, 0);
+  });
+}
+
 test("the real queue handler persists a finished photo upload with its prompt and clears only after attaching it", () => {
   const f = fixture();
   const photo = { id: "pending", uploadTaskId: "task", file: new File(["photo"], "photo.png", { type: "image/png" }) };
@@ -47,6 +60,19 @@ test("the real queue handler persists a finished photo upload with its prompt an
   assert.equal(f.queue()[0].files[0], photo);
   assert.equal(f.cleared(), 1);
 });
+for (const failure of ["http", "network"]) {
+  test(`queue persistence reports ${failure} failures without dropping the local message`, async () => {
+    const f = fixture();
+    f.context.fetch = async () => {
+      if (failure === "network") throw new Error("offline");
+      return Response.json({ error: "busy" }, { status: 503 });
+    };
+    f.queueCurrentMessage("keep this follow-up", []);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.errors.length, 1);
+    assert.equal(f.queue()[0].text, "keep this follow-up");
+  });
+}
 test("unfinished or missing upload results keep the composer instead of enqueuing a text-only prompt", () => {
   const f = fixture();
   f.queueCurrentMessage("Inspect photo", [{ id: "p", uploadTaskId: "pending-task", file: new File(["p"], "photo.png") }]);

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ProviderLogo } from "@/components/provider-logo";
 import type { ModelInfo } from "@/components/settings-panel";
 import { cn } from "@/lib/utils";
+import { modelAccountGroups, modelAccountKey, modelMatchesAccount } from "@/lib/model-account-groups";
 
 export function ModelPicker({
   models,
@@ -43,21 +44,16 @@ export function ModelPicker({
   const searchRef = useRef<HTMLInputElement>(null);
   const selected = models.find((model) => model.id === value);
   const normalized = String(search ?? "").trim().toLowerCase();
-  const providers = Array.from(new Set(models.map((model) => model.providerId || "cursor"))).map((providerId) => ({
-    value: providerId,
-    label: providerId === "codex"
-      ? "Codex"
-      : models.find((model) => (model.providerId || "cursor") === providerId)?.providerName || providerId,
-  }));
+  const providers = modelAccountGroups(models);
   const providerQueryMatch = normalized.match(/^([a-z0-9_-]+):(.*)$/);
-  const providerQuery = providerQueryMatch && providers.some((provider) => provider.value === providerQueryMatch[1])
+  const providerQuery = providerQueryMatch && providers.some((provider) => provider.providerId === providerQueryMatch[1])
     ? providerQueryMatch[1]
     : null;
   const effectiveProvider = providerQuery || providerFilter;
   const term = providerQuery ? providerQueryMatch?.[2].trim() || "" : normalized;
   const matching = models.filter((model) =>
-    (effectiveProvider === "all" || (model.providerId || "cursor") === effectiveProvider) &&
-    String(`${model.displayName ?? ""} ${model.id ?? ""} ${model.description ?? ""} ${model.providerName ?? ""}`).toLowerCase().includes(term),
+    modelMatchesAccount(model, effectiveProvider) &&
+    String(`${model.displayName ?? ""} ${model.id ?? ""} ${model.description ?? ""} ${model.providerName ?? ""} ${model.connectionLabel ?? ""}`).toLowerCase().includes(term),
   );
   const favorites = effectiveProvider === "all"
     ? matching.filter((model) => favoriteModelKeys.includes(model.id))
@@ -65,7 +61,7 @@ export function ModelPicker({
   const favoriteIds = new Set(favorites.map((model) => model.id));
   const groups = new Map<string, ModelInfo[]>();
   for (const model of matching.filter((entry) => !favoriteIds.has(entry.id))) {
-    const key = model.providerId || "cursor";
+    const key = modelAccountKey(model);
     groups.set(key, [...(groups.get(key) || []), model]);
   }
 
@@ -90,7 +86,7 @@ export function ModelPicker({
       >
         <Check className={cn("size-3.5 shrink-0", model.id === value ? "opacity-100" : "opacity-0")} />
         <ProviderLogo providerId={providerId} />
-        <span className="min-w-0 flex-1 truncate">{model.displayName}</span>
+        <span className="min-w-0 flex-1 truncate">{model.displayName}{model.connectionLabel ? <span className="ml-1 text-xs text-muted-foreground">· {model.connectionLabel}</span> : null}</span>
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:text-foreground"
@@ -120,8 +116,8 @@ export function ModelPicker({
           <span className="flex min-w-0 items-center gap-2 truncate">
             <ProviderLogo providerId={selected?.providerId} />
             <span className="truncate">{selected?.displayName || placeholder}</span>
-            {selected?.providerName ? (
-              <span className="truncate text-xs text-muted-foreground">· {selected.providerName}</span>
+            {selected?.connectionLabel || selected?.providerName ? (
+              <span className="truncate text-xs text-muted-foreground">· {selected.connectionLabel || selected.providerName}</span>
             ) : null}
           </span>
           <ChevronDown className="size-3.5 shrink-0 opacity-60" />
@@ -138,10 +134,11 @@ export function ModelPicker({
           onKeyDown={(event) => event.stopPropagation()}
         />
         <div className="mt-1 flex gap-1 overflow-x-auto border-b border-border/60 pb-1">
-          {[{ value: "all", label: "All" }, ...providers].map((provider) => (
+          {[{ value: "all", providerId: "", label: "All" }, ...providers].map((provider) => (
             <button
               key={provider.value}
               type="button"
+              aria-pressed={effectiveProvider === provider.value}
               className={cn(
                 "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px]",
                 effectiveProvider === provider.value
@@ -153,7 +150,7 @@ export function ModelPicker({
                 setSearch("");
               }}
             >
-              {provider.value === "all" ? null : <ProviderLogo providerId={provider.value} className="size-3" />}
+              {provider.value === "all" ? null : <ProviderLogo providerId={provider.providerId} className="size-3" />}
               {provider.label}
             </button>
           ))}
@@ -181,11 +178,11 @@ export function ModelPicker({
               {favorites.map(option)}
             </div>
           ) : null}
-          {[...groups.entries()].map(([providerId, providerModels]) => (
-            <div key={providerId}>
+          {[...groups.entries()].map(([accountKey, providerModels]) => (
+            <div key={accountKey}>
               <p className="flex items-center gap-1.5 px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                <ProviderLogo providerId={providerId} className="size-3" />
-                {providers.find((provider) => provider.value === providerId)?.label || providerId}
+                <ProviderLogo providerId={providers.find((provider) => provider.value === accountKey)?.providerId} className="size-3" />
+                {providers.find((provider) => provider.value === accountKey)?.label || accountKey}
               </p>
               {providerModels.map(option)}
             </div>

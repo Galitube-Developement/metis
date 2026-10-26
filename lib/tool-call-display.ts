@@ -1067,6 +1067,7 @@ export type MergeableChatMessage = {
   createdAt?: string;
   eventsUrl?: string;
   eventOffset?: number;
+  contentUrl?: string;
 };
 
 export function messageLiveWeight(message: MergeableChatMessage) {
@@ -1121,6 +1122,25 @@ export function mergeChatMessages<T extends MergeableChatMessage>(current: T[], 
           : { ...message, ...existing, streaming: true },
       );
       return;
+    }
+    // A compact poll must not collapse text the reader explicitly expanded.
+    // Match event positions as well as text prefixes so tools still receive
+    // their current status and changed text is never overwritten.
+    if (!existing.contentUrl && message.contentUrl && existing.content?.startsWith(message.content || "")) {
+      const offset = (message.eventOffset || 0) - (existing.eventOffset || 0);
+      message = {
+        ...message,
+        content: existing.content,
+        thinking: existing.thinking?.startsWith(message.thinking || "") ? existing.thinking : message.thinking,
+        contentUrl: undefined,
+        parts: message.parts?.map((part, index) => {
+          const loaded = existing.parts?.[offset + index];
+          return (part.type === "text" || part.type === "thinking") && loaded?.type === part.type
+            && loaded.content?.startsWith(part.content || "")
+            ? { ...part, content: loaded.content, contentUrl: undefined }
+            : part;
+        }),
+      };
     }
     // Retain explicitly loaded earlier activity when a checkpoint supplies only
     // the compact tail. An older offset is stable while new events append.

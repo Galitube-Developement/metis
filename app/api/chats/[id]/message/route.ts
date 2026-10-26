@@ -3,6 +3,8 @@ import { canAccessChat } from "@/lib/project-access";
 import { ensureChatPage } from "@/lib/chat-page-loader";
 import { getDatabase } from "@/lib/sqlite";
 import { readMessageEvents } from "@/lib/chat-page-store";
+import { compactChatPageMessages } from "@/lib/chat-page-payload";
+import type { ChatMessage } from "@/lib/store";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 export async function GET(req:Request,{params}:{params:Promise<{id:string}>}) {
@@ -17,8 +19,10 @@ export async function GET(req:Request,{params}:{params:Promise<{id:string}>}) {
  if(query.get("full")==="1"){
   const row=db.prepare("SELECT data FROM chat_page_messages WHERE chat_id=? AND message_id=?").get(id,messageId) as {data:string}|undefined;
   if(!row)return Response.json({error:"Not found"},{status:404});
-  const {content,thinking,parts}=JSON.parse(row.data);
-  return Response.json({content,thinking,parts:parts?.filter((part:{type:string})=>part.type==="text" || part.type==="thinking")},{headers:{"Cache-Control":"private, no-store"}});
+  // Full text still needs its ordered tool boundaries. Defer large tool
+  // payloads just as the initial page does, while retaining the whole timeline.
+  const [{content,thinking,parts,tools}]=compactChatPageMessages([JSON.parse(row.data) as ChatMessage],id);
+  return Response.json({content,thinking,parts,tools},{headers:{"Cache-Control":"private, no-store"}});
  }
  const before=Number(query.get("before"));
  if(!Number.isSafeInteger(before)||before<0)return Response.json({error:"Invalid cursor"},{status:400});

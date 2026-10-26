@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { estimateContextTokens } from "../lib/context-window";
 import { compactChatPageMessages } from "../lib/chat-page-payload";
+import { layoutAssistantParts, mergeChatMessages } from "../lib/tool-call-display";
+import { reconcileMessageParts } from "../lib/message-parts";
 import type { ChatMessage } from "../lib/store";
 
 const root = mkdtempSync(path.join(os.tmpdir(), "metis-chat-payload-"));
@@ -89,6 +91,52 @@ test("paged API returns compact tools and owner-only endpoint retrieves full too
   assert.equal((await originalInput.json()).input, largeInput);
   assert.equal((await resultRoute.GET(request(inputTool.inputUrl, otherToken), params)).status, 404);
   assert.equal(store.getChat(chat.id, owner)!.messages[0].tools![0].result, result);
+});
+
+
+test("loading a full message keeps text between tool groups after pagination and later polls", async () => {
+  const [{ getDatabase }, store, pageRoute, messageRoute] = await Promise.all([
+    import("../lib/sqlite"), import("../lib/db-store"), import("../app/api/chats/[id]/route"),
+    import("../app/api/chats/[id]/message/route"),
+  ]);
+  const db = getDatabase(), owner = randomUUID(), token = randomUUID();
+  const stamp = new Date().toISOString();
+  db.prepare("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)").run(owner, owner, "unused", stamp);
+  db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)")
+    .run(createHash("sha256").update(token).digest("hex"), owner, "2099-01-01T00:00:00.000Z");
+  const chat = store.createChat("Interleaved activity", undefined, owner);
+  const parts: NonNullable<ChatMessage["parts"]> = [{ type: "text", content: "Start. " }];
+  for (let i = 0; i < 30; i++) {
+    parts.push({ type: "tool", id: "read-" + i, name: "read_file", kind: "read", status: "completed", result });
+    if (i === 9 || i === 19) parts.push({ type: "text", content: "Progress " + i + ". " });
+  }
+  parts.push({ type: "text", content: "Full answer. ".repeat(1500) });
+  const content = parts.flatMap(part => part.type === "text" ? [part.content] : []).join("");
+  store.appendMessage(chat.id, { id: "interleaved", role: "assistant", content, createdAt: stamp, parts }, owner);
+  const params = { params: Promise.resolve({ id: chat.id }) };
+  const request = (url: string) => new Request("http://fixture" + url, { headers: { cookie: "ai_chat_auth=" + token } });
+  const page = await (await pageRoute.GET(request("/api/chats/" + chat.id), params)).json();
+  const preview = page.chat.messages[0] as ChatMessage;
+  assert.ok(preview.contentUrl);
+  assert.ok(preview.eventOffset! > 0);
+  const response = await messageRoute.GET(request(preview.contentUrl!), params);
+  assert.equal(response.status, 200);
+  const full = await response.json();
+  assert.equal(full.content, content);
+  assert.deepEqual(full.parts.map((part: { type: string }) => part.type), parts.map(part => part.type));
+  assert.ok(JSON.stringify(full).length < 100_000, "tool outputs stay deferred");
+  assert.ok(full.parts.find((part: { type: string }) => part.type === "tool").resultUrl);
+  const expanded = { ...preview, ...full, eventsUrl: undefined, eventOffset: 0, contentUrl: undefined } as ChatMessage;
+  const [afterPoll] = mergeChatMessages([expanded], [preview]);
+  const ordered = reconcileMessageParts({ parts: afterPoll.parts, content: afterPoll.content, tools: afterPoll.tools });
+  const blocks = layoutAssistantParts(ordered);
+  assert.deepEqual(blocks.map(block => block.type), ["text", "tools", "text", "tools", "text", "tools", "text"]);
+  assert.deepEqual(blocks.filter(block => block.type === "tools").map(block => block.tools.length), [10, 10, 10]);
+  assert.equal(blocks.filter(block => block.type === "text").map(block => block.content).join(""), content);
+  const stored = store.getChat(chat.id, owner)!.messages[0];
+  assert.deepEqual(stored.parts, parts);
+  const unauthenticated = await messageRoute.GET(new Request("http://fixture" + preview.contentUrl!), params);
+  assert.equal(unauthenticated.status, 401);
 });
 
 test("queue lookup uses a partial index and stays current as queues are added and drained", async () => {

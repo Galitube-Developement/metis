@@ -41,7 +41,8 @@ export async function run(task:Task) {
  if(task.operation==="patch" && task.patch){
   const keys=Object.keys(task.patch).filter(key=>task.patch![key as keyof typeof task.patch]!==undefined);
   if(task.patch.readRevision!==undefined && (task.patch.badge===null || task.patch.badge===undefined) && keys.every(key=>["readRevision","badge","touchUpdatedAt"].includes(key)))return acknowledge(task);
-  const chat=updateChat(task.chatId,task.patch,task.ownerId);
+  // HTTP queue snapshots may be stale; only explicit DELETE/dispatch removes items.
+  const chat=updateChat(task.chatId,{...task.patch,mergeQueuedMessages:true},task.ownerId,{metadataProjection:true});
   return chat?{...chat,messages:[]}:null;
  }
  rebuildChatPage(getDatabase(),task.chatId);
