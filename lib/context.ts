@@ -1,5 +1,5 @@
 import { projectRole } from "@/lib/project-access";
-import { getChat, getChatNotePins, getGlobalModelSettings } from "@/lib/db-store";
+import { getChatMetadata, getChatNotePins, getGlobalModelSettings } from "@/lib/db-store";
 import { listNotes, getNote } from "@/lib/shared-context";
 
 export type ReferenceKind = "file" | "canvas" | "plan" | "note" | "browser" | "memory" | "chat" | "terminal";
@@ -24,7 +24,7 @@ export function getPinnedNoteIds(ownerId: string | undefined, chatId: string) {
 }
 
 export function getPinnedNotes(ownerId: string | undefined, chatId: string) {
-  const chat = getChat(chatId, ownerId);
+  const chat = getChatMetadata(chatId, ownerId);
   if (!chat || chat.incognito) return [];
   ownerId ??= chat.ownerId;
   const allowed = new Map(listNotes({ ownerId, chatId }).filter((note) => note.ownerId === ownerId || (note.kind!=="learned_fact" && projectRole(note.projectId,ownerId))).map((note) => [note.id, note]));
@@ -47,7 +47,7 @@ export function resolveReferences(
   chatId: string,
   references: ContextReference[],
 ) {
-  const chat = getChat(chatId, ownerId);
+  const chat = getChatMetadata(chatId, ownerId);
   if (!chat) return [];
   const resolvedOwnerId = ownerId ?? chat.ownerId;
   const accessibleNotes = new Map(listNotes({ ownerId: resolvedOwnerId, chatId }).filter((note) => note.ownerId === resolvedOwnerId || (note.kind!=="learned_fact" && projectRole(note.projectId,resolvedOwnerId))).map((note) => [note.id, note]));

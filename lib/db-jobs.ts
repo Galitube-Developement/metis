@@ -16,7 +16,7 @@ import {
   withSqliteRetry,
 } from "@/lib/sqlite";
 import type { AgentJob, JobStatus } from "@/lib/jobs";
-import { claimQueuedMessageInTransaction, getChat, getGlobalModelSettings, updateChat } from "@/lib/db-store";
+import { claimQueuedMessageInTransaction, getChat, getChatMetadata, getGlobalModelSettings, updateChat } from "@/lib/db-store";
 import {
   describeQueueWait,
   parseWorkerConcurrency,
@@ -189,14 +189,14 @@ function enqueueJobInTransaction(
     // in the chat with no job behind it.
     options?.beforeInsert?.();
 
-    const team = getDatabase().prepare("SELECT p.id AS projectId, p.owner_id AS ownerId, p.data AS projectData, a.data AS agentData FROM chats c JOIN projects p ON p.id = json_extract(c.data, '$.projectId') LEFT JOIN project_agents a ON a.chat_id = c.id WHERE c.id = ?").get(input.chatId) as { projectId: string; ownerId: string; projectData: string; agentData?: string } | undefined;
+    const team = getDatabase().prepare("SELECT p.id AS projectId, p.owner_id AS ownerId, p.data AS projectData, a.data AS agentData FROM chats c LEFT JOIN chat_list l ON l.id=c.id JOIN projects p ON p.id = CASE WHEN l.id IS NULL THEN json_extract(c.data, '$.projectId') ELSE l.project_id END LEFT JOIN project_agents a ON a.chat_id = c.id WHERE c.id = ?").get(input.chatId) as { projectId: string; ownerId: string; projectData: string; agentData?: string } | undefined;
     if (team && JSON.parse(team.projectData).mode === "agents") {
       const agent = team.agentData ? JSON.parse(team.agentData) : null;
       if (!input.userId || !projectRole(team.projectId,input.userId) || !agent || agent.archivedAt) throw new Error("An active agent owned by this account is required for team execution.");
       const parent = input.parentJobId ? getJob(input.parentJobId) : null;
       const model = projectModelOverride(team.projectId,input.userId);
       if (model) { validateProjectModelSelection(input.userId, model.modelId, model.modelParams); input = { ...input, ...model }; }
-      input = { ...input, modeId: modeById(input.modeId || getChat(input.chatId, input.userId)?.sessionState?.modeId, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
+      input = { ...input, modeId: modeById(input.modeId || getChatMetadata(input.chatId, input.userId)?.sessionState?.modeId, getGlobalModelSettings(input.userId).customModes || []).id, projectTeamId: team.projectId, projectTeamRootJobId: parent?.projectTeamRootJobId || parent?.id || input.projectTeamRootJobId };
     }
     if (input.parentJobId || input.projectTeamId) input = { ...input, maxRuntimeMs: resolveAgentRuntimeMs(input.maxRuntimeMs, getGlobalModelSettings(input.userId).agentRuntimeMs) };
     const now = iso();
@@ -274,7 +274,7 @@ export function enqueueJob(
     if (options?.interruptActiveRun && !existing) {
       // Recheck inside the write transaction before cancellation can clear a
       // question that arrived after the HTTP route read its chat snapshot.
-      if (isChatWaitingForUser(getChat(input.chatId, input.userId)) ||
+      if (isChatWaitingForUser(getChatMetadata(input.chatId, input.userId)) ||
           isJobWaitingForUser(getActiveParentJob(input.chatId)?.status)) {
         const error = new Error("Please answer the agent's question before sending a queued message.");
         error.name = "WaitingForUser";

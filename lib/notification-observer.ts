@@ -7,6 +7,9 @@ import { remoteNotificationAllowed } from "@/lib/notification-preferences";
 // A durable cursor and source keys make replay/restart idempotent across processes.
 export function observeNotificationEvents() {
   const db = notificationDatabase();
+  const current = db.prepare("SELECT cursor FROM notification_observer WHERE key='runs'").get() as {cursor:number};
+  const tail = db.prepare("SELECT COALESCE(MAX(id),0) AS tail FROM run_events").get() as {tail:number};
+  if (tail.tail <= current.cursor) return 0;
   return transaction(() => {
     const { cursor } = db.prepare("SELECT cursor FROM notification_observer WHERE key='runs'").get() as {cursor:number};
     const { tail } = db.prepare("SELECT COALESCE(MAX(id),0) AS tail FROM run_events").get() as {tail:number};

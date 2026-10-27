@@ -27,7 +27,8 @@ import type {
 import { chatUploadDir, resolveUploadPath } from "@/lib/uploads";
 import { BoundedSnapshotCache } from "@/lib/snapshot-cache";
 import { RUNTIME_MODES } from "@/lib/runtime-mode";
-import { pageIsReady, pageState, readChatPage, rebuildChatPage, syncChatPage } from "@/lib/chat-page-store";
+import { applyChatCheckpoints } from "@/lib/chat-checkpoints";
+import { pageIsReady, pageState, readChatPage, rebuildChatPage, syncChatPage, syncChatCheckpointPage, syncChatAppendedPage } from "@/lib/chat-page-store";
 import { recordChatSyncEvent, type ChatSyncEventKind } from "@/lib/chat-sync";
 
 const now = () => new Date().toISOString();
@@ -130,7 +131,8 @@ function publicChat(chat: Chat): Omit<Chat, "ownerId"> & { share?: PublicChatSha
 }
 
 function rowChat(row: unknown): Chat | null {
-  return parseData<Chat>(row);
+  const chat = parseData<Chat>(row);
+  return chat ? applyChatCheckpoints(getDatabase(), chat) : null;
 }
 
 function parseJsonField<T>(value: unknown): T | undefined {
@@ -310,7 +312,7 @@ export function listChatsForUser(
   ownerId?: string,
   options: { includeArchived?: boolean } = {},
 ): ChatIndexEntry[] {
-  cleanupExpiredIncognitoChats();
+  // Expiry deletion runs in the background worker; sidebar reads never wait for a writer.
   const db = getDatabase();
   const dataVersion=JSON.stringify(db.prepare("PRAGMA data_version").get());
   const cacheKey = `${ownerId || "*"}:${options.includeArchived ? "all" : "active"}:${dataVersion}`;
@@ -472,7 +474,10 @@ export function getChatPage(
 /** Read only metadata even when the canonical transcript exceeds the worker heap. */
 export function getChatMetadata(id: string, ownerId?: string): Chat | null {
   if (!id || id.includes("/") || id.includes("..") || !canAccessChat(id, ownerId)) return null;
-  const chat = rowChat(getDatabase().prepare("SELECT json_remove(data,'$.messages') AS data FROM chats WHERE id=?").get(id));
+  const db = getDatabase(), state = pageState(db,id);
+  const chat = state?.metadata && state.ready_revision===state.revision
+    ? JSON.parse(state.metadata) as Chat
+    : rowChat(db.prepare("SELECT json_remove(data,'$.messages') AS data FROM chats WHERE id=?").get(id));
   if (!chat) return null;
   if (chat.incognito && chat.expiresAt && Date.parse(chat.expiresAt) <= Date.now()) return null;
   return chatForUser({ ...chat, ...getChatActivity(id), messages: [] }, ownerId);
@@ -482,7 +487,7 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
   // `updated_at` is also the cache revision used by getChat/getChatPage.
   // Every JSON mutation must advance it, including workspace/session changes
   // that do not necessarily change the chat title or message activity.
-  const before = options?.pageChange?.metadataOnly
+  const before = options?.metadataProjection ? getChatMetadata(chat.id) : options?.pageChange?.metadataOnly
     ? rowChat(getDatabase().prepare("SELECT json_set(data,\'$.messages\',json(\'[]\')) AS data FROM chats WHERE id = ?").get(chat.id))
     : rowChat(getDatabase().prepare("SELECT data FROM chats WHERE id = ?").get(chat.id));
   const actor = chatActor(chat);
@@ -542,7 +547,10 @@ function saveChatInternal(chat: Chat, options?: { touchUpdatedAt?: boolean; sync
       updated.createdAt,
       updated.updatedAt,
     );
-  if (!options?.metadataProjection) syncChatPage(getDatabase(), updated, options?.pageChange);
+  if (!options?.metadataProjection) {
+    getDatabase().prepare("DELETE FROM chat_message_checkpoints WHERE chat_id=?").run(updated.id);
+    syncChatPage(getDatabase(), updated, options?.pageChange);
+  }
   if(!options?.pageChange?.metadataOnly) recordMessageActivity(updated.id, before?.messages ?? [], updated.messages);
   recordAttentionActivity(updated.id, before, updated);
   Object.assign(updated, getChatActivity(updated.id));
@@ -597,12 +605,16 @@ export function createChat(
 }
 
 export function cleanupExpiredIncognitoChats() {
-  const result = getDatabase().prepare(
+  const db = getDatabase(), timestamp = now();
+  // A no-op DELETE still takes SQLite's writer lock. Sidebar polling is read-only
+  // unless there is actual expired data to remove.
+  if (!db.prepare("SELECT 1 FROM chat_list WHERE incognito=1 AND expires_at IS NOT NULL AND expires_at<=? LIMIT 1").get(timestamp)) return 0;
+  const result = db.prepare(
     `DELETE FROM chats WHERE id IN (
       SELECT id FROM chat_list
       WHERE incognito = 1 AND expires_at IS NOT NULL AND expires_at <= ?
     )`,
-  ).run(now());
+  ).run(timestamp);
   if (result.changes > 0) {
     chatIndexCache = null;
     for (const id of [...chatCache.keys()]) {
@@ -1108,6 +1120,38 @@ export function listChatsWithQueuedMessages() {
     .filter((chat): chat is Chat => Boolean(chat?.queuedMessages?.length));
 }
 
+/** Submission only needs the appended message, not a multi-megabyte Chat return.
+ * All durable effects remain in the caller's enqueue transaction. */
+export function appendIndexedMessageInTransaction(
+ chatId:string,
+ message:Omit<ChatMessage,"id"|"createdAt"> & {id?:string;createdAt?:string},
+ ownerId?:string,
+):ChatMessage|null {
+ if(!workerProjectionLeaseValid(chatId) || !getChatMetadata(chatId,ownerId))return null;
+ const db=getDatabase(),state=pageState(db,chatId);
+ const search=db.prepare("SELECT ready_revision FROM chat_search_state WHERE chat_id=?").get(chatId) as {ready_revision:number}|undefined;
+ const id=message.id || randomUUID();
+ if(!state?.metadata || state.ready_revision!==state.revision || search?.ready_revision!==state.revision) {
+  return appendMessageInTransaction(chatId,{...message,id},ownerId)?.messages.find(item=>item.id===id) ?? null;
+ }
+ const existing=db.prepare("SELECT data FROM chat_page_messages WHERE chat_id=? AND message_id=?").get(chatId,id) as {data:string}|undefined;
+ if(existing)return JSON.parse(existing.data) as ChatMessage;
+ const next={...message,id,createdAt:message.createdAt || now()} as ChatMessage;
+ const before=JSON.parse(state.metadata) as Chat;
+ const updated={...before,updatedAt:now(),messages:[next]};
+ if(next.role==="user")updated.lastMessageSent=next.createdAt;
+ db.prepare("UPDATE chats SET data=json_set(data,'$.updatedAt',?,'$.lastMessageSent',json(?),'$.messages[#]',json(?)),updated_at=? WHERE id=?")
+  .run(updated.updatedAt,JSON.stringify(updated.lastMessageSent ?? null),JSON.stringify(next),updated.updatedAt,chatId);
+ // Existing streaming deltas stay durable and current; this only adds one turn.
+ syncChatAppendedPage(db,updated,next,state.total);
+ recordMessageActivity(chatId,[],[next]);
+ recordAttentionActivity(chatId,before,updated);
+ syncChatList(updated);
+ chatCache.delete(chatId);chatIndexCache=null;
+ recordChatSyncEvent({ownerId:updated.ownerId,chatId,kind:"updated",chatUpdatedAt:updated.updatedAt});
+ return next;
+}
+
 export function appendMessageInTransaction(
   chatId: string,
   message: Omit<ChatMessage, "id" | "createdAt"> & { id?: string; createdAt?: string },
@@ -1137,6 +1181,42 @@ export function appendMessage(
   return transaction(() => appendMessageInTransaction(chatId, message, ownerId));
 }
 
+/** Persist only this streaming message; full saves consolidate the durable deltas. */
+export function checkpointAssistantMessage(chatId: string, message: Omit<ChatMessage, "createdAt"> & { createdAt?: string }): ChatMessage | null {
+  return transaction(() => {
+    if (!workerProjectionLeaseValid(chatId)) return null;
+    const db=getDatabase(), state=pageState(db,chatId);
+    const search=db.prepare("SELECT ready_revision FROM chat_search_state WHERE chat_id=?").get(chatId) as {ready_revision:number}|undefined;
+    const row=state?.metadata && state.ready_revision===state.revision && search?.ready_revision===state.revision
+      ? db.prepare("SELECT position,data FROM chat_page_messages WHERE chat_id=? AND message_id=?").get(chatId,message.id) as {position:number;data:string}|undefined
+      : undefined;
+    if (!row || message.role!=="assistant") {
+      const saved=upsertMessage(chatId,message);
+      return saved?.messages.find(item=>item.id===message.id) ?? null;
+    }
+    const previous=JSON.parse(row.data) as ChatMessage;
+    const next=mergeMessageForPersistence(message,previous);
+    const updatedAt=now();
+    const chat={...JSON.parse(state!.metadata!) as Chat,updatedAt,messages:[next]};
+    db.prepare("INSERT INTO chat_message_checkpoints VALUES(?,?,?,?,?) ON CONFLICT(chat_id,message_id) DO UPDATE SET position=excluded.position,data=excluded.data,updated_at=excluded.updated_at")
+      .run(chatId,next.id,row.position,JSON.stringify(next),updatedAt);
+    syncChatCheckpointPage(db,chat,next,row.position);
+    recordMessageActivity(chatId,[previous],[next]);
+    syncChatList(chat);
+    recordAccountUsage(chatActor(chat) || chat.ownerId,next);
+    chatIndexCache=null;
+    chatCache.delete(chatId);
+    recordChatSyncEvent({ownerId:chat.ownerId,chatId,kind:"updated",chatUpdatedAt:updatedAt});
+    return next;
+  });
+}
+
+function mergeMessageForPersistence(message: Omit<ChatMessage, "createdAt"> & { createdAt?: string }, previous?: ChatMessage): ChatMessage {
+  const attachments=[...(previous?.attachments ?? [])];
+  for(const attachment of message.attachments ?? []) if(!attachments.some(item=>item.id===attachment.id)) attachments.push(attachment);
+  return {...message,...(attachments.length ? {attachments}:{}),createdAt:message.createdAt || previous?.createdAt || now()};
+}
+
 export function upsertMessage(chatId: string, message: Omit<ChatMessage, "createdAt"> & { createdAt?: string }) {
   return transaction(() => {
     if (!workerProjectionLeaseValid(chatId)) return null;
@@ -1146,15 +1226,14 @@ export function upsertMessage(chatId: string, message: Omit<ChatMessage, "create
     const previous = chat.messages[index];
     // Files registered by the gateway must survive provider checkpoints that
     // omit attachments or only report a subset of tool results.
-    const attachments = [...(chat.messages[index]?.attachments ?? [])];
-    for (const attachment of message.attachments ?? []) {
-      if (!attachments.some((item) => item.id === attachment.id)) attachments.push(attachment);
+    const next = mergeMessageForPersistence(message, previous);
+    if (getDatabase().prepare("SELECT 1 FROM chat_message_checkpoints WHERE chat_id=? LIMIT 1").get(chatId)) {
+      const position=index>=0 ? index : chat.messages.length;
+      if(index>=0)chat.messages[index]=next;else chat.messages.push(next);
+      const saved=saveChatInternal(chat,{pageChange:{message:next,position}});
+      recordAccountUsage(chatActor(chat) || chat.ownerId,next);
+      return saved;
     }
-    const next = {
-      ...message,
-      ...(attachments.length ? { attachments } : {}),
-      createdAt: message.createdAt || chat.messages[index]?.createdAt || now(),
-    };
     if (index >= 0) {
       chat.messages[index] = next;
       return persistAssistantMessage(chat, index, next, "set", previous);

@@ -1030,27 +1030,27 @@
   }
 }
 
-/* Automations mirrors the product demo as a dense, full-height operational view. */
+/* Automations shares the app theme, including imported colors and native form controls. */
 .automations-split-view {
-  --automation-bg: #0a0a0a;
-  --automation-row: #0c0c0c;
-  --automation-surface: #101010;
-  --automation-surface-active: #141414;
-  --automation-control: #161616;
-  --automation-border: #232323;
-  --automation-border-soft: #1f1f1f;
-  --automation-border-raised: #2a2a2a;
-  --automation-border-control: #2d2d2d;
-  --automation-text: #ececec;
-  --automation-copy: #9a9a9a;
-  --automation-muted: #7d7d7d;
-  --automation-dim: #777;
-  --automation-label: #6f6f6f;
-  --automation-active: #5ee9b5;
-  --automation-running: #7eb6ff;
-  --automation-error: #f06b65;
-  --automation-queued: #d4a24a;
-  --automation-brand: #d5a184;
+  --automation-bg: var(--background);
+  --automation-row: var(--card);
+  --automation-surface: var(--card);
+  --automation-surface-active: var(--accent);
+  --automation-control: var(--muted);
+  --automation-border: var(--border);
+  --automation-border-soft: var(--border);
+  --automation-border-raised: var(--border);
+  --automation-border-control: var(--input);
+  --automation-text: var(--foreground);
+  --automation-copy: var(--muted-foreground);
+  --automation-muted: var(--muted-foreground);
+  --automation-dim: var(--muted-foreground);
+  --automation-label: var(--muted-foreground);
+  --automation-active: light-dark(var(--color-emerald-700), var(--color-emerald-300));
+  --automation-running: var(--primary);
+  --automation-error: var(--destructive);
+  --automation-queued: light-dark(var(--color-amber-700), var(--color-amber-300));
+  --automation-brand: var(--primary);
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--automation-detail-width, 480px);
   width: 100%;
@@ -1059,7 +1059,7 @@
   overflow: hidden;
   color: var(--automation-text);
   background: var(--automation-bg);
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 .automation-scroll {
@@ -1067,7 +1067,7 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 65%, transparent) transparent;
   scrollbar-width: thin;
 }
 
@@ -1083,7 +1083,7 @@
 .automation-scroll::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background: #333;
+  background: color-mix(in oklch, var(--muted-foreground) 65%, transparent);
   background-clip: padding-box;
 }
 
@@ -1139,7 +1139,7 @@
 }
 
 .automation-create-button:hover {
-  border-color: #454545;
+  border-color: var(--ring);
   color: var(--automation-brand);
   background: var(--automation-surface-active);
 }
@@ -1177,12 +1177,12 @@
 }
 
 .automation-list-row:hover {
-  border-color: #2c2c2c;
-  background: #121212;
+  border-color: var(--automation-border-control);
+  background: var(--automation-surface-active);
 }
 
 .automation-list-row.is-active {
-  border-color: #3a3a3a;
+  border-color: var(--automation-brand);
   background: var(--automation-surface-active);
   box-shadow: inset 2px 0 0 var(--automation-brand);
 }
@@ -1196,7 +1196,7 @@
 .automation-fact-link:focus-visible,
 .automation-run-card:focus-visible,
 .automation-inline-state button:focus-visible {
-  outline: 2px solid var(--automation-brand);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -1207,7 +1207,7 @@
   height: 28px;
   border: 1px solid var(--automation-border-raised);
   border-radius: 8px;
-  color: #a8a8a8;
+  color: var(--automation-copy);
   background: var(--automation-surface);
 }
 
@@ -1242,7 +1242,7 @@
 
 .automation-status {
   flex: none;
-  color: #8d8d8d;
+  color: var(--automation-muted);
   font-size: 9px;
   font-weight: 500;
   line-height: 1;
@@ -1299,7 +1299,7 @@
 
 .automation-list-next {
   flex: none;
-  color: #858585;
+  color: var(--automation-muted);
   white-space: nowrap;
 }
 
@@ -1307,7 +1307,7 @@
   align-self: center;
   width: 13px;
   height: 13px;
-  color: #666;
+  color: var(--automation-muted);
 }
 
 .automation-list-select {
@@ -1339,14 +1339,14 @@
   height: 28px;
   border: 0;
   border-radius: 7px;
-  color: #7a7a7a;
+  color: var(--automation-muted);
   background: transparent;
   touch-action: manipulation;
 }
 
 .automation-list-row-actions button:hover {
   color: var(--automation-text);
-  background: #1c1c1c;
+  background: var(--automation-surface-active);
 }
 
 .automation-list-row-actions button.is-danger:hover {
@@ -1426,8 +1426,8 @@
   place-items: center;
   border: 1px solid var(--automation-border-raised);
   border-radius: 12px;
-  color: #c3c3c3;
-  background: #121212;
+  color: var(--automation-text);
+  background: var(--automation-surface-active);
 }
 
 .automation-detail-icon svg {
@@ -1479,7 +1479,7 @@
   flex-direction: column;
   justify-content: center;
   padding: 9px 10px;
-  border: 1px solid #262626;
+  border: 1px solid var(--automation-border);
   border-radius: 9px;
   background: var(--automation-surface);
 }
@@ -1504,7 +1504,7 @@
 .automation-stat-detail {
   margin-top: 4px;
   overflow: hidden;
-  color: #8a8a8a;
+  color: var(--automation-muted);
   font-size: 9px;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -1525,7 +1525,7 @@
   gap: 10px;
   align-items: start;
   padding: 8px 0;
-  border-bottom: 1px solid #191919;
+  border-bottom: 1px solid var(--automation-border-soft);
 }
 
 .automation-fact:last-child {
@@ -1560,7 +1560,7 @@
   width: 11px;
   height: 11px;
   margin-right: 6px;
-  color: #7a7a7a;
+  color: var(--automation-muted);
   vertical-align: -1px;
 }
 
@@ -1642,7 +1642,7 @@
 .automation-edit-form input:focus-visible,
 .automation-edit-form textarea:focus-visible,
 .automation-edit-form select:focus-visible {
-  outline: 2px solid var(--automation-brand);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -1690,9 +1690,9 @@
   align-items: center;
   gap: 5px;
   padding: 0 9px;
-  border: 1px solid #262626;
+  border: 1px solid var(--automation-border);
   border-radius: 999px;
-  color: #bdbdbd;
+  color: var(--automation-copy);
   background: transparent;
   font-size: 10px;
   line-height: 1;
@@ -1703,9 +1703,9 @@
 }
 
 .automation-pills > button:hover {
-  border-color: #3a3a3a;
+  border-color: var(--automation-brand);
   color: var(--automation-text);
-  background: #121212;
+  background: var(--automation-surface-active);
 }
 
 .automation-pills svg {
@@ -1736,7 +1736,7 @@
   padding: 0 10px;
   border: 1px solid var(--automation-border-control);
   border-radius: 7px;
-  color: #d3d3d3;
+  color: var(--automation-text);
   background: var(--automation-control);
   font-size: 10px;
   font-weight: 500;
@@ -1746,9 +1746,9 @@
 }
 
 .automation-actions button:hover:not(:disabled) {
-  border-color: #444;
+  border-color: var(--automation-border-control);
   color: var(--automation-text);
-  background: #1b1b1b;
+  background: var(--automation-surface-active);
 }
 
 .automation-actions button:active:not(:disabled) {
@@ -1761,11 +1761,11 @@
 }
 
 .automation-actions button.is-danger {
-  color: #d8a6a3;
+  color: var(--automation-error);
 }
 
 .automation-actions button.is-danger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--automation-error) 40%, #444);
+  border-color: color-mix(in srgb, var(--automation-error) 40%, var(--automation-border-control));
   color: var(--automation-error);
 }
 
@@ -1820,18 +1820,18 @@
   width: 100%;
   flex-direction: column;
   padding: 10px;
-  border: 1px solid #242424;
+  border: 1px solid var(--automation-border);
   border-radius: 10px;
   color: inherit;
-  background: #0e0e0e;
+  background: var(--automation-surface);
   text-align: left;
   touch-action: manipulation;
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
 .automation-run-card:hover {
-  border-color: #363636;
-  background: #111;
+  border-color: var(--automation-border-control);
+  background: var(--automation-surface-active);
 }
 
 .automation-run-topline {
@@ -1862,9 +1862,9 @@
 .automation-run-trigger {
   flex: none;
   padding: 2px 6px;
-  border: 1px solid #292929;
+  border: 1px solid var(--automation-border);
   border-radius: 5px;
-  color: #8b8b8b;
+  color: var(--automation-muted);
   font-size: 8px;
   line-height: 1.2;
   text-transform: lowercase;
@@ -2078,10 +2078,10 @@
 .automation-sidebar-resize-handle:hover > span,
 .automation-sidebar-resize-handle[data-resizing] > span,
 .automation-sidebar-resize-handle:focus-visible > span { background: var(--automation-brand); }
-.automation-sidebar-resize-handle:focus-visible { outline: 2px solid var(--automation-brand); outline-offset: -2px; }
+.automation-sidebar-resize-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .automation-editor-creating { animation: none; }
 .automation-editor-hint svg, .automation-editor-actions svg { width: 14px; height: 14px; flex: none; }
-.automation-editor-steps button:focus-visible { outline: 2px solid var(--automation-brand); outline-offset: 2px; }
+.automation-editor-steps button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .automation-editor-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .automation-editor-steps button { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 2px solid var(--automation-border-raised); font-size: 11px; color: var(--automation-copy); }
 .automation-editor-steps button[aria-current="step"] { color: var(--automation-text); border-color: var(--automation-brand); }
@@ -2099,7 +2099,7 @@
 .automation-editor-error button { margin-left: 10px; text-decoration: underline; }
 .automation-editor-actions { margin-top: 10px; padding-top: 14px; border-top: 1px solid var(--automation-border-soft); display: flex; flex-wrap: wrap; gap: 8px; }
 .automation-editor-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; }
-.automation-editor-actions button[type="submit"] { margin-left: auto; background: var(--automation-text); color: var(--automation-bg); }
+.automation-editor-actions button[type="submit"] { margin-left: auto; background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 .automation-editor-review dl { display: grid; gap: 14px; }
 .automation-editor-review dl > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; font-size: 12px; }
 .automation-editor-review dt { color: var(--automation-copy); }
@@ -2121,9 +2121,9 @@
 /* Keep the primary action distinct when shared action hover styles apply. */
 .automation-editor-actions button[type="submit"]:hover:not(:disabled),
 .automation-editor-actions button[type="submit"]:active:not(:disabled) {
-  background: var(--automation-text);
-  color: var(--automation-bg);
-  border-color: var(--automation-text);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
 }
 
 /* Shared web/file hover previews enter from the side facing their link. */

@@ -14,7 +14,7 @@ const {
 initializeRequestNetwork();
 const { default: next } = await import("next");
 const { getAuthenticatedUser } = await import("./lib/auth.ts");
-const { updateChat } = await import("./lib/db-store.ts");
+const { updateChatOffThread } = await import("./lib/chat-page-loader.ts");
 const {
   captureBrowserFrame,
   closeBrowserSession,
@@ -29,7 +29,7 @@ const {
 } = await import("./lib/remote-client-gateway.ts");
 const { logError } = await import("./lib/error-logs.ts");
 const { startUpdateScheduler } = await import("./lib/update-schedule.ts");
-const { startNotificationObserver } = await import("./lib/notification-observer.ts");
+const { startNotificationObserver } = await import("./lib/notification-observer-thread.ts");
 
 const port = Number(process.env.PORT || 3100);
 const host = process.env.AI_CHAT_HOST?.trim() || "127.0.0.1";
@@ -103,7 +103,7 @@ async function readRequestJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
-function persistBrowserContext(userId, chatId, result) {
+async function persistBrowserContext(userId, chatId, result) {
   const key = `${userId}:${chatId}`;
   const signature = JSON.stringify({
     activeTabId: result.activeTabId || result.tabId,
@@ -117,14 +117,19 @@ function persistBrowserContext(userId, chatId, result) {
     if (oldest === undefined) break;
     browserContextSignatures.delete(oldest);
   }
-  updateChat(chatId, {
+  try { await updateChatOffThread(chatId, userId, {
     browserContext: {
       tabs: result.tabs,
       activeTabId: result.activeTabId || result.tabId,
       sessionKey: chatId,
       updatedAt: new Date().toISOString(),
     },
-  }, userId);
+  }); } catch {
+    // The browser action already succeeded. Retry its advisory context on the
+    // next refresh rather than causing callers to repeat a completed action.
+    if(browserContextSignatures.get(key)===signature)browserContextSignatures.delete(key);
+    console.warn("[browser] Context persistence deferred");
+  }
 }
 
 async function performSharedBrowserAction(userId, chatId, action) {
@@ -139,7 +144,7 @@ async function performSharedBrowserAction(userId, chatId, action) {
     return { closed: true };
   }
   const result = await performBrowserAction(userId, chatId, action);
-  persistBrowserContext(userId, chatId, result);
+  await persistBrowserContext(userId, chatId, result);
   return result;
 }
 

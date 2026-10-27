@@ -40,6 +40,16 @@ export function prepareLegacySearch(db: DatabaseSync, chatId: string, revision: 
                     AND substr(t.path,12,length(t.path)-12) NOT GLOB '*[^0-9]*'
                 GROUP BY t.parent
             ) WHERE message_id IS NOT NULL`).run(chatId);
+        // A live message may be newer than the consolidated history JSON.
+        // Read only its searchable fields, within the same revision snapshot.
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE name=\'chat_message_checkpoints\'").get()) {
+            db.prepare(`UPDATE temp.chat_search_staging SET
+                role=(SELECT json_extract(d.data,\'$.role\') FROM chat_message_checkpoints d WHERE d.chat_id=? AND d.message_id=chat_search_staging.message_id),
+                body=(SELECT json_extract(d.data,\'$.content\') FROM chat_message_checkpoints d WHERE d.chat_id=? AND d.message_id=chat_search_staging.message_id),
+                normalized=search_normalize((SELECT json_extract(d.data,\'$.content\') FROM chat_message_checkpoints d WHERE d.chat_id=? AND d.message_id=chat_search_staging.message_id))
+                WHERE message_id IN (SELECT message_id FROM chat_message_checkpoints WHERE chat_id=?)`)
+                .run(chatId,chatId,chatId,chatId);
+        }
         db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
     db.exec("BEGIN IMMEDIATE");

@@ -6,8 +6,9 @@ import { canAccessChat, chatForUser } from "@/lib/project-access";
 import { recordChatSyncEvent } from "@/lib/chat-sync";
 import type { Chat } from "@/lib/store";
 import { applyPinUpdate } from "@/lib/note-pins";
+import { submitSerializedChat } from "@/lib/chat-submit";
 
-type Task={chatId:string;operation?:string;ownerId?:string;patch?:Parameters<typeof updateChat>[1];update?:import("./note-pins").PinUpdate};
+type Task={request?:import("./chat-submit").ChatSubmitRequest;chatId:string;operation?:string;ownerId?:string;patch?:Parameters<typeof updateChat>[1];update?:import("./note-pins").PinUpdate};
 function acknowledge(task:Task) {
  const db=getDatabase();
  if(!canAccessChat(task.chatId,task.ownerId))return null;
@@ -35,6 +36,9 @@ function acknowledge(task:Task) {
  });
 }
 export async function run(task:Task) {
+ if(task.operation==="submit" && task.request){
+  return submitSerializedChat(task.request);
+ }
  if(task.operation==="notePins" && task.ownerId && task.update){
   return applyPinUpdate(task.ownerId,task.update);
  }

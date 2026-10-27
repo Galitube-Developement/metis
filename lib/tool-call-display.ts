@@ -126,7 +126,7 @@ export function unwrapToolRecord(value: unknown, depth = 0): Record<string, unkn
       if (inner) Object.assign(record, inner);
     }
   }
-  for (const key of ["value", "result", "output", "args", "arguments", "input", "data", "params"]) {
+  for (const key of ["value", "result", "output", "args", "arguments", "input", "data", "params", "structuredContent", "structured_content"]) {
     if (record[key] == null) continue;
     const inner = unwrapToolRecord(record[key], depth + 1);
     if (inner) Object.assign(record, inner);
@@ -234,8 +234,8 @@ export function classifyToolKind(name: string, input?: unknown, result?: unknown
   if (/(note)/.test(value)) return "note";
   if (/(memory|remember)/.test(value)) return "memory";
   if (/(browser|navigate|playwright|webfetch)/.test(value)) return "browser";
-  if (value.includes("edit_plan") || /\bcreate_plan\b/.test(value)) return "plan";
-  if (value.includes("edit_canvas") || /\bcreate_canvas\b/.test(value)) return "canvas";
+  if (value.includes("edit_plan") || /(?:\b|__)create_plan\b/.test(value)) return "plan";
+  if (value.includes("edit_canvas") || /(?:\b|__)create_canvas\b/.test(value)) return "canvas";
   if (isSubagentControlName(value) || isSubagentControlName(inner)) return "mcp";
   if (isSubagentSpawnName(value) || isSubagentSpawnName(inner)) return "subagent";
   if (/\bplan\b/.test(value)) return "plan";

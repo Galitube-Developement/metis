@@ -14,6 +14,7 @@ import {
   getGlobalModelSettings,
   updateChat,
   upsertMessage,
+  checkpointAssistantMessage,
   type ToolPart,
   type WorkspaceItem,
 } from "@/lib/db-store";
@@ -747,7 +748,7 @@ async function runQueuedJobAttempt(job: AgentJob) {
   let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
   let checkpointDirty = false;
   const checkpointNow = () => {
-    upsertMessage(job.chatId, {
+    checkpointAssistantMessage(job.chatId, {
       id: assistantMessageId,
       role: "assistant",
       content: text,
