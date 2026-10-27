@@ -6,6 +6,7 @@ import { config } from "@/lib/config";
 import { CHAT_PAGE_SCHEMA } from "@/lib/chat-page-store";
 import { CHAT_SEARCH_SCHEMA } from "@/lib/chat-search-store";
 import { NOTE_PROJECT_DELETE_TRIGGER_SQL } from "@/lib/note-hierarchy-schema";
+import { NOTIFICATION_SCHEMA } from "@/lib/notification-schema";
 
 const dataDir = config.dataDir;
 export const databasePath = config.databasePath;
@@ -756,7 +757,8 @@ export function getDatabase(): DatabaseSync {
       read_revision INTEGER NOT NULL DEFAULT 0
     );
     INSERT OR IGNORE INTO chat_activity(chat_id, revision, read_revision)
-      SELECT id, CASE WHEN json_extract(data, '$.badge') = 'blue' THEN 1 ELSE 0 END, 0 FROM chats;
+      SELECT id, CASE WHEN json_extract(data, '$.badge') = 'blue' THEN 1 ELSE 0 END, 0 FROM chats
+      WHERE NOT EXISTS (SELECT 1 FROM chat_activity WHERE chat_activity.chat_id=chats.id);
     CREATE TABLE IF NOT EXISTS chat_sync_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -892,6 +894,7 @@ export function getDatabase(): DatabaseSync {
        WHERE id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)`,
     ).run();
   }
+  database.exec(NOTIFICATION_SCHEMA);
   return database;
 }
 

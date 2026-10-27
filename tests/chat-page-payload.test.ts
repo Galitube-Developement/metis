@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { estimateContextTokens } from "../lib/context-window";
 import { compactChatPageMessages } from "../lib/chat-page-payload";
-import { layoutAssistantParts, mergeChatMessages } from "../lib/tool-call-display";
+import { canvasFromToolPayload, layoutAssistantParts, memoryCardFromPayload, mergeChatMessages, planFromToolPayload } from "../lib/tool-call-display";
 import { reconcileMessageParts } from "../lib/message-parts";
 import type { ChatMessage } from "../lib/store";
 
@@ -49,6 +49,122 @@ test("structured cards, small outputs and special-character IDs retain their beh
   const encoded = compactChatPageMessages([{ ...message, id: "a&b" }], "a/b")[0].tools![0].resultUrl!;
   assert.equal(new URL(encoded, "http://test").searchParams.get("messageId"), "a&b");
   assert.match(encoded, /a%2Fb/);
+});
+
+
+test("deferred workspace mutations preserve saved identities and bounded valid content in tools and parts", () => {
+  for (const type of ["plan", "canvas"] as const) {
+    for (const action of ["create", "edit"]) {
+      const saved = {
+        content: "Stored document ".repeat(5_000) + "FULL_DOCUMENT_END",
+        id: `saved-${type}`, type, name: "Saved title", workspaceLink: `workspace://${type}/saved-${type}`,
+      };
+      const tool = {
+        id: `tool-${action}-${type}`, name: `mcp__metis_ai__${action}_${type}`, kind: type, status: "completed",
+        input: JSON.stringify({ id: "submitted-id", title: "Submitted title", content: "Submitted ".repeat(5_000) }),
+        result: JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(saved) }] } }),
+      };
+      const source: ChatMessage = { ...message, tools: [tool], parts: [{ type: "tool", ...tool }] };
+      const original = JSON.stringify(source);
+      const compact = compactChatPageMessages([source], "chat")[0];
+      const preview = compact.tools![0];
+      const summary = JSON.parse(preview.result!);
+      assert.equal(summary.id, saved.id);
+      assert.equal(summary.name, saved.name);
+      assert.equal(summary.workspaceLink, saved.workspaceLink);
+      assert.equal(summary.content, saved.content.slice(0, 256));
+      assert.ok(preview.result!.length < 2_048);
+      assert.ok(preview.inputUrl);
+      assert.ok(preview.resultUrl);
+      assert.ok(!preview.result!.includes("FULL_DOCUMENT_END"));
+      const parsed = type === "plan" ? planFromToolPayload(preview.input, preview.result) : canvasFromToolPayload(preview.input, preview.result);
+      assert.equal(parsed?.workspaceLink, saved.workspaceLink);
+      assert.equal(parsed?.title, saved.name);
+      assert.equal(compact.parts![0].type === "tool" && compact.parts![0].result, preview.result);
+      assert.equal(JSON.stringify(source), original);
+    }
+  }
+});
+
+test("deferred memory mutations retain stored scope, identity and text through provider envelopes", () => {
+  for (const envelope of ["content", "structuredContent", "structured_content"]) {
+    for (const action of ["add_memory", "edit_memory"]) {
+      const saved = { scope: "chat", memory: { id: "stored-memory", title: "Stored fact", content: "Stored fact ".repeat(5_000) } };
+      const payload = envelope === "content"
+        ? { content: [{ type: "text", text: JSON.stringify(saved) }] }
+        : { [envelope]: saved };
+      const source: ChatMessage = {
+        ...message, parts: undefined,
+        tools: [{
+          id: "memory-tool", name: "call_mcp_tool", kind: "mcp", status: "completed",
+          input: JSON.stringify({ toolName: action, arguments: { scope: "global", content: "Submitted fact" } }),
+          result: JSON.stringify(payload),
+        }],
+      };
+      const preview = compactChatPageMessages([source], "chat")[0].tools![0];
+      const summary = JSON.parse(preview.result!);
+      assert.equal(summary.scope, "chat");
+      assert.equal(summary.memory.id, "stored-memory");
+      assert.equal(summary.memory.title, "Stored fact");
+      assert.equal(summary.memory.content, saved.memory.content.slice(0, 256).trim());
+      assert.deepEqual(memoryCardFromPayload(preview.name, preview.input, preview.result, preview.status), {
+        title: action === "add_memory" ? "Saved Chat Memory" : "Updated Chat Memory",
+        body: saved.memory.content.slice(0, 256).trim(),
+      });
+      assert.ok(preview.result!.length < 2_048);
+      assert.ok(preview.resultUrl);
+    }
+  }
+});
+
+test("deferred failed mutations preserve error flags without exposing a saved identity", () => {
+  for (const failure of [
+    { isError: true, content: [{ type: "text", text: JSON.stringify({ id: "unsafe-id", content: "x".repeat(5_000) }) }] },
+    { structuredContent: { success: false, error: "Storage rejected", padding: "x".repeat(5_000) } },
+    { structured_content: { status: "failed", error: { message: "Provider rejected" }, padding: "x".repeat(5_000) } },
+    { ok: false, padding: "x".repeat(5_000) },
+  ]) {
+    const tool = { id: "failed-tool", name: "create_plan", kind: "plan" as const, status: "completed", input: '{"id":"submitted-id","content":"Draft"}', result: JSON.stringify(failure) };
+    const preview = compactChatPageMessages([{ ...message, tools: [tool], parts: undefined }], "chat")[0].tools![0];
+    const summary = JSON.parse(preview.result!);
+    assert.equal(summary.isError, true);
+    assert.equal(typeof summary.error, "string");
+    assert.equal(summary.id, undefined);
+    assert.equal(summary.workspaceLink, undefined);
+    assert.ok(preview.resultUrl);
+    assert.ok(preview.result!.length < 2_048);
+  }
+  const failed = compactChatPageMessages([{
+    ...message, parts: undefined,
+    tools: [{ id: "failed-status", name: "edit_canvas", kind: "canvas", status: "error", result: JSON.stringify({ id: "unsafe-id", content: "x".repeat(5_000) }) }],
+  }], "chat")[0].tools![0];
+  assert.equal(JSON.parse(failed.result!).isError, true);
+  assert.equal(JSON.parse(failed.result!).id, undefined);
+  const nestedMemory = compactChatPageMessages([{
+    ...message, parts: undefined,
+    tools: [{ id: "failed-memory", name: "add_memory", kind: "memory", status: "completed", result: JSON.stringify({ memory: { id: "unsafe-id", scope: "project", error: "Memory rejected", content: "x".repeat(5_000) } }) }],
+  }], "chat")[0].tools![0];
+  assert.deepEqual(JSON.parse(nestedMemory.result!), { isError: true, error: "Memory rejected", scope: "project" });
+});
+
+test("mutation compaction never promotes submitted identities or adds bulk", () => {
+  const input = JSON.stringify({ id: "submitted-id", content: "Submitted ".repeat(5_000) });
+  const inputOnly = compactChatPageMessages([{
+    ...message, parts: undefined, tools: [{ id: "input-only", name: "create_plan", kind: "plan", status: "completed", input }],
+  }], "chat")[0].tools![0];
+  assert.equal(inputOnly.result, undefined);
+  assert.equal(inputOnly.resultUrl, undefined);
+  assert.ok(inputOnly.inputUrl);
+  const noIdentity = compactChatPageMessages([{
+    ...message, parts: undefined, tools: [{ ...inputOnly, result: JSON.stringify({ padding: "x".repeat(5_000) }) }],
+  }], "chat")[0].tools![0];
+  assert.ok(!noIdentity.result!.includes("submitted-id"));
+  const escaped = compactChatPageMessages([{
+    ...message, parts: undefined,
+    tools: [{ id: "escaped", name: "add_memory", kind: "memory", status: "completed", result: JSON.stringify({ scope: "project", memory: { id: "stored-id", content: "\u0001".repeat(5_000), title: "\u0002".repeat(5_000) } }) }],
+  }], "chat")[0].tools![0];
+  assert.equal(JSON.parse(escaped.result!).memory.id, "stored-id");
+  assert.ok(escaped.result!.length < 2_048);
 });
 
 test("paged API returns compact tools and owner-only endpoint retrieves full tools and parts", async () => {

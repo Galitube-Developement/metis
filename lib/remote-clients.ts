@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { getDatabase, isSqliteBusyError, transaction } from "@/lib/sqlite";
+import { queueRemotePresence, getRemotePresence } from "@/lib/remote-presence";
 import { normalizePermissionMode, validateUserRemoteRequest, type RemotePermissionMode } from "@/lib/remote-security";
 import { redactSensitiveData } from "@/lib/agent-trace";
 
@@ -241,13 +242,29 @@ export function registerRemoteClient(token: string, input: {
   return { client: getRemoteClient(id, enrollment.ownerId), credential };
 }
 
+// Expose the accepted live heartbeat immediately while its durable write waits.
+// Policies, ownership and revocation always come from the database.
+function withPresence(client:RemoteClient):RemoteClient {
+ const update=getRemotePresence(client.id,client.ownerId);
+ if(!update || client.status==="revoked" || (client.lastSeenAt && client.lastSeenAt>update.at))return client;
+ let capabilities=client.capabilities;
+ if(update.status==="online" && typeof update.desktopGui==="boolean"){
+  const next=new Set(capabilities);
+  if(update.desktopGui)next.add("desktop_gui");else next.delete("desktop_gui");
+  capabilities=[...next];
+ }
+ return {...client,status:update.status,capabilities,
+  ...(update.status==="online"?{lastSeenAt:update.at}:{}),
+  ...(update.address?{address:update.address}:{}),
+  updatedAt:client.updatedAt>update.at?client.updatedAt:update.at};
+}
 export function listRemoteClients(ownerId: string) {
   return (getDatabase().prepare(
     `SELECT id, owner_id as ownerId, name, status, os, architecture, version, hostname,
             address, capabilities, policy, permission_mode as permissionMode, last_seen_at as lastSeenAt, created_at as createdAt,
             updated_at as updatedAt, revoked_at as revokedAt
      FROM remote_clients WHERE owner_id = ? ORDER BY updated_at DESC`,
-  ).all(ownerId) as Array<Record<string, unknown>>).map(mapClient);
+  ).all(ownerId) as Array<Record<string, unknown>>).map(row=>withPresence(mapClient(row)));
 }
 
 export function getRemoteClient(id: string, ownerId?: string) {
@@ -257,7 +274,7 @@ export function getRemoteClient(id: string, ownerId?: string) {
             updated_at as updatedAt, revoked_at as revokedAt
      FROM remote_clients WHERE id = ? AND (? IS NULL OR owner_id = ?)`,
   ).get(id, ownerId ?? null, ownerId ?? null) as Record<string, unknown> | undefined;
-  return row ? mapClient(row) : null;
+  return row ? withPresence(mapClient(row)) : null;
 }
 
 export function authenticateRemoteClient(id: string, credential: string, markSeen = true) {
@@ -273,14 +290,9 @@ export function authenticateRemoteClient(id: string, credential: string, markSee
   const expected = Buffer.from(row.secretHash);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
   if (markSeen) {
-    try {
-      getDatabase().prepare("UPDATE remote_client_credentials SET last_used_at = ? WHERE client_id = ? AND secret_hash = ?")
-        .run(iso(), id, row.secretHash);
-    } catch (error) {
-      // Credential usage timestamps are telemetry. A busy database must not
-      // reject an otherwise valid remote-client authentication.
-      ignoreBusyTelemetry(error, "credential last-used update");
-    }
+    const at=iso();
+    queueRemotePresence({clientId:id,ownerId:row.ownerId,status:"online",at,
+      credentialHash:row.secretHash,credentialUsedAt:at});
     markRemoteClientSeen(id, undefined, true);
   }
   return { clientId: id, ownerId: row.ownerId };
@@ -290,19 +302,11 @@ export function markRemoteClientSeen(id: string, address?: string, force = false
   const nowMs = Date.now();
   const lastWrittenAt = remoteSeenWrittenAt.get(id) || 0;
   if (!force && nowMs - lastWrittenAt < REMOTE_SEEN_WRITE_INTERVAL_MS) return false;
-  const now = new Date(nowMs).toISOString();
-  try {
-    getDatabase().prepare(
-      "UPDATE remote_clients SET status = 'online', last_seen_at = ?, address = COALESCE(?, address), updated_at = ? WHERE id = ? AND revoked_at IS NULL",
-    ).run(now, address ?? null, now, id);
-    remoteSeenWrittenAt.set(id, nowMs);
-    return true;
-  } catch (error) {
-    // Heartbeats are advisory presence telemetry. Never let them become an
-    // uncaught WebSocket exception or take down unrelated agent streams.
-    ignoreBusyTelemetry(error, "heartbeat presence update");
-    return false;
-  }
+  const client=getRemoteClient(id);
+  if(!client || client.status==="revoked")return false;
+  const queued=queueRemotePresence({clientId:id,ownerId:client.ownerId,status:"online",at:new Date(nowMs).toISOString(),...(address?{address}:{})});
+  if(queued)remoteSeenWrittenAt.set(id,nowMs);
+  return queued;
 }
 
 export function updateRemoteClientDesktopCapability(id: string, available: boolean) {
@@ -310,31 +314,14 @@ export function updateRemoteClientDesktopCapability(id: string, available: boole
   if (!client) return false;
   const current = client.capabilities.includes("desktop_gui");
   if (current === available) return true;
-  const next = available
-    ? [...client.capabilities, "desktop_gui"]
-    : client.capabilities.filter((item) => item !== "desktop_gui");
-  try {
-    getDatabase().prepare("UPDATE remote_clients SET capabilities = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL")
-      .run(JSON.stringify(next), iso(), id);
-    return true;
-  } catch (error) {
-    ignoreBusyTelemetry(error, "desktop capability update");
-    return false;
-  }
+  return queueRemotePresence({clientId:id,ownerId:client.ownerId,status:"online",at:iso(),desktopGui:available});
 }
 
 export function markRemoteClientOffline(id: string) {
   remoteSeenWrittenAt.delete(id);
-  try {
-    getDatabase().prepare("UPDATE remote_clients SET status = 'offline', updated_at = ? WHERE id = ? AND revoked_at IS NULL")
-      .run(iso(), id);
-    return true;
-  } catch (error) {
-    // last_seen_at is still enough to detect stale clients if this best-effort
-    // status write loses a race with another SQLite writer.
-    ignoreBusyTelemetry(error, "offline presence update");
-    return false;
-  }
+  const client=getRemoteClient(id);
+  if(!client || client.status==="revoked")return false;
+  return queueRemotePresence({clientId:id,ownerId:client.ownerId,status:"offline",at:iso()});
 }
 
 export function updateRemoteClient(id: string, ownerId: string, patch: {

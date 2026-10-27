@@ -60,6 +60,18 @@ test("ordinary server arguments and malformed input do not invent MCP destinatio
   assert.equal(toolSourceLabel({name:"call_mcp_tool",source:"mcp",kind:"mcp",input:'{"server":'}),null);
 });
 
+test("qualified workspace mutation tools keep their artifact kinds", () => {
+  for (const [tool, kind] of [["create_plan", "plan"], ["edit_plan", "plan"], ["create_canvas", "canvas"], ["edit_canvas", "canvas"]] as const) {
+    for (const name of [tool, `mcp__metis_ai__${tool}`, `tools.mcp__metis_ai__${tool}`]) {
+      assert.equal(classifyToolKind(name), kind, name);
+      assert.equal(enrichToolDisplay({ name, kind: "mcp" }).kind, kind, name);
+    }
+    assert.equal(classifyToolKind("call_mcp_tool", { server: "metis_ai", tool, arguments: {} }), kind);
+  }
+  assert.equal(classifyToolKind("mcp__metis_ai__create_planet"), "mcp");
+  assert.equal(classifyToolKind("execute_command", { command: "create_canvas" }), "shell");
+});
+
 type LayoutTool = { id: string; callId?: string; name?: string; kind?: string; status?: string; input?: string; result?: string; todos?: Array<{ content: string }> };
 type ReconcileTool = {
   id: string;
@@ -314,6 +326,22 @@ test("layoutAssistantParts keeps a running intermediate plan out of the finished
   if (planBlock?.type === "tools") {
     const plan = planBlock.tools.find((tool) => tool.id === "plan-running");
     assert.equal(plan?.status, "in_progress");
+  }
+});
+
+test("structured MCP results retain saved artifact content and identity", () => {
+  for (const field of ["structuredContent", "structured_content"]) {
+    const plan = { id: "saved-plan", title: "Stored plan", content: "Stored milestones", workspaceLink: "workspace://plan/saved-plan" };
+    assert.deepEqual(planFromToolPayload(undefined, JSON.stringify({ content: [], [field]: plan })), {
+      title: plan.title, content: plan.content, workspaceLink: plan.workspaceLink,
+    });
+    const canvas = canvasFromToolPayload(undefined, JSON.stringify({ content: [], [field]: { id: "saved-canvas", name: "Stored canvas", content: "Stored document" } }));
+    assert.equal(canvas?.title, "Stored canvas");
+    assert.equal(canvas?.content, "Stored document");
+    assert.equal(canvas?.workspaceLink, "workspace://canvas/saved-canvas");
+    const memory = memoryCardFromPayload("edit_memory", undefined, JSON.stringify({ [field]: { scope: "chat", memory: { id: "saved-memory", content: "Stored fact" } } }), "completed");
+    assert.equal(memory.title, "Updated Chat Memory");
+    assert.equal(memory.body, "Stored fact");
   }
 });
 

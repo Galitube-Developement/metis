@@ -5,6 +5,7 @@ import {
   getChat,
   updateChat,
   upsertMessage,
+  checkpointAssistantMessage,
   type Chat,
   type ToolPart,
 } from "@/lib/db-store";
@@ -211,7 +212,7 @@ async function runAlternativeProviderAttempt(
     };
   };
   const checkpointNow = () => {
-    upsertMessage(job.chatId, {
+    checkpointAssistantMessage(job.chatId, {
       id: assistantMessageId,
       role: "assistant",
       ...durableMessageProjection(),

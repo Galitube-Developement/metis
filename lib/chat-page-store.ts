@@ -3,6 +3,7 @@ import type { Chat, ChatMessage, ToolPart } from "@/lib/store";
 import { compactChatPageMessages } from "@/lib/chat-page-payload";
 import { currentChatTodos } from "@/lib/chat-todos";
 import { syncChatSearch } from "@/lib/chat-search-store";
+import { applyChatCheckpoints } from "@/lib/chat-checkpoints";
 
 export const CHAT_EVENT_PAGE_SIZE = 24;
 export const CHAT_PAGE_BYTE_BUDGET = 256 * 1024;
@@ -12,6 +13,12 @@ export const CHAT_PAGE_SCHEMA = `
   chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
   revision INTEGER NOT NULL DEFAULT 1, ready_revision INTEGER NOT NULL DEFAULT 0,
   metadata TEXT, total INTEGER NOT NULL DEFAULT 0
+ );
+ CREATE TABLE IF NOT EXISTS chat_message_checkpoints (
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL, position INTEGER NOT NULL,
+  data TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(chat_id,message_id)
  );
  CREATE TABLE IF NOT EXISTS chat_page_messages (
   chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -98,7 +105,32 @@ function messageRows(db: DatabaseSync, chatId: string, message: ChatMessage, pos
  for(let i=0;i<events.length;i++)eventInsert.run(chatId,message.id,i,JSON.stringify(events[i]));
 }
 
-/** Called in the canonical write transaction. The original JSON remains authoritative. */
+/** Update one streaming message without rewriting the canonical history blob.
+ * The caller holds the writer transaction and has verified both indexes current. */
+export function syncChatCheckpointPage(db: DatabaseSync, chat: Chat, message: ChatMessage, position: number) {
+ const state=pageState(db,chat.id)!;
+ const search=db.prepare("SELECT ready_revision FROM chat_search_state WHERE chat_id=?").get(chat.id) as {ready_revision:number}|undefined;
+ if(state.ready_revision!==state.revision || search?.ready_revision!==state.revision) throw new Error("Streaming indexes changed before checkpoint");
+ db.prepare("UPDATE chat_page_state SET revision=revision+1 WHERE chat_id=?").run(chat.id);
+ messageRows(db,chat.id,message,position);
+ syncChatSearch(db,chat,state.revision+1,{message,position});
+ const {messages: _messages,...metadata}=chat;
+ db.prepare("UPDATE chat_page_state SET metadata=?,ready_revision=revision WHERE chat_id=?").run(JSON.stringify(metadata),chat.id);
+}
+
+/** Append after a canonical json_insert, without hydrating historical messages.
+ * Caller verified page/search readiness before its write advanced the revision. */
+export function syncChatAppendedPage(db: DatabaseSync, chat: Chat, message: ChatMessage, position: number) {
+ const state=pageState(db,chat.id)!;
+ if(state.ready_revision!==state.revision-1) throw new Error("Append index changed before submission");
+ messageRows(db,chat.id,message,position);
+ syncChatSearch(db,chat,state.revision,{message,position});
+ const {messages:_messages,...metadata}=chat;
+ db.prepare("UPDATE chat_page_state SET metadata=?,total=?,ready_revision=revision WHERE chat_id=?")
+  .run(JSON.stringify(metadata),position+1,chat.id);
+}
+
+/** Called in the canonical write transaction. Full saves consolidate streaming deltas. */
 export function syncChatPage(db: DatabaseSync, chat: Chat, change?: { message?: ChatMessage; position?: number; metadataOnly?: boolean }) {
  const state=pageState(db,chat.id);
  syncChatSearch(db,chat,state?.revision ?? 1,change);
@@ -123,8 +155,8 @@ export function rebuildChatPage(db: DatabaseSync,id: string) {
  if(!state || pageIsReady(db,id))return;
  const row=db.prepare("SELECT data,updated_at FROM chats WHERE id=?").get(id) as {data:string;updated_at:string}|undefined;
  if(!row)return;
- const chat=JSON.parse(row.data) as Chat;
- chat.updatedAt=row.updated_at;
+ const chat=applyChatCheckpoints(db,JSON.parse(row.data) as Chat);
+ if(row.updated_at>chat.updatedAt)chat.updatedAt=row.updated_at;
  // No writer lock while parsing. A concurrent checkpoint wins; callers retry.
  db.exec("BEGIN IMMEDIATE");
  try {

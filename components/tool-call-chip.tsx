@@ -506,6 +506,19 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  const preparingTool = latestPreparingTool(entries);
  const groupTitle = activityGroupLabel(entries, combinedThinking);
   const groupOpen = userOpen ?? Boolean(live || autoExpand);
+  const openWorkspace = (tool: ToolCallData) => {
+    const url = tool.inputUrl || tool.resultUrl;
+    if (!url) { onOpenWorkspace?.(tool); return; }
+    void loadToolPayload(url).then(payload => onOpenWorkspace?.({ ...tool, ...payload }))
+      .catch(() => toast.error("Could not load workspace details"));
+  };
+  const buildToolPlan = (tool: ToolCallData, plan: { title: string; content: string; workspaceLink?: string }, options?: { multiAgent?: boolean }) => {
+    const url = tool.inputUrl || tool.resultUrl;
+    if (!url) { onBuildPlan?.(tool, plan, options); return; }
+    void loadToolPayload(url).then(payload => onBuildPlan?.({ ...tool, ...payload },
+      planFromToolPayload(payload.input, payload.result, tool.detail) || plan, options))
+      .catch(() => toast.error("Could not load full plan"));
+  };
   const renderTool = (tool: ToolCallData, nested = false) => (
     <ToolCallChip
       {...tool}
@@ -518,16 +531,8 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         void loadToolPayload(url).then(payload=>onOpenDiff?.({...tool,...payload})).catch(()=>toast.error("Could not load file details"));
       }}
       onOpenSubagent={() => onOpenSubagent?.(tool)}
-      onOpenWorkspace={() => {
-        const url=tool.inputUrl || tool.resultUrl;
-        if(!url){onOpenWorkspace?.(tool);return;}
-        void loadToolPayload(url).then(payload=>onOpenWorkspace?.({...tool,...payload})).catch(()=>toast.error("Could not load workspace details"));
-      }}
-      onBuildPlan={(plan, options) => {
-        const url=tool.inputUrl || tool.resultUrl;
-        if(!url){onBuildPlan?.(tool,plan,options);return;}
-        void loadToolPayload(url).then(payload=>onBuildPlan?.({...tool,...payload},planFromToolPayload(payload.input,payload.result,tool.detail) || plan,options)).catch(()=>toast.error("Could not load full plan"));
-      }}
+      onOpenWorkspace={() => openWorkspace(tool)}
+      onBuildPlan={(plan, options) => buildToolPlan(tool, plan, options)}
       buildDisabled={buildDisabled}
       onOpenRaw={() => {
         const url = tool.inputUrl || tool.resultUrl;
@@ -556,8 +561,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  )}
  {preparingTool ? <ToolPreparationDetails name={preparingTool.name} kind={preparingTool.kind} source={preparingTool.source} characters={!groupOpen ? preparingTool.inputChars : undefined}/> : <span className="truncate">{groupTitle}</span>}
  </button>
- <div key="entries" id={entriesId} hidden={!groupOpen} className="mt-1 flex flex-col gap-1 pl-4">
+ <div key="entries" id={entriesId} className="flex flex-col">
  {combinedThinking?.text || combinedThinking?.done === false ? (
+ <div hidden={!groupOpen} className="mt-1 pl-4">
  <ThinkingBlock
  key="thinking"
  text={combinedThinking.text || "…"}
@@ -565,9 +571,16 @@ export const ToolCallGroup = memo(function ToolCallGroup({
  durationMs={combinedThinking.durationMs}
  embedded
  />
+ </div>
  ) : null}
  {entries.map((tool, index) => (
- <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>{renderTool(tool, true)}</ArrivalFade>
+ <ArrivalFade key={toolReactKey(tool, index)} bornAt={toolBornAt(tool)}>
+   <div hidden={!groupOpen} className="mt-1 pl-4">{renderTool(tool, true)}</div>
+   <ToolCallPreview inline tool={tool} workspaces={workspaces}
+     onOpenWorkspace={() => openWorkspace(tool)}
+     onBuildPlan={(plan, options) => buildToolPlan(tool, plan, options)}
+     buildDisabled={buildDisabled} />
+ </ArrivalFade>
  ))}
  </div>
  </div>

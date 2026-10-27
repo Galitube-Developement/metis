@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolPart } from "@/lib/store";
 import { estimateContextTokens } from "@/lib/context-window";
-import { enrichToolDisplay } from "@/lib/tool-call-display";
+import { enrichToolDisplay, unwrapToolRecord } from "@/lib/tool-call-display";
+import { isMemoryScope } from "@/lib/memory-scopes.mjs";
 import { editedFileFromTool } from "@/lib/edited-files";
 
 const INLINE_PAYLOAD_LIMIT = 2_048;
@@ -14,6 +15,69 @@ function previewInput(input: string): string {
       typeof value === "string" && value.length > PREVIEW_LENGTH ? value.slice(0, PREVIEW_LENGTH) + "…" : value);
     return preview.length <= INLINE_PAYLOAD_LIMIT ? preview : input.slice(0, PREVIEW_LENGTH);
   } catch { return input.slice(0, PREVIEW_LENGTH); }
+}
+
+/** Preserve saved mutation identities while the full result remains deferred. */
+function previewMutationResult(tool: ToolPart, name: string): string {
+  const fallback = tool.result!.slice(0, PREVIEW_LENGTH);
+  const action = name.replace(/^.*__/, "").toLowerCase();
+  const workspaceType = /^(?:create|edit)_(plan|canvas)$/.exec(action)?.[1];
+  if (!workspaceType && !/^(?:add|edit)_memory$/.test(action)) return fallback;
+  const outer = unwrapToolRecord(tool.result);
+  if (!outer) return fallback;
+  const structured = unwrapToolRecord(outer.structuredContent ?? outer.structured_content);
+  const record = { ...outer, ...structured };
+  const nested = record[workspaceType || "memory"];
+  const saved = nested && typeof nested === "object" && !Array.isArray(nested)
+    ? { ...record, ...(nested as Record<string, unknown>) } : record;
+  const scope = [record.scope, saved.scope].find(isMemoryScope);
+  const text = (value: unknown, length = PREVIEW_LENGTH) =>
+    typeof value === "string" && value.trim() ? value.trim().slice(0, length) : undefined;
+  const failed = [outer, structured, saved].find(value => value && (
+    value.isError === true || value.error || value.ok === false || value.success === false
+    || /^(error|failed|declined|canceled|cancelled)$/i.test(String(value.status || ""))
+  ));
+  if (failed || /^(error|failed|declined|canceled|cancelled)$/i.test(tool.status)) {
+    const error = failed?.error;
+    return JSON.stringify({
+      isError: true,
+      error: text(error) || text(error && typeof error === "object" ? (error as Record<string, unknown>).message : undefined)
+        || "Tool operation failed",
+      ...(scope ? { scope } : {}),
+    });
+  }
+  if (!/^(completed|success|succeeded|done)$/i.test(tool.status)) return fallback;
+  const id = typeof saved.id === "string" && saved.id.trim().length <= 200 ? text(saved.id, 200) : undefined;
+  let summary: Record<string, unknown>;
+  if (workspaceType) {
+    const link = typeof saved.workspaceLink === "string" && saved.workspaceLink.trim().length <= 512
+      ? saved.workspaceLink.trim() : undefined;
+    const validLink = link?.startsWith(`workspace://${workspaceType}/`) && /^workspace:\/\/(?:plan|canvas)\/[^/?#\s]+$/.test(link);
+    if ((!id && !validLink) || (saved.type && saved.type !== workspaceType)) return fallback;
+    summary = {
+      ...(id ? { id } : {}), type: workspaceType,
+      name: text(saved.name ?? saved.title, 200),
+      content: text(saved.content),
+      workspaceLink: validLink ? link : `workspace://${workspaceType}/${encodeURIComponent(id!)}`,
+    };
+  } else {
+    if (!id) return fallback;
+    summary = {
+      ...(scope ? { scope } : {}),
+      memory: { id, ...(scope ? { scope } : {}), content: text(saved.content ?? saved.text), title: text(saved.title, 200) },
+    };
+  }
+  let preview = JSON.stringify(summary);
+  if (preview.length > INLINE_PAYLOAD_LIMIT) {
+    delete summary.content;
+    delete summary.name;
+    if (summary.memory) {
+      delete (summary.memory as Record<string, unknown>).content;
+      delete (summary.memory as Record<string, unknown>).title;
+    }
+    preview = JSON.stringify(summary);
+  }
+  return preview.length <= INLINE_PAYLOAD_LIMIT ? preview : fallback;
 }
 
 export function compactChatPageMessages(messages: ChatMessage[], chatId: string): ChatMessage[] {
@@ -39,7 +103,7 @@ export function compactChatPageMessages(messages: ChatMessage[], chatId: string)
         detail: tool.detail?.slice(0,512),
         ...(tool.todos ? {todos:tool.todos.slice(0,20).map(todo=>({...todo,content:todo.content.slice(0,512)}))}:{}),
         ...(deferNested ? { resultUrl: url, subagent: tool.subagent ? { agentId: tool.subagent.agentId, chatId: tool.subagent.chatId, title: tool.subagent.title?.slice(0,512), model: tool.subagent.model, mode: tool.subagent.mode, prompt: tool.subagent.prompt?.slice(0, PREVIEW_LENGTH) } : undefined, diff: tool.diff ? { additions: tool.diff.additions, deletions: tool.diff.deletions } : undefined } : {}),
-        ...(deferResult ? { result: tool.result!.slice(0, PREVIEW_LENGTH), resultUrl: url } : {}),
+        ...(deferResult ? { result: previewMutationResult(tool, display.name), resultUrl: url } : {}),
         ...(deferInput ? { input: previewInput(tool.input!), inputUrl: url } : {}),
       };
     };
