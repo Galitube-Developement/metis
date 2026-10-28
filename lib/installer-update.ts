@@ -118,17 +118,7 @@ export function buildInstallerUpdatePlan(input: InstallerUpdateInput): Installer
   const unitName = platform === "linux" ? installerUpdateUnitName(input.serviceName) : undefined;
 
   if (input.docker) {
-    const scriptSource = path.join(input.root, "public", "install", "docker.sh");
-    const version = input.channel === "releases" && tag ? tag : "latest";
-    return {
-      kind: "docker",
-      platform,
-      command: "/bin/bash",
-      args: [scriptSource, "--non-interactive", "--install-dir", input.root, "--version", version],
-      scriptSource,
-      logFile,
-      unitName,
-    };
+    throw new Error("Docker installations are no longer supported by the installer. Install natively in a separate directory and migrate your data separately.");
   }
 
   if (platform === "win32") {

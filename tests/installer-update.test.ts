@@ -61,24 +61,10 @@ test("native commit plans pin the selected SHA with --commit", () => {
   assert.equal(plan.args.includes("--version"), false);
 });
 
-test("Docker settings updates run docker.sh with the release tag", () => {
-  const plan = buildInstallerUpdatePlan({
-    ...base,
-    docker: true,
-    channel: "releases",
-    tag: "v1.0.5",
-    platform: "linux",
-  });
-  assert.equal(plan.kind, "docker");
-  assert.equal(plan.scriptSource, path.join(root, "public", "install", "docker.sh"));
-  assert.deepEqual(plan.args, [
-    plan.scriptSource,
-    "--non-interactive",
-    "--install-dir",
-    root,
-    "--version",
-    "v1.0.5",
-  ]);
+test("legacy container updates stop before planning a native migration", () => {
+  assert.throws(() => buildInstallerUpdatePlan({
+    ...base, docker: true, channel: "releases", tag: "v1.0.21", platform: "linux",
+  }), /separate directory.*migrate your data separately/);
 });
 
 test("macOS and Windows plans use the platform installer files", () => {

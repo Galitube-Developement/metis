@@ -58,9 +58,9 @@ test("default/latest freeze the stable tag once, including checksum and platform
 });
 
 test("explicit old tag and development commit use exactly that ref", () => {
-  const release = run(["--version", "v1.2.3", "--docker"]);
+  const release = run(["--version", "v1.2.3", "--native"]);
   assert.equal(release.status, 0, release.stderr);
-  assert.deepEqual(release.args, ["--docker", "--version", "v1.2.3"]);
+  assert.deepEqual(release.args, ["--native", "--version", "v1.2.3"]);
   assert.ok(release.calls.every(url => url.includes("/v1.2.3/")));
   const sha = "0123456789abcdef0123456789abcdef01234567";
   const commit = run(["--commit", sha]);

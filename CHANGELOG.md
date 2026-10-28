@@ -4,6 +4,11 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.21 — 2026-10-28
+
+- Distribute native installers only for Linux, macOS and Windows. Remove the container installer, image build/publishing pipeline and installation instructions.
+- Reject removed installation options and protect existing container installations from automatic conversion. Existing runtime detection and uninstall support remain available.
+
 ## v1.0.20 — 2026-10-28
 
 - Set a custom Codex context window in the model options menu, with compact K/M labels and an Apply confirmation. Pass validated context and compaction settings to new and resumed Codex turns without changing the user's global Codex configuration; model and account limits still apply.

@@ -172,7 +172,6 @@ export function UpdateSettingsPanel({
   const [busy, setBusy] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [installerUrl, setInstallerUrl] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [schedule, setSchedule] = useState<UpdateScheduleState | null>(null);
   const [scheduleTime, setScheduleTime] = useState("03:00");
@@ -310,7 +309,6 @@ export function UpdateSettingsPanel({
         activateInstallerMaintenanceScreen(updateMessage);
         return;
       }
-      setInstallerUrl(result.status === "external-installer" ? result.installerUrl || null : null);
       setMessage(result.message || "Installer update started.");
     } catch (error) {
       window.localStorage.removeItem(UPDATE_JOB_STORAGE_KEY);
@@ -349,7 +347,6 @@ export function UpdateSettingsPanel({
           onChange={(event) => {
             const next = event.target.value as UpdateChannel;
             setChannel(next);
-            setInstallerUrl(null);
             setMessage("");
             window.localStorage.setItem(STORAGE_KEY, next);
           }}
@@ -378,16 +375,6 @@ export function UpdateSettingsPanel({
       </div>
       {available && (channel === "releases" || channel === "commits") ? (
         <div className="flex flex-wrap items-center gap-2">
-          {channel === "releases" && installerUrl ? (
-            <a
-              href={installerUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-9 items-center rounded-md border border-border px-3 text-xs font-medium hover:bg-muted"
-            >
-              Open Docker installer
-            </a>
-          ) : null}
           <Button type="button" size="sm" onClick={() => void prepareUpdate()} disabled={busy || preparing}>
             {busy || preparing ? <LoaderCircle className="size-4 animate-spin" /> : "Update"}
           </Button>

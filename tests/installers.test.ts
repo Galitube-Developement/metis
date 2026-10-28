@@ -57,35 +57,24 @@ test("installer sources do not contain this deployment's machine path", () => {
   }
 });
 
-test("macos and windows installers default to native and offer explicit Docker", () => {
-  const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
-  const publicMacos = readFileSync(path.join(installerDir, "macos.sh"), "utf8");
-  for (const source of [macos, publicMacos]) {
-    assert.match(source, /--native/);
-    assert.match(source, /docker compose/);
-    assert.match(source, /if \(\( force_docker \)\)/);
-    assert.doesNotMatch(source, /force_native == 0 \)\) && command -v docker/);
-  }
-  const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
-  assert.match(windows, /-Native/);
-  assert.match(windows, /\$useDocker = \[bool\]\$Docker/);
-  assert.match(windows, /docker compose/);
-  assert.equal(existsSync(path.join(root, "Dockerfile")), true);
-  assert.equal(existsSync(path.join(root, "docker-compose.yml")), true);
-  assert.equal(existsSync(path.join(root, "docker", "entrypoint.sh")), true);
-});
-
-test("linux installer defaults to native systemd and requires --docker", () => {
-  const content = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
-  const publicContent = readFileSync(path.join(installerDir, "linux.sh"), "utf8");
-  for (const source of [content, publicContent]) {
-    assert.match(source, /--docker\s+Install with Docker Compose/);
-    assert.match(source, /--native\s+Install with Node\.js \+ systemd \(default\)/);
-    assert.match(source, /force_docker=1/);
-    assert.match(source, /if \(\( force_docker \)\)/);
-    assert.match(source, /Use either --docker or --native, not both/);
-    assert.doesNotMatch(source, /force_native == 0 \)\) && command -v docker/);
-  }
+test("removed installation options and legacy directories stop before mutations", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "metis-native-only-"));
+  try {
+    for (const file of ["linux.sh", "macos.sh"]) {
+      const script = path.join(installerDir, file);
+      const rejected = spawnSync("/bin/bash", [script, "--docker", "--dry-run"], { encoding: "utf8" });
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stdout + rejected.stderr, /no longer available/);
+      const dir = path.join(temp, file);
+      mkdirSync(dir);
+      const manifest = JSON.stringify({ installMethod: "docker", dataDir: "keep-me" });
+      writeFileSync(path.join(dir, ".metis-ai-install.json"), manifest);
+      const legacy = spawnSync("/bin/bash", [script, "--dry-run", "--install-dir", dir], { encoding: "utf8" });
+      assert.notEqual(legacy.status, 0);
+      assert.match(legacy.stdout + legacy.stderr, /legacy Docker installation/);
+      assert.equal(readFileSync(path.join(dir, ".metis-ai-install.json"), "utf8"), manifest);
+    }
+  } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 
 test("native service launchers expose saved Node and pnpm paths without a login shell", { skip: process.platform === "win32" }, () => {
@@ -286,14 +275,11 @@ test("installers print the Open URL and the .env path after install", () => {
       assert.ok(openAt >= 0 && envHintAt > openAt, `${file} must print the .env hint under Open`);
     }
   }
-  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
-  assert.match(docker, /Open: http:\/\/%s:%s/);
-  assert.match(docker, /You can change this\. Add: %s/);
 });
 
 test("the release script publishes every installer option", () => {
   const release = readFileSync(path.join(root, "scripts", "release.sh"), "utf8") + readFileSync(path.join(root, "scripts", "release-install-notes.sh"), "utf8");
-  assert.match(release, /metis-docker-install\.sh/);
+  assert.doesNotMatch(release, /metis-docker-install\.sh/);
   assert.match(release, /metis-install\.sh/);
   assert.match(release, /metis-install\.ps1/);
   assert.match(release, /metis-linux\.sh/);
@@ -301,8 +287,7 @@ test("the release script publishes every installer option", () => {
   assert.match(release, /metis-windows\.ps1/);
   assert.match(release, /releases\/download\/@TAG@\/metis-install\.sh/);
   assert.match(release, /releases\/download\/@TAG@\/metis-install\.ps1/);
-  assert.match(release, /ghcr\.io\/f1shyondrugs\/metis-ai/);
-  assert.match(release, /--docker/);
+  assert.doesNotMatch(release, /ghcr|docker/i);
   assert.match(release, /SHA256SUMS/);
 });
 
@@ -367,7 +352,6 @@ test("platform installers collect configuration before side effects and support 
 test("interactive installers ask for the install directory before making changes", () => {
   const linux = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
   const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
-  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
   const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
 
   for (const source of [linux, macos]) {
@@ -378,13 +362,6 @@ test("interactive installers ask for the install directory before making changes
     assert.ok(promptAt >= 0 && cloneAt > promptAt, "the path prompt must run before cloning");
   }
 
-  assert.ok(docker.includes('read_tty_line "Installation directory [$INSTALL_DIR]: "'));
-  assert.ok(docker.includes("if (( NON_INTERACTIVE == 0 )); then"));
-  assert.ok(
-    docker.indexOf('read_tty_line "Installation directory [$INSTALL_DIR]: "') <
-      docker.indexOf('mkdir -p "$INSTALL_DIR"'),
-    "the Docker path prompt must run before directories are created",
-  );
   assert.ok(windows.includes('$InstallDir = Ask "Installation directory" $InstallDir'));
 });
 
@@ -405,7 +382,6 @@ test("installers detect an existing Metis install from OS services", () => {
   const linux = readFileSync(path.join(root, "install", "linux.sh"), "utf8");
   const macos = readFileSync(path.join(root, "install", "macos.sh"), "utf8");
   const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
-  const docker = readFileSync(path.join(root, "public", "install", "docker.sh"), "utf8");
   assert.match(linux, /systemctl cat "\$\{service_name\}\.service"/);
   assert.match(linux, /Choice \[u\/r\/n\/a\]/);
   assert.match(linux, /--replace-existing/);
@@ -414,8 +390,6 @@ test("installers detect an existing Metis install from OS services", () => {
   assert.match(macos, /Choice \[u\/r\/n\/a\]/);
   assert.match(windows, /CurrentVersion\\Run/);
   assert.match(windows, /Choice \[u\/r\/n\/a\]/);
-  assert.match(docker, /systemctl cat metis-ai\.service/);
-  assert.match(docker, /--replace-existing/);
   assert.doesNotMatch(linux, /if \[\[ -f "\$dir\/uninstall\.sh" \]\]/);
   assert.doesNotMatch(linux, /bash "\$uninstaller" --install-dir/);
   assert.match(linux, /metis-keep-data/);
@@ -425,8 +399,6 @@ test("installers detect an existing Metis install from OS services", () => {
   assert.match(macos, /metis-keep-data/);
   assert.match(windows, /Uninstall-DetectedInstall/);
   assert.match(windows, /metis-keep-data/);
-  assert.doesNotMatch(docker, /existing_native_dir:-\}\/uninstall\.sh/);
-  assert.match(docker, /Stopping native Metis AI/);
   const uninstall = readFileSync(path.join(root, "install", "uninstall.sh"), "utf8");
   assert.match(uninstall, /discover_install_dir/);
   assert.match(uninstall, /WorkingDirectory/);
@@ -470,7 +442,6 @@ test("installers merge a previous .env on replace and upgrade", () => {
   const uninstall = readFileSync(path.join(root, "install", "uninstall.sh"), "utf8");
   const uninstallMac = readFileSync(path.join(root, "install", "uninstall-macos.sh"), "utf8");
   const uninstallWin = readFileSync(path.join(root, "install", "uninstall.ps1"), "utf8");
-  const docker = readFileSync(path.join(root, "public", "install", "docker.sh"), "utf8");
   for (const source of [linux, macos]) {
     assert.match(source, /preserve_existing_env/);
     assert.match(source, /merge_preserved_env/);
@@ -495,7 +466,6 @@ test("installers merge a previous .env on replace and upgrade", () => {
   assert.match(uninstall, /metis-keep-env/);
   assert.match(uninstallMac, /stash_keep_env/);
   assert.match(uninstallWin, /metis-keep-env/);
-  assert.match(docker, /if \[\[ ! -f "\$ENV_FILE" \]\]/);
 
   const awkFrom = (source: string) => {
     const begin = source.indexOf("# METIS_ENV_MERGE_BEGIN");
@@ -626,43 +596,6 @@ test("linux and macos installers start when HOME is unset", () => {
     });
     assert.match(output, /Usage:/);
   }
-});
-
-test("docker compose publishes host bind from .env and does not pin MCP to localhost", () => {
-  const compose = readFileSync(path.join(root, "docker-compose.yml"), "utf8");
-  assert.match(compose, /\$\{AI_CHAT_HOST:-127\.0\.0\.1\}:\$\{PORT:-3100\}:3100/);
-  assert.match(compose, /AI_CHAT_INTERNAL_ORIGIN: http:\/\/app:3100/);
-  assert.match(compose, /MCP_HOST: "0\.0\.0\.0"/);
-  assert.match(compose, /MCP_PUBLIC_URL: http:\/\/mcp:8787/);
-  assert.match(compose, /condition: service_healthy/);
-  assert.doesNotMatch(compose, /127\.0\.0\.1:\$\{MCP_PORT/);
-});
-
-test("docker installer writes reload.sh and honors AI_CHAT_HOST", () => {
-  const docker = readFileSync(path.join(installerDir, "docker.sh"), "utf8");
-  assert.match(docker, /reload\.sh/);
-  assert.match(docker, /force-recreate/);
-  assert.match(docker, /upsert_env AI_CHAT_HOST/);
-  assert.match(docker, /AI_CHAT_INTERNAL_ORIGIN: http:\/\/app:3100/);
-  assert.match(docker, /MCP_HOST: "0\.0\.0\.0"/);
-  assert.match(docker, /Apply: %s/);
-  assert.match(docker, /\$\{AI_CHAT_HOST:-127\.0\.0\.1\}:\$\{PORT:-3100\}:3100/);
-  assert.doesNotMatch(docker, /127\.0\.0\.1:\$\{MCP_PORT:-8787\}:8787/);
-});
-
-test("platform docker installers write a reload helper after .env edits", () => {
-  for (const file of ["linux.sh", "macos.sh"]) {
-    const content = readFileSync(path.join(root, "install", file), "utf8");
-    const published = readFileSync(path.join(installerDir, file), "utf8");
-    for (const source of [content, published]) {
-      assert.match(source, /write_docker_reload/);
-      assert.match(source, /Apply: %s/);
-      assert.match(source, /force-recreate/);
-    }
-  }
-  const windows = readFileSync(path.join(root, "install", "windows.ps1"), "utf8");
-  assert.match(windows, /reload\.ps1/);
-  assert.match(windows, /force-recreate/);
 });
 
 test("MCP gateway listens on MCP_HOST and defaults to 0.0.0.0 in Docker", () => {

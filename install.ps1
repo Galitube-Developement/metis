@@ -11,6 +11,7 @@ $isUninstall = $rawArgs.Count -gt 0 -and ([string]$rawArgs[0]).ToLowerInvariant(
 for ($i = 0; $i -lt $rawArgs.Count; $i++) {
   $arg = [string]$rawArgs[$i]
   switch -Regex ($arg) {
+    "^(--docker|-Docker)$" { throw "Docker installation is no longer available. Use the native installer." }
     "^(--version|-Version)$" {
       if ($i + 1 -ge $rawArgs.Count) { throw "$arg requires a value." }
       $i++; $requestedTag = [string]$rawArgs[$i]; $versionSet = $true

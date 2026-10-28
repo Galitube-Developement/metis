@@ -12,15 +12,6 @@ sed "s|@TAG@|$tag|g; s|@REPO@|$repo|g" <<'EOF'
 These commands install this release, @TAG@, even after a newer release exists.
 Run downloads in an empty directory. The bootstrap verifies its platform download.
 
-### Docker
-
-```bash
-curl -fsSL https://github.com/@REPO@/releases/download/@TAG@/SHA256SUMS -o SHA256SUMS
-curl -fsSL https://github.com/@REPO@/releases/download/@TAG@/metis-docker-install.sh -o metis-docker-install.sh
-grep ' metis-docker-install.sh$' SHA256SUMS | (if command -v sha256sum >/dev/null; then sha256sum --check; else shasum -a 256 --check; fi)
-bash metis-docker-install.sh --version @TAG@
-```
-
 ### Linux and macOS
 
 ```bash
@@ -30,7 +21,7 @@ grep ' metis-install.sh$' SHA256SUMS | (if command -v sha256sum >/dev/null; then
 bash metis-install.sh --version @TAG@
 ```
 
-Linux uses Node.js + systemd; macOS uses Node.js + launchd. Add `--docker` for Docker.
+Linux uses Node.js + systemd; macOS uses Node.js + launchd.
 
 ### Windows
 
@@ -44,7 +35,7 @@ if ((Get-FileHash .\metis-install.ps1 -Algorithm SHA256).Hash -ne $expected) { t
 powershell -NoProfile -ExecutionPolicy Bypass -File .\metis-install.ps1 -Version @TAG@
 ```
 
-Windows uses the native runtime by default. Add `-Docker` for Docker.
+Windows uses the native runtime.
 
 ### Source tarball
 

@@ -1,6 +1,6 @@
 {
   "name": "metis-ai",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "engines": {
@@ -26,8 +26,6 @@
     "typecheck": "tsc --noEmit",
     "bench:performance": "node --expose-gc --import tsx scripts/benchmark-performance.ts && node --import tsx scripts/benchmark-run-stream.ts",
     "test:release": "bash scripts/test-release-contract.sh",
-    "test:docker-stack": "bash scripts/test-docker-stack.sh",
-    "test:docker-installer": "bash scripts/test-docker-installer.sh",
     "audit:capabilities": "tsx scripts/capability-audit.ts",
     "test:security": "tsx --test scripts/security.test.ts tests/auth.test.ts tests/auth-security.test.ts tests/share-security.test.ts tests/request-network.test.ts tests/setup-security.test.ts tests/setup-onboarding.test.ts tests/user-isolation.test.ts tests/os-user-field.test.ts tests/admin-users.test.ts tests/root-agent-config.test.ts tests/user-execution-isolation.test.ts tests/posix-isolation-probe.test.ts tests/installer-security-defaults.test.ts tests/setup-token-windows.test.ts tests/mcp-execution-security.test.mjs tests/remote-gateway-lease.test.ts tests/remote-approval.test.ts tests/remote-approval-flow.test.ts tests/production-audit.test.ts",
     "test:note-backlog": "tsx --test tests/chat-memory-actions.test.ts tests/note-editor-lifecycle.test.ts tests/chat-continuity-context.test.ts tests/composer-references.test.ts tests/provider-limit-runtime.test.ts tests/provider-limit-settings.test.ts tests/provider-limit-runner.test.ts tests/provider-retry.test.ts tests/provider-retry-runner.test.ts tests/provider-retry-backoff.test.ts tests/provider-retry-cursor.test.ts tests/provider-retry-settings.test.ts tests/provider-retry-ui.test.tsx tests/codex-rate-limit.test.ts tests/notifications.test.ts tests/notification-preferences.test.ts tests/remote-notification-defaults.test.ts tests/sources-prompt.test.ts tests/notification-native.test.mjs tests/notification-mcp.test.mjs tests/notification-protocol.test.mjs"

@@ -71,43 +71,11 @@ remote clients and memories:
   <img src="./public/quick-start.png" alt="Quick start" width="100%">
 </p>
 
-### Versionierte Docker-Releases
-
-Für produktive Installationen ist der versionierte Docker-Installer der empfohlene
-Pfad. Er lädt ein unveränderliches Image aus GHCR, erstellt keine Git-Checkout-
-Abhängigkeit und legt Daten sowie Workspace außerhalb des Containers ab.
-
-```bash
-curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/download/v1.0.10/metis-docker-install.sh \\
-  -o metis-docker-install.sh
-bash metis-docker-install.sh --version v1.0.10
-```
-
-Für reproduzierbare Installationen kann ein konkreter Release-Tag verwendet werden:
-
-```bash
-bash metis-docker-install.sh --version v1.0.8
-```
-
-`latest` wird vor dem ersten Schreibzugriff in den zuletzt veröffentlichten
-stabilen Release-Tag aufgelöst; danach bleiben Image, Compose-Konfiguration und
-Manifest auf genau diesem Tag. Für reproduzierbare Installationen kann der Tag
-direkt mit `--version vX.Y.Z` gesetzt werden.
-
-Ein Upgrade wird mit demselben Befehl und einer neuen Version ausgeführt. Die
-Installationsdatei `.metis-release.json`, `.env`, das Datenverzeichnis und der
-Workspace bleiben dabei erhalten; der Installer ersetzt nur den Image-Tag und
-startet die Compose-Services mit `docker compose pull` und `up -d` neu.
-
 ### One-line installer
 
-The versioned Docker release installer above is recommended for production.
-This legacy cross-platform bootstrap remains useful for development checkouts
-or native installations. On Linux it installs native systemd; pass `-- --docker`
-for Compose. macOS and Windows also default to native background hosts; use
-`--docker` / `-Docker` to opt into Docker Compose. The one-liner
-downloads the platform installer to a temp file and executes that file — it does
-not run the installer from a pipe.
+Metis installs natively on Linux, macOS, and Windows. Linux uses systemd;
+macOS and Windows use native background hosts. The bootstrap downloads the
+platform installer to a temporary file and executes it, preserving interactive input.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)"
@@ -208,8 +176,7 @@ macOS use Bash options; Windows uses PowerShell named parameters.
 | Service/task name | `--service-name NAME` | `--service-name NAME` | `-ServiceName NAME` | `metis-ai` / `MetisAI` |
 | Public URL | `--public-url URL` | `--public-url URL` | `-PublicUrl URL` | `http://127.0.0.1:PORT` |
 | No prompts | `--non-interactive` | `--non-interactive` | `-NonInteractive` | off |
-| Native (no Docker) | default | `--native` | `-Native` | default on every platform |
-| Docker Compose | `--docker` | `--docker` | `-Docker` | opt-in |
+| Native runtime | default | `--native` | `-Native` | every platform |
 | Allow root agents (Host-Admins only) | `--allow-root-agents` | `--allow-root-agents` | — | on |
 | Disable root agents (also on upgrade) | `--deny-root-agents` | `--deny-root-agents` | — | preserve current setting |
 | Dry run | `--dry-run` | `--dry-run` | `-DryRun` | off |
@@ -273,22 +240,6 @@ pnpm dev
 
 Open [http://127.0.0.1:3100](http://127.0.0.1:3100) and sign in with the
 credentials from `.env`.
-
-### Docker Compose
-
-With Docker and Compose installed, start the app, worker and MCP gateway with:
-
-```bash
-docker compose up --build
-```
-
-Published ports follow `AI_CHAT_HOST` or `AI_CHAT_BIND` in `.env` (default
-`127.0.0.1`). Set either to `0.0.0.0` for LAN access, then apply with
-`./reload.sh` in the install directory. `docker compose restart` keeps the old
-bind address and environment.
-
-When `METIS_WORKSPACE` is unset, Compose mounts `./workspace` at `/workspace`.
-Set `METIS_WORKSPACE` to use a different host workspace directory.
 
 <details>
 <summary><strong>Production-style start</strong></summary>
