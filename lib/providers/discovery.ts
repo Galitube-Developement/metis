@@ -133,6 +133,7 @@ type DiscoveredModel = {
   contextWindowSource?: ProviderModelDefinition["contextWindowSource"];
   maxOutputTokens?: number;
   capabilities?: ProviderModel["capabilities"];
+  parameterSource?: ProviderModelDefinition["parameterSource"];
   parameters?: ProviderModelDefinition["parameters"];
   defaultParams?: ProviderModelDefinition["defaultParams"];
   tags?: string[];
@@ -205,7 +206,7 @@ export function parseDiscoveredModel(value: unknown): DiscoveredModel | null {
     ...(contextWindow ? { contextWindow, contextWindowDiscovered: true, contextWindowSource: "provider" as const } : {}),
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
     ...(capabilities ? { capabilities } : {}),
-    ...(parameters ? { parameters } : {}),
+    ...(parameters ? { parameters, parameterSource: "provider" as const } : {}),
     ...(defaultParams ? { defaultParams } : {}),
     ...(Array.isArray(item.tags) ? { tags: item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 32) } : {}),
   };
@@ -665,7 +666,8 @@ export function persistDiscoveredModels(
     contextWindowSource?: ProviderModelDefinition["contextWindowSource"];
     maxOutputTokens?: number;
     capabilities?: ProviderModel["capabilities"];
-    parameters?: ProviderModelDefinition["parameters"];
+    parameterSource?: ProviderModelDefinition["parameterSource"];
+  parameters?: ProviderModelDefinition["parameters"];
     defaultParams?: ProviderModelDefinition["defaultParams"];
     tags?: string[];
   }>,
@@ -696,6 +698,7 @@ export function persistDiscoveredModels(
       ...(contextWindow ? { contextWindow } : {}),
       ...(contextWindowSource ? { contextWindowSource } : {}),
       ...(model.maxOutputTokens ? { maxOutputTokens: model.maxOutputTokens } : {}),
+      ...(model.parameterSource ? { parameterSource: model.parameterSource } : {}),
       ...(model.parameters ? { parameters: model.parameters } : {}),
       ...(model.defaultParams ? { defaultParams: model.defaultParams } : {}),
       ...(model.tags ? { tags: model.tags } : {}),
@@ -706,9 +709,13 @@ export function persistDiscoveredModels(
 }
 
 export function providerAdvertisedOptions(
-  model: Pick<ProviderModelDefinition, "parameters" | "defaultParams">,
+  model: Pick<ProviderModelDefinition, "parameters" | "defaultParams" | "parameterSource">,
+  providerKey?: string,
 ) {
+  // Old Antigravity snapshots inferred effort from a model-name regex.
+  if(providerKey==="antigravity" && model.parameterSource!=="provider") return {parameters:[],defaultParams:[]};
   return {
+    ...(model.parameterSource ? {parameterSource:model.parameterSource} : {}),
     parameters: model.parameters || [],
     defaultParams: model.defaultParams || [],
   };
@@ -753,7 +760,7 @@ export function providerModelsForConnection(connection: ProviderConnectionWithSe
           },
           // A discovered model's option contract is authoritative. Do not
           // inherit catalog/family options that its API did not advertise.
-          ...providerAdvertisedOptions(model),
+          ...providerAdvertisedOptions(model, provider.key),
           ...(model.tags ? { tags: model.tags } : {}),
         };
       })
@@ -774,6 +781,7 @@ export function providerModelsForConnection(connection: ProviderConnectionWithSe
       });
   return sourceModels.map((model) => ({
     ...model,
+    parameters: [...(model.parameters || []).filter(parameter => !provider.configParameters?.some(config => config.id === parameter.id)), ...(provider.configParameters || [])],
     capabilities: {
       ...(provider.key === "ollama"
         ? providerModelCapabilityBaseline(provider)

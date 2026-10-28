@@ -31,11 +31,7 @@ export type ModelParamValue = {
   displayName?: string;
 };
 
-export type ModelParameter = {
-  id: string;
-  displayName?: string;
-  values: ModelParamValue[];
-};
+export type ModelParameter = import("@/lib/model-params").ModelParameter;
 
 export type ModelParamSelection = {
   id: string;
@@ -222,6 +218,7 @@ export async function GET(req: Request) {
           id: parameter.id,
           displayName: parameter.displayName,
           values: parameter.values.map((value) => ({ ...value })),
+          ...(parameter.customNumber ? { customNumber: { ...parameter.customNumber } } : {}),
         })) || [];
         const normalizedModel = {
           id: model.id,

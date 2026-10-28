@@ -37,16 +37,6 @@ const agentCapabilities = {
   subagents: true,
 } as const;
 
-const ANTIGRAVITY_EFFORT_PARAMETER = {
-  id: "effort",
-  displayName: "Effort",
-  values: [
-    { value: "low", displayName: "Low" },
-    { value: "medium", displayName: "Medium" },
-    { value: "high", displayName: "High" },
-  ],
-} as const;
-
 const CODEX_EFFORT_PARAMETER = {
   id: "effort",
   displayName: "Reasoning effort",
@@ -215,6 +205,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     name: "OpenAI Codex",
     description: "Codex agent through the official Codex SDK and CLI runtime.",
     kind: "codex-agent",
+    // Official Codex config.toml numeric overrides; this does not advertise server capacity.
+    configParameters: [{ id: "context", displayName: "Context (tokens)", values: [],
+      customNumber: { min: 1024, max: Number.MAX_SAFE_INTEGER, step: 1,
+        description: "Applied next turn. Model and account limits still apply. Leave automatic to use Codex defaults." } }],
     authTypes: ["oauth", "account", "api_key"],
     capabilities: agentCapabilities,
     models: models(
@@ -318,16 +312,14 @@ export const PROVIDERS: ProviderDefinition[] = [
         ["claude-opus-4-6-thinking", "Claude Opus 4.6 Thinking", ["reasoning", "agent"], "high"],
         ["claude-sonnet-4-6", "Claude Sonnet 4.6", ["balanced", "coding", "agent"], "medium"],
         ["gpt-oss-120b-medium", "GPT-OSS 120B", ["balanced", "agent"], "medium"],
-      ].map(([id, displayName, tags, effort]) => ({
+      ].map(([id, displayName, tags]) => ({
         id: id as string,
         displayName: displayName as string,
         tags: tags as string[],
-        ...( /^(gemini|gpt-oss)/i.test(id as string)
-          ? {
-              parameters: [ANTIGRAVITY_EFFORT_PARAMETER],
-              defaultParams: [{ id: "effort", value: effort as string }],
-            }
-          : {}),
+        // agy options are model-specific. Names do not prove --effort support.
+        parameters: [],
+        defaultParams: [],
+        parameterSource: "registry" as const,
       })),
     ),
     setupHint: "Default: paste a Gemini API key to run the official google-antigravity SDK. OAuth still uses the agy CLI if you want that path.",
@@ -379,7 +371,6 @@ export function getProviderModelDefinition(providerKey: string, modelId: string)
   // family, while keeping the discovered id and metadata authoritative.
   const family = provider.models.find((model) => {
     if (providerKey === "codex") return /^gpt-(?:5|6)(?:[.-]|$)/i.test(model.id) && /^gpt-(?:5|6)(?:[.-]|$)/i.test(modelId);
-    if (providerKey === "antigravity") return /^(gemini|gpt-oss)/i.test(model.id) && /^(gemini|gpt-oss)/i.test(modelId);
     return false;
   });
   return family;

@@ -1,5 +1,6 @@
 /** Shared, browser-safe issue contracts. Project IDs are the existing Metis projects. */
 export const ISSUE_STATUSES = ["in_progress", "todo", "backlog", "done", "canceled"] as const;
+export const ISSUE_BOARD_STATUSES = ["backlog", "todo", "in_progress", "done", "canceled"] as const satisfies readonly IssueStatus[];
 export const ISSUE_PRIORITIES = ["none", "low", "medium", "high", "urgent"] as const;
 export type IssueStatus = typeof ISSUE_STATUSES[number];
 export type IssuePriority = typeof ISSUE_PRIORITIES[number];

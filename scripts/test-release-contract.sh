@@ -30,20 +30,15 @@ if (manifest.channel !== "stable" || manifest.isRelease !== true || manifest.com
 console.log("STABLE_MANIFEST_OK");
 NODE
 
-bash public/install/docker.sh \
-  --version "$release_tag" \
-  --install-dir "$work_dir/install" \
-  --data-dir "$work_dir/data" \
-  --workspace "$work_dir/workspace" \
-  --dry-run | grep -F "image:     ghcr.io/f1shyondrugs/metis-ai:${release_tag}"
-[[ ! -e "$work_dir/install/.env" && ! -e "$work_dir/install/docker-compose.yml" ]]
-echo "DOCKER_DRY_RUN_OK"
-
-if bash public/install/docker.sh --version master --install-dir "$work_dir/invalid" --dry-run >/dev/null 2>&1; then
-  echo "Invalid release version was accepted" >&2
-  exit 1
-fi
-echo "INVALID_VERSION_REJECTED"
+for platform in linux macos; do
+  bash "public/install/$platform.sh" --install-dir "$work_dir/$platform" --dry-run > "$work_dir/$platform.log"
+  grep -F "$work_dir/$platform" "$work_dir/$platform.log"
+  [[ ! -e "$work_dir/$platform" ]]
+  if bash "public/install/$platform.sh" --docker --dry-run > "$work_dir/rejected.log" 2>&1; then
+    echo "Removed installation option was accepted" >&2; exit 1
+  fi
+done
+echo "NATIVE_DRY_RUN_OK"
 
 printf 'release payload for checksum test\n' > "$work_dir/metis-ai-${release_tag}.tar.gz"
 (cd "$work_dir" && sha256sum "metis-ai-${release_tag}.tar.gz" > SHA256SUMS)
@@ -52,5 +47,5 @@ echo "CHECKSUM_OK"
 
 bash scripts/release-install-notes.sh "$release_tag" f1shyondrugs/metis-ai > "$work_dir/install-notes.md"
 grep -F "bash metis-install.sh --version $release_tag" "$work_dir/install-notes.md"
-! grep -E "master|-- --version|download/latest" "$work_dir/install-notes.md"
+! grep -Ei "master|-- --version|download/latest|docker|ghcr" "$work_dir/install-notes.md"
 echo "PINNED_RELEASE_INSTRUCTIONS_OK"

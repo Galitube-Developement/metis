@@ -3,7 +3,7 @@ import type {
   ModelParamSelection,
   ModelParameter,
 } from "@/components/settings-panel";
-import { contextWindowForModel, formatContextWindow } from "@/lib/context-window";
+import { contextWindowForModel, contextWindowForSelection, formatContextWindow } from "@/lib/context-window";
 
 function paramSelection(
   model: ModelInfo,
@@ -36,7 +36,9 @@ export function modelAttrSummary(
   const parts: string[] = [];
 
   const context = paramSelection(model, params, "context");
-  if (context) parts.push(displayLabel(context.param, context.value));
+  if (context) parts.push(context.param.customNumber
+    ? formatContextWindow(contextWindowForSelection(model, params))
+    : displayLabel(context.param, context.value));
   else {
     const windowLabel = formatContextWindow(contextWindowForModel(model));
     if (windowLabel) parts.push(windowLabel);

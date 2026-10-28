@@ -38,7 +38,7 @@ use install.ps1 for the one-line installer.
 
 Options: -InstallDir, -DataDir, -AgentCwd, -Port, -Host, -McpPort,
          -Username, -Password, -PasswordFile, -ServiceName, -PublicUrl, -Version, -Commit
-         -NonInteractive, -SkipRuntimeInstall, -Native, -Docker, -ReplaceExisting, -DryRun
+         -NonInteractive, -SkipRuntimeInstall, -Native, -ReplaceExisting, -DryRun
          uninstall [-Yes] [-KeepData] [-InstallDir DIR]
 "@ | Write-Host
   exit 0
@@ -117,7 +117,12 @@ if (-not $NonInteractive) {
 }
 $passwordPlain = $Password
 if ($Password -and $Password.Length -lt 8) { throw "Password must contain at least 8 characters." }
-if ($Docker -and $Native) { throw "Use either -Docker or -Native, not both." }
+if ($Docker) { throw "Docker installation is no longer available. Use the native installer." }
+$Native = $true
+$legacyManifest = Join-Path $InstallDir ".metis-ai-install.json"
+if ((Test-Path -LiteralPath $legacyManifest) -and (Get-Content -LiteralPath $legacyManifest -Raw | ConvertFrom-Json).installMethod -eq "docker") {
+  throw "This directory contains a legacy Docker installation. Choose a separate directory for native installation; migrate data separately."
+}
 if ($Commit -and $Version) { throw "Use either -Version or -Commit, not both." }
 if ($Commit) {
   if ($Commit -notmatch '^[0-9a-fA-F]{7,40}$') { throw "Commit must be a git SHA." }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Metis AI installer bootstrap: downloads a real file, preserving interactive stdin.
-# /bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)" -- --docker
+# /bin/bash -c "$(curl -fsSL https://github.com/f1shyondrugs/metis-ai/releases/latest/download/metis-install.sh)"
 set -euo pipefail
 
 metis_resolve_release_base() {
@@ -63,6 +63,7 @@ metis_install() {
   while (( $# )); do
     arg="$1"; shift
     case "$arg" in
+      --docker) printf 'Error: Docker installation is no longer available. Use the native installer.\n' >&2; return 1 ;;
       --version) (( $# )) || { printf 'Error: --version requires a value.\n' >&2; return 1; }; requested="$1"; version_set=1; shift ;;
       --commit) (( $# )) || { printf 'Error: --commit requires a value.\n' >&2; return 1; }; commit="$1"; shift ;;
       *) forward_args+=("$arg") ;;

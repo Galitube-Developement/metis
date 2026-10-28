@@ -1,85 +1,55 @@
-# Release- und Upgrade-Tests
+# Release and upgrade tests
 
-> Last reviewed: 11 Sep 2026. Index: [README.md](./README.md).
+The supported installation path is native on Linux, macOS and Windows.
 
-## Lokale, netzwerkfreie Vertragsprüfung
+## Local contract checks
 
-Diese Prüfung verändert keine Installation und veröffentlicht nichts:
+These checks do not modify a live installation or publish a release:
 
 ```bash
 pnpm test:release
-pnpm exec tsx --test tests/release-manifest.test.ts tests/github-releases.test.ts
+pnpm exec tsx --test tests/release-manifest.test.ts tests/github-releases.test.ts tests/installer-update.test.ts tests/installers.test.ts tests/installer-dirty-checkout.test.ts
 pnpm exec tsc --noEmit --pretty false
 ```
 
-`pnpm test:release` prüft:
+The release contract checks the stable manifest, native installer dry runs,
+rejection of removed installation options, SHA-256 checksums and version-pinned
+installation instructions. Run shell syntax checks for both `install/*.sh`
+and `public/install/*.sh`.
 
-- Stable-Manifest für einen Testtag mit Commit
-- Docker-Installer-Dry-Run ohne erzeugte `.env` oder Compose-Datei
-- Ablehnung von Branchnamen statt SemVer-Tags
-- SHA256-Prüfsummenformat
+Native installers preserve configured data directories and existing environment
+settings. Production builds use an inactive slot and switch only after success.
+They choose a Node heap limit from available memory unless explicitly configured.
+Exit code 134 indicates a process abort; inspect the build log to establish its cause.
 
-## Updater-Regressionen
+## Native integration tests
 
-```bash
-node --test tests/build-node-options.test.cjs
-pnpm exec tsx --test tests/updater-stability.test.ts tests/installer-update.test.ts tests/update-job.test.ts tests/installers.test.ts tests/installer-dirty-checkout.test.ts tests/update-history.test.ts
-```
+Run real installations and upgrades only in isolated directories with separate
+service names and ports. Never stop production Metis for a test.
 
-Die isolierten Tests prüfen Plattformwahl, Windows-Service-Namen, abgebrochene Builds,
-lange Logs, dauerhafte Exit-Codes, parallele Starts und das Weiterlaufen des Installers
-nach Beenden seines Elternprozesses. Ein fehlgeschlagener Build stellt den vorherigen
-Build-Slot und `tsconfig.json` wieder her. Installer-Builds beginnen standardmäßig mit
-einem leeren Cache; lokale Rebuilds können `METIS_REUSE_BUILD_CACHE=1` setzen.
-Native Builds auf Linux, macOS und Windows wählen ohne explizites Heap-Limit
-75 % des erkannten RAM-/Containerlimits bis maximal 8192 MiB für Nodes Old Space.
-Ein vorhandenes `--max-old-space-size` in `NODE_OPTIONS` bleibt erhalten;
-weitere Node-Optionen werden um das berechnete Limit ergänzt. Exit-Code 134
-weist auf einen Prozessabbruch hin und beweist allein keinen Speichermangel;
-für die Ursache sind die zugehörigen Build-Logs erforderlich.
+- Verify the expected version through `/api/system/version`.
+- Check web, worker and MCP health and an actual browser JavaScript asset.
+- Write a sentinel into the data directory and workspace before upgrading; verify both afterward.
+- Verify a failed build keeps the previous build slot and data intact.
+- Exercise Windows and macOS on their actual operating systems before claiming coverage.
 
-Diese Tests führen keine echten Service-Neustarts aus. Native Updates auf macOS und
-Windows sowie vollständige Docker-Upgrades müssen zusätzlich in separaten Testinstallationen
-geprüft werden. Bereits installierte Versionen erhalten die Updater-Korrekturen erst
-mit einem veröffentlichten Release; ein lokal geänderter Updater repariert sie nicht rückwirkend.
+Existing container installations are not migrated automatically. Install natively
+in a separate directory and migrate data in a planned maintenance operation.
+Legacy uninstallation and runtime detection remain available to avoid damaging
+existing installations.
 
-## Erstes echtes Release
+## Publishing
 
-1. `package.json.version` und Tag müssen übereinstimmen.
-2. CI muss auf dem Tag erfolgreich sein.
-3. `pnpm release vX.Y.Z` erstellt lokal den Tag, veröffentlicht GitHub-Assets und pusht das GHCR-Image unter dem lokal authentifizierten Account. GitHub Actions veröffentlicht keine Releases.
-4. Den Installer in einem separaten Testverzeichnis ausführen:
-
-```bash
-bash metis-docker-install.sh \
-  --version v1.0.0 \
-  --install-dir "$HOME/metis-ai-e2e" \
-  --data-dir "$HOME/metis-ai-e2e-data" \
-  --workspace "$HOME/metis-ai-e2e-workspace"
-```
-
-Danach prüfen:
-
-- `/api/system/version` meldet die erwartete Version.
-- Ein Sentinel-Dokument in Daten und Workspace bleibt nach dem Upgrade erhalten.
-- `docker compose ps` zeigt App, Worker und MCP als healthy/running.
-- Ein Upgrade auf den nächsten Tag ändert nur den Image-Tag.
-- Ein absichtlich fehlerhafter Healthcheck wird erkannt, ohne Datenverzeichnisse zu löschen.
-
-Produktions-Metis wird für diese Tests nicht gestoppt oder neugestartet. Rollback-Tests laufen ausschließlich im separaten E2E-Installationsverzeichnis.
-
-## Lokales Release
-
-Die Versionsnummer in `package.json` und der Changelog werden zuerst committed.
-Danach startet der Release-Befehl alle Prüfungen, erstellt den signierten Tag,
-pusht ihn nach `master`, baut die Assets und veröffentlicht Release plus Docker-
-Image unter dem Account von `gh auth status`:
+Commit the package version and changelog first. From a clean, isolated checkout:
 
 ```bash
 gh auth status
-pnpm release v1.0.6
+pnpm release vX.Y.Z
 ```
 
-Der lokale Git-Name und die E-Mail-Adresse werden für den Tag verwendet. Vor
-dem Start muss der Arbeitsbaum sauber sein. Ein Force-Push ist nicht Teil des
-Release-Prozesses.
+The release command runs contract checks and the production build, creates an
+annotated tag, pushes the commit and tag, then publishes the source archive,
+native bootstrap/platform installers and SHA256SUMS. It does not build or publish
+container images. GitHub Actions validates builds but does not publish releases.
+Download the published files and verify their checksums and source commit.
+A force push is not part of normal publishing.

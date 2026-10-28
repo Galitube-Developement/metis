@@ -30,10 +30,13 @@ export type ProviderCapabilities = {
   usage?: boolean;
 };
 
+export type NumericModelParameter = { min: number; max: number; step: number; description?: string };
+
 export type ProviderModelParameter = {
   id: string;
   displayName?: string;
   values: ReadonlyArray<{ value: string; displayName?: string }>;
+  customNumber?: NumericModelParameter;
 };
 
 export type ProviderModelDefinition = {
@@ -45,6 +48,8 @@ export type ProviderModelDefinition = {
   maxOutputTokens?: number;
   capabilities?: Partial<ProviderCapabilities>;
   tags?: string[];
+  /** Provenance distinguishes advertised options from legacy inferred catalog snapshots. */
+  parameterSource?: "provider" | "registry";
   parameters?: ReadonlyArray<ProviderModelParameter>;
   defaultParams?: ReadonlyArray<{ id: string; value: string }>;
 };
@@ -60,6 +65,8 @@ export type ProviderDefinition = {
   defaultBaseUrl?: string;
   capabilities: ProviderCapabilities;
   models: ProviderModelDefinition[];
+  /** CLI configuration options available across this provider, independent of model discovery. */
+  configParameters?: ReadonlyArray<ProviderModelParameter>;
   setupHint: string;
 };
 

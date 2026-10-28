@@ -138,33 +138,6 @@ assert_available_ports() {
   done
 }
 
-compose() {
-  if docker compose version >/dev/null 2>&1; then docker compose "$@"
-  else docker-compose "$@"
-  fi
-}
-
-write_docker_reload() {
-  local dest="$1/reload.sh"
-  cat > "$dest" <<'EOF'
-#!/usr/bin/env bash
-# Apply .env and published-port changes. `docker compose restart` keeps the old config.
-set -euo pipefail
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-cd "$ROOT"
-unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
-if docker compose version >/dev/null 2>&1; then
-  docker compose --env-file .env up -d --remove-orphans --force-recreate
-elif command -v docker-compose >/dev/null 2>&1; then
-  docker-compose --env-file .env up -d --remove-orphans --force-recreate
-else
-  printf 'Error: Docker Compose is required to apply .env changes.\n' >&2
-  exit 1
-fi
-EOF
-  chmod 700 "$dest"
-}
-
 usage() {
   cat <<'EOF'
 Usage:
@@ -184,7 +157,6 @@ Options:
   --version TAG          Checkout a release tag such as v1.0.0 after fetch
   --commit SHA           Checkout a master commit SHA after fetch
   --native                Node.js + launchd background host (default)
-  --docker                Install with Docker Compose
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
   --allow-root-agents     Permit root agents (default: true)
@@ -211,8 +183,7 @@ ai_chat_host=""
 mcp_port="8787"
 service_name="metis-ai"
 public_url=""
-force_native=0
-force_docker=0
+force_native=1
 replace_existing=0
 REPLACE_DATA_STASH=""
 release_version=""
@@ -282,7 +253,7 @@ while [[ $# -gt 0 ]]; do
     --version) [[ $# -ge 2 ]] || die "--version requires a value"; release_version="$2"; shift 2 ;;
     --commit) [[ $# -ge 2 ]] || die "--commit requires a value"; commit_sha="$2"; shift 2 ;;
     --native) force_native=1; shift ;;
-    --docker) force_docker=1; shift ;;
+    --docker) die "Docker installation is no longer available. Use the native installer." ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
     --allow-root-agents) allow_root_agents=true; root_agents_set=1; shift ;;
@@ -293,9 +264,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if (( force_docker && force_native )); then
-  die "Use either --docker or --native, not both."
-fi
 
 read_tty_line() {
   local prompt="$1"
@@ -316,6 +284,9 @@ if (( non_interactive == 0 )); then
 fi
 
 install_dir="${install_dir/#\~/$HOME}"
+if [[ -f "$install_dir/.metis-ai-install.json" ]] && grep -Eq '"installMethod"[[:space:]]*:[[:space:]]*"docker"' "$install_dir/.metis-ai-install.json"; then
+  die "This directory contains a legacy Docker installation. Choose a separate directory for native installation; migrate data separately."
+fi
 agent_cwd="${agent_cwd/#\~/$HOME}"
 data_dir="${data_dir/#\~/$HOME}"
 
@@ -741,30 +712,15 @@ git -C "$install_dir" reset --hard "$update_ref"
 
 restore_stashed_data "$data_dir"
 
-use_docker=0
-if (( force_native == 0 && force_docker == 0 )) && [[ -f "$install_dir/.metis-ai-install.json" ]]; then
-  previous_method="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("installMethod","native"))' "$install_dir/.metis-ai-install.json")"
-  if [[ "$previous_method" == docker ]]; then force_docker=1; fi
-fi
-if (( force_docker )); then
-  if [[ -f "$HOME/Library/LaunchAgents/${service_name}-app.plist" ]]; then
-    die "This is a native installation. Upgrade without --docker; migrate its runtime separately."
-  fi
-  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
-    die "Docker is not running. Start Docker Desktop or omit --docker for native installation."
-  docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 ||
-    die "Docker Compose is required with --docker."
-  use_docker=1
-fi
 
-if (( use_docker == 0 )); then
+{
   if ! version_at_least_22 node; then
     confirm_install "Node.js 22 or newer" || die "Node.js 22 or newer is required."
     if command -v node >/dev/null 2>&1; then brew upgrade node || true; else brew install node; fi
   fi
   version_at_least_22 node || die "Node.js 22 or newer is required after installation."
   command -v pnpm >/dev/null 2>&1 || { confirm_install "pnpm" && brew install pnpm || die "pnpm is required."; }
-fi
+}
 
 node_bin="$(command -v node || true)"
 node_home=""
@@ -772,9 +728,7 @@ pnpm_home=""
 if [[ -n "$node_bin" ]]; then
   node_home="$(dirname "$(dirname "$node_bin")")"
 fi
-if (( use_docker == 0 )); then
-  pnpm_home="$(dirname "$(command -v pnpm)")"
-fi
+pnpm_home="$(dirname "$(command -v pnpm)")"
 secrets_key="$(openssl rand -hex 32)"
 mcp_token="$(openssl rand -hex 32)"
 
@@ -804,29 +758,15 @@ adopt_env_stash "$install_dir"
   write_env_line METIS_DATA_DIR "$data_dir"
   write_env_line AI_CHAT_BIND "$ai_chat_host"
   write_env_line AI_CHAT_ALLOW_ROOT_AGENTS "$allow_root_agents"
-  if (( use_docker )); then
-    printf 'METIS_DOCKER=1\n'
-    write_env_line AGENT_CWD "/workspace"
-    write_env_line CHAT_DATA_DIR "/data"
-  else
-    write_env_line METIS_NODE_BIN "$node_bin"
-    write_env_line METIS_NODE_HOME "$node_home"
-    write_env_line METIS_PNPM_HOME "$pnpm_home"
-  fi
+  write_env_line METIS_NODE_BIN "$node_bin"
+  write_env_line METIS_NODE_HOME "$node_home"
+  write_env_line METIS_PNPM_HOME "$pnpm_home"
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
 merge_preserved_env "$install_dir/.env"
 upsert_env_key "$install_dir/.env" NODE_ENV "production"
 apply_merged_runtime_ports "$install_dir/.env"
 
-if (( use_docker )); then
-  write_docker_reload "$install_dir"
-  (
-    cd "$install_dir"
-    unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
-    compose --env-file .env up -d --build --remove-orphans
-  )
-else
 cat > "$install_dir/run-service.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -898,7 +838,6 @@ write_plist() {
 write_plist app "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/server.mjs"
 write_plist worker "$install_dir/node_modules/tsx/dist/cli.mjs" "$install_dir/worker.ts"
 write_plist mcp "$install_dir/lib/mcp-core/gateway-core.mjs"
-fi
 # Finder/Spotlight application entry. The application hosts no web view.
 app_bundle="$HOME/Applications/Metis AI ($service_name).app"
 mkdir -p "$app_bundle/Contents/MacOS"
@@ -919,12 +858,6 @@ set -a
 . "$ROOT/.env"
 set +a
 exec >>"$CHAT_DATA_DIR/host.log" 2>&1
-if [[ "${METIS_DOCKER:-0}" == 1 ]]; then
-  cd "$ROOT"
-  unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
-  docker compose --env-file .env up -d --remove-orphans
-  set -a; . "$ROOT/.env"; set +a
-else
   for suffix in app worker mcp; do
     label="$SERVICE-$suffix"
     if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
@@ -932,7 +865,6 @@ else
     fi
     launchctl kickstart "gui/$(id -u)/$label"
   done
-fi
 url="http://127.0.0.1:$PORT"
 for attempt in $(seq 1 60); do
   body="$(curl --fail --silent --max-time 2 "$url/api/status" || true)"
@@ -952,16 +884,14 @@ if [[ -x /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServ
 fi
 
 health_tries=30
-if (( use_docker )); then health_tries=60; fi
 wait_for_health "http://127.0.0.1:$port/api/status" "$health_tries" ||
-  die "Metis did not become healthy on web port $port. Check $data_dir/${service_name}-app.error.log or docker compose logs for startup errors and port conflicts."
+  die "Metis did not become healthy on web port $port. Check $data_dir/${service_name}-app.error.log for startup errors and port conflicts."
 wait_for_frontend_assets "http://127.0.0.1:$port" ||
-  die "The application started, but its browser assets are not available. Check launchctl, docker compose logs, or the service logs."
+  die "The application started, but its browser assets are not available. Check launchctl or the service logs."
 wait_for_health "http://127.0.0.1:$mcp_port/health" "$health_tries" ||
-  die "Metis MCP gateway did not become healthy on port $mcp_port. Check $data_dir/${service_name}-mcp.error.log or docker compose logs for startup errors and port conflicts."
+  die "Metis MCP gateway did not become healthy on port $mcp_port. Check $data_dir/${service_name}-mcp.error.log for startup errors and port conflicts."
 
 install_method="native"
-if (( use_docker )); then install_method="docker"; fi
 {
   printf '{'
   printf '"installDir":%s,' "$(json_str "$install_dir")"
@@ -984,8 +914,5 @@ printf '\nMetis AI installed successfully.\nOpen: %s\nYou can change this. Add: 
   "$public_url" "$install_dir/.env"
 printf 'Security: prefer a dedicated unprivileged service user and separate OS users for multiuser agent isolation.\n'
 printf 'First setup requires the setup token from the local file: %s\nRead it locally; do not publish it or copy it into logs.\n' "$data_dir/setup-token"
-if (( use_docker )); then
-  printf 'Apply: %s\n' "$install_dir/reload.sh"
-fi
 printf 'Application: %s (opens Metis in your browser)\n' "$app_bundle"
 printf 'Uninstall: %s --install-dir %q --keep-data\n' "$install_dir/uninstall-macos.sh" "$install_dir"

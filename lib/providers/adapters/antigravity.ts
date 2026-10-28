@@ -1,4 +1,6 @@
 import { getMcpServers, getUserAgentCwd } from "@/lib/mcp";
+import { providerModelsForConnection } from "@/lib/providers/discovery";
+import { sanitizeModelParams } from "@/lib/model-params";
 import {
   antigravitySessionDir,
   antigravitySupportsEffort,
@@ -27,15 +29,12 @@ async function runAntigravity(
   context: ProviderContext,
 ): Promise<ProviderResult> {
   if (!context.job.userId) throw new Error("Antigravity requires a user id.");
-  const effortValue = [
-    ...(context.job.modelParams || []),
-    ...(context.chat.modelParams || []),
-  ].find((param) => param.id === "effort")?.value;
-  const legacyVariant = context.modelId.match(
-    /^(gemini-\d+\.\d+-flash|gemini-\d+\.\d+-pro)-(low|medium|high)$/,
-  );
-  const modelId = legacyVariant?.[1] || context.modelId;
-  const supportsEffort = antigravitySupportsEffort(context.modelId);
+  const modelId = context.modelId;
+  const model = providerModelsForConnection(context.connection).find(model=>model.id===modelId);
+  const contract = {parameters:model?.parameters?.map(parameter=>({...parameter,values:[...parameter.values]})) || []};
+  const params = sanitizeModelParams(contract,effectiveModelParams(context.chat,context.job));
+  const effortValue = params.find(param=>param.id==="effort")?.value;
+  const supportsEffort = antigravitySupportsEffort(contract);
   const binding = getProviderSessionBinding(
     context.chat,
     "antigravity-cli",
@@ -93,8 +92,8 @@ async function runAntigravity(
       secret: context.connection.secret || "",
       modelId,
       conversationId: previousId,
-      ...(supportsEffort
-        ? { effort: effortValue || legacyVariant?.[2] || "medium" }
+      ...(supportsEffort && effortValue
+        ? { effort: effortValue }
         : {}),
       prompt,
       cwd,

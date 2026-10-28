@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { ModelNumberOption } from "@/components/model-number-option";
 import { cn } from "@/lib/utils";
 import {
   defaultParamsForModel,
@@ -75,7 +76,7 @@ export function ModelOptionsMenu({
     const allowed = new Set(parameters.map((p) => p.id));
     const next = [
       ...modelParams.filter((p) => p.id !== id && allowed.has(p.id)),
-      { id, value },
+      ...(value ? [{ id, value }] : []),
     ].filter((p) => allowed.has(p.id));
     onModelParamsChange(next);
   }
@@ -260,6 +261,8 @@ export function ModelOptionsMenu({
           ) : null}
           {parameters.map((param) => {
             const current = paramValue(param.id);
+            if (param.customNumber) return <ModelNumberOption key={model.id + ":" + param.id}
+              parameter={param} value={current} onChange={value => setParam(param.id, value)} />;
             const isBool =
               param.values.length === 2 &&
               param.values.some((v) => v.value === "true") &&

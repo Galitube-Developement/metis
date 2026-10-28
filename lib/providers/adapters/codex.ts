@@ -7,6 +7,8 @@ import type { CodexOptions } from "@openai/codex-sdk";
 import { config } from "@/lib/config";
 import { createCodexHome } from "@/lib/providers/codex-home";
 import { readCodexThreadContext } from "@/lib/providers/codex-context";
+import { codexContextConfig } from "@/lib/providers/codex-context-config";
+import { providerModelsForConnection } from "@/lib/providers/discovery";
 import { codexUsageTotals, codexTurnUsage, readCodexThreadUsage } from "@/lib/providers/codex-usage";
 import { codexCliExecutable } from "@/lib/providers/codex-cli";
 import { getMcpServers } from "@/lib/mcp";
@@ -248,7 +250,9 @@ async function runCodex(context: ProviderContext): Promise<ProviderResult> {
   codexMcp.tool_timeout_sec = Math.floor(USER_INPUT_TRANSPORT_TIMEOUT_MS / 1000);
   const modelParams = effectiveModelParams(context.chat, context.job);
   const serviceTier = codexServiceTierForSelection(modelParams);
+  const selectedModel = providerModelsForConnection(context.connection).find(model => model.id === context.modelId);
   const codexConfig: NonNullable<CodexOptions["config"]> = {
+    ...codexContextConfig(selectedModel, modelParams),
     ...(codexHome ? { cli_auth_credentials_store: "file" } : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
     ...codexMcpOnlyConfig(),

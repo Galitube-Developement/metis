@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decryptSecret, encryptSecret, maskSecret } from "../lib/secrets";
-import { getProviderModelDefinition, listProviderDefinitions } from "../lib/providers/registry";
+import { getProviderDefinition, getProviderModelDefinition, listProviderDefinitions } from "../lib/providers/registry";
 import { providerExecution } from "../lib/providers/run-kind";
 import { codexTool } from "../lib/providers/runner";
 import { antigravitySupportsEffort } from "../lib/providers/official-antigravity";
@@ -103,10 +103,11 @@ test("Codex tool events preserve command and MCP results", () => {
   );
 });
 
-test("Antigravity does not send effort for Claude models", () => {
-  assert.equal(antigravitySupportsEffort("gemini-3.6-flash"), true);
-  assert.equal(antigravitySupportsEffort("gpt-oss-120b-medium"), true);
-  assert.equal(antigravitySupportsEffort("claude-opus-4-6-thinking"), false);
+test("Antigravity effort requires advertised model options", () => {
+  assert.equal(antigravitySupportsEffort(), false);
+  assert.equal(antigravitySupportsEffort({parameters:[]}), false);
+  assert.equal(antigravitySupportsEffort({parameters:[{id:"effort",values:[{value:"high"}]}]}), true);
+  for(const model of getProviderDefinition("antigravity")!.models) assert.equal(antigravitySupportsEffort({parameters:model.parameters?.map(parameter=>({...parameter,values:[...parameter.values]}))}),false);
 });
 
 test("every implemented provider routes to a tool-capable runtime", () => {

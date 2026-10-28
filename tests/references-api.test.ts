@@ -39,7 +39,12 @@ before(async () => {
 after(()=>{modules[3].getDatabase().close();rmSync(root,{recursive:true,force:true});});
 async function get(kind?:string,q="",session=token,current=chatId) {
   const query=new URLSearchParams({q,chatId:current}); if(kind)query.set("kind",kind);
-  return modules[4].GET(new Request("http://localhost/api/references?"+query,{headers:session?{cookie:"ai_chat_auth="+session}:{}}));
+  for(let attempt=0;attempt<100;attempt++){
+    const response=await modules[4].GET(new Request("http://localhost/api/references?"+query,{headers:session?{cookie:"ai_chat_auth="+session}:{}}));
+    if(!response.ok || !(await response.clone().json()).indexing)return response;
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw new Error("Reference indexing did not finish");
 }
 test("all reference categories return their own accessible data",async()=>{
  for(const [kind,label] of [["chat","Reference source"],["canvas","Architecture canvas"],["plan","Launch plan"],["note","Straße März"],["memory","Remembered context"],["browser","Docs"],["terminal","Build terminal"],["file","report.md"]]){

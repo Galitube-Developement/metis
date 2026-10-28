@@ -13,13 +13,14 @@ import { todosFromToolPayload } from "@/lib/tool-call-display";
 import type { McpServerMap } from "@/lib/mcp";
 import { providerProcessEnv } from "@/lib/providers/process-env";
 import type { ToolPart } from "@/lib/store";
+import type { ModelParameterModel } from "@/lib/model-params";
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function antigravitySupportsEffort(modelId: string) {
-  return /^(?:gemini|gpt-oss)(?:[-_.]|$)/i.test(modelId.trim());
+export function antigravitySupportsEffort(model?: Pick<ModelParameterModel,"parameters">) {
+  return !!model?.parameters?.some(parameter=>parameter.id==="effort" && parameter.values.length>0);
 }
 
 function stripTerminalControl(value: string) {

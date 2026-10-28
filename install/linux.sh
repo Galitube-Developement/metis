@@ -166,33 +166,6 @@ assert_available_ports() {
   done
 }
 
-compose() {
-  if docker compose version >/dev/null 2>&1; then docker compose "$@"
-  else docker-compose "$@"
-  fi
-}
-
-write_docker_reload() {
-  local dest="$1/reload.sh"
-  cat > "$dest" <<'EOF'
-#!/usr/bin/env bash
-# Apply .env and published-port changes. `docker compose restart` keeps the old config.
-set -euo pipefail
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-cd "$ROOT"
-unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
-if docker compose version >/dev/null 2>&1; then
-  docker compose --env-file .env up -d --remove-orphans --force-recreate
-elif command -v docker-compose >/dev/null 2>&1; then
-  docker-compose --env-file .env up -d --remove-orphans --force-recreate
-else
-  printf 'Error: Docker Compose is required to apply .env changes.\n' >&2
-  exit 1
-fi
-EOF
-  chmod 700 "$dest"
-}
-
 usage() {
   cat <<'EOF'
 Usage:
@@ -211,7 +184,6 @@ Options:
   --public-url URL        URL shown to users
   --version TAG          Checkout a release tag such as v1.0.0 after fetch
   --commit SHA           Checkout a master commit SHA after fetch
-  --docker                Install with Docker Compose instead of native systemd
   --native                Install with Node.js + systemd (default)
   --replace-existing     Uninstall a detected existing install (keeps data), then continue
   --non-interactive       Never read prompts; all values come from arguments/defaults
@@ -239,8 +211,7 @@ ai_chat_host=""
 mcp_port="8787"
 service_name="metis-ai"
 public_url=""
-force_native=0
-force_docker=0
+force_native=1
 replace_existing=0
 REPLACE_DATA_STASH=""
 release_version=""
@@ -310,7 +281,7 @@ while [[ $# -gt 0 ]]; do
     --version) [[ $# -ge 2 ]] || die "--version requires a value"; release_version="$2"; shift 2 ;;
     --commit) [[ $# -ge 2 ]] || die "--commit requires a value"; commit_sha="$2"; shift 2 ;;
     --native) force_native=1; shift ;;
-    --docker) force_docker=1; shift ;;
+    --docker) die "Docker installation is no longer available. Use the native installer." ;;
     --replace-existing) replace_existing=1; shift ;;
     --non-interactive) non_interactive=1; shift ;;
     --allow-root-agents) allow_root_agents=true; root_agents_set=1; shift ;;
@@ -321,9 +292,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if (( force_docker && force_native )); then
-  die "Use either --docker or --native, not both."
-fi
 
 read_tty_line() {
   local prompt="$1"
@@ -344,6 +312,9 @@ if (( non_interactive == 0 )); then
 fi
 
 install_dir="${install_dir/#\~/$HOME}"
+if [[ -f "$install_dir/.metis-ai-install.json" ]] && grep -Eq '"installMethod"[[:space:]]*:[[:space:]]*"docker"' "$install_dir/.metis-ai-install.json"; then
+  die "This directory contains a legacy Docker installation. Choose a separate directory for native installation; migrate data separately."
+fi
 agent_cwd="${agent_cwd/#\~/$HOME}"
 data_dir="${data_dir/#\~/$HOME}"
 
@@ -451,7 +422,6 @@ Dry run; no files or services will be changed.
   service name:  $service_name
   public url:    $public_url
   version:       ${release_version:-current branch}
-  docker:        $force_docker
   native:        $force_native
   existing:      ${existing_service_state:-none}${existing_service_dir:+ at $existing_service_dir}
 EOF
@@ -775,21 +745,11 @@ git -C "$install_dir" reset --hard "$update_ref"
 
 restore_stashed_data "$data_dir"
 
-use_docker=0
-if (( force_docker )); then
-  command -v docker >/dev/null 2>&1 || die "Docker is required for --docker."
-  docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start Docker, then rerun with --docker."
-  if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
-    use_docker=1
-  else
-    die "Docker Compose is required for --docker."
-  fi
-fi
 
 node_bin=""
 node_home=""
 pnpm_home=""
-if (( use_docker == 0 )); then
+{
   node_bin="$(install_node "$install_dir")"
   node_home="$(dirname "$(dirname "$node_bin")")"
   export PATH="$node_home/bin:$install_dir/node_modules/.bin:$PATH"
@@ -799,14 +759,14 @@ if (( use_docker == 0 )); then
   pnpm_home="$pnpm_prefix/bin"
   export PATH="$pnpm_home:$PATH"
   [[ -x "$pnpm_home/pnpm" ]] || die "pnpm installation did not create an executable at $pnpm_home/pnpm."
-fi
+}
 
 rand_hex() {
   openssl rand -hex 32 2>/dev/null || {
     if [[ -n "$node_home" ]]; then
       "$node_home/bin/node" -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))'
     else
-      die "openssl is required to generate secrets when installing with Docker."
+      die "openssl is required to generate secrets for installation."
     fi
   }
 }
@@ -839,29 +799,15 @@ adopt_env_stash "$install_dir"
   write_env_line METIS_DATA_DIR "$data_dir"
   write_env_line AI_CHAT_BIND "$ai_chat_host"
   write_env_line AI_CHAT_ALLOW_ROOT_AGENTS "$allow_root_agents"
-  if (( use_docker )); then
-    printf 'METIS_DOCKER=1\n'
-    write_env_line AGENT_CWD "/workspace"
-    write_env_line CHAT_DATA_DIR "/data"
-  else
-    write_env_line METIS_NODE_BIN "$node_bin"
-    write_env_line METIS_NODE_HOME "$node_home"
-    write_env_line METIS_PNPM_HOME "$pnpm_home"
-  fi
+  write_env_line METIS_NODE_BIN "$node_bin"
+  write_env_line METIS_NODE_HOME "$node_home"
+  write_env_line METIS_PNPM_HOME "$pnpm_home"
 } > "$install_dir/.env"
 chmod 600 "$install_dir/.env"
 merge_preserved_env "$install_dir/.env"
 upsert_env_key "$install_dir/.env" NODE_ENV "production"
 apply_merged_runtime_ports "$install_dir/.env"
 
-if (( use_docker )); then
-  write_docker_reload "$install_dir"
-  (
-    cd "$install_dir"
-    unset PORT MCP_PORT AI_CHAT_HOST AI_CHAT_BIND METIS_DATA_DIR METIS_WORKSPACE METIS_IMAGE
-    compose --env-file .env up -d --build --remove-orphans
-  )
-else
 cat > "$install_dir/run-service.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -899,7 +845,7 @@ ensure_native_build_tools
   upsert_env_key "$install_dir/.env" NEXT_DIST_DIR "$next_build_slot"
 )
 
-if (( use_docker == 0 )) && command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1; then
   service_dir="/etc/systemd/system"
   write_unit() {
     local unit="$1" description="$2" protect_system="$3" no_new_privileges="$4" exec_start arg read_write_paths=""
@@ -964,20 +910,17 @@ EOF
   run_privileged systemctl enable "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
   run_privileged systemctl restart "${service_name}.service" "${service_name}-worker.service" "${service_name}-mcp.service"
 fi
-fi
 if command -v curl >/dev/null 2>&1; then
   health_tries=30
-  if (( use_docker )); then health_tries=60; fi
   wait_for_health "http://127.0.0.1:$port/api/status" "$health_tries" ||
-    die "The application did not become healthy. Check systemctl status ${service_name}.service or docker compose logs."
+    die "The application did not become healthy. Check systemctl status ${service_name}.service."
   wait_for_frontend_assets "http://127.0.0.1:$port" ||
-    die "The application started, but its browser assets are not available. Check systemctl status ${service_name}.service or docker compose logs."
+    die "The application started, but its browser assets are not available. Check systemctl status ${service_name}.service."
   wait_for_health "http://127.0.0.1:$mcp_port/health" "$health_tries" ||
     die "The MCP gateway did not become healthy on port $mcp_port."
 fi
 
 install_method="native"
-if (( use_docker )); then install_method="docker"; fi
 {
   printf '{'
   printf '"installDir":%s,' "$(json_str "$install_dir")"
@@ -1000,7 +943,4 @@ printf '\n%s installed successfully.\nOpen: %s\nYou can change this. Add: %s\n' 
   "$APP_NAME" "$public_url" "$install_dir/.env"
 printf 'Security: prefer a dedicated unprivileged service user and separate OS users for multiuser agent isolation.\n'
 printf 'First setup requires the setup token from the local file: %s\nRead it locally; do not publish it or copy it into logs.\n' "$data_dir/setup-token"
-if (( use_docker )); then
-  printf 'Apply: %s\n' "$install_dir/reload.sh"
-fi
 printf 'Uninstall: %s --install-dir %q --keep-data\n' "$install_dir/uninstall.sh" "$install_dir"
