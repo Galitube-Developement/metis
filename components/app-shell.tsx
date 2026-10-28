@@ -192,6 +192,7 @@ import {
   contextPressure,
   contextWindowForModel,
   contextWindowForSelection,
+  formatContextWindow,
   estimateContextTokens,
   lastMeasuredInputTokens,
   resolveContextTotal,
@@ -1148,6 +1149,7 @@ function contextSelectionLabel(model: ModelInfo, params: ModelParamSelection[]) 
   if (!parameter) return undefined;
   const value = params.find((entry) => entry.id === "context")?.value
     || model.defaultParams?.find((entry) => entry.id === "context")?.value;
+  if (parameter.customNumber && value) return formatContextWindow(contextWindowForSelection(model, params));
   return parameter.values.find((entry) => entry.value === value)?.displayName || value;
 }
 

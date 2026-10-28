@@ -5,6 +5,7 @@
  */
 
 import { contextWindowForModel } from "./context-window";
+import type { NumericModelParameter, ProviderModelParameter } from "./providers/types";
 
 export type ModelParamValue = {
   value: string;
@@ -15,6 +16,7 @@ export type ModelParameter = {
   id: string;
   displayName?: string;
   values: ModelParamValue[];
+  customNumber?: NumericModelParameter;
 };
 
 export type ModelParamSelection = {
@@ -28,8 +30,8 @@ export type ModelParameterModel = {
   providerId?: string;
   contextWindow?: number;
   capabilities?: Record<string, boolean>;
-  parameters?: ModelParameter[];
-  defaultParams?: ModelParamSelection[];
+  parameters?: ReadonlyArray<ProviderModelParameter>;
+  defaultParams?: ReadonlyArray<ModelParamSelection>;
   variants?: ReadonlyArray<ReadonlyArray<ModelParamSelection>>;
 };
 
@@ -117,11 +119,12 @@ export function contextParameterForModel(
   return { id: "context", displayName: "Context", values: normalizedConcrete };
 }
 
-function cloneParameter(parameter: ModelParameter): ModelParameter {
+function cloneParameter(parameter: ProviderModelParameter): ModelParameter {
   return {
     id: canonicalParamId(parameter.id),
-    displayName: REASONING_IDS.has(parameter.id) ? "Reasoning" : CONTEXT_IDS.has(parameter.id) ? "Context" : parameter.displayName,
+    displayName: REASONING_IDS.has(parameter.id) ? "Reasoning" : CONTEXT_IDS.has(parameter.id) && !parameter.customNumber ? "Context" : parameter.displayName,
     values: parameter.values.map((value) => ({ ...value })),
+    ...(parameter.customNumber ? { customNumber: { ...parameter.customNumber } } : {}),
   };
 }
 
@@ -140,7 +143,9 @@ export function modelParametersForModel(model: ModelParameterModel): ModelParame
     displayName: model.displayName,
     contextWindow: model.contextWindow,
   });
-  const context = contextParameterForModel(inferredWindow, [
+  const context = contextDefinition?.customNumber
+    ? cloneParameter(contextDefinition)
+    : contextParameterForModel(inferredWindow, [
     ...(contextDefinition?.values || []),
     ...variantContextValues,
   ]);
@@ -168,10 +173,22 @@ export function defaultParamsForModel(model: ModelParameterModel): ModelParamSel
     const id = canonicalParamId(param.id);
     if (REMOVED_PARAM_IDS.has(id)) continue;
     const definition = allowed.get(id);
-    if (!definition || !definition.values.some((value) => value.value === param.value)) continue;
-    result.push({ id, value: param.value });
+    if (!definition) continue;
+    const value = normalizeParameterValue(definition, param.value);
+    if (value === undefined) continue;
+    result.push({ id, value });
   }
   return orderModelParams(result);
+}
+
+/** Validate custom values once for UI, persistence and the native adapter. */
+export function normalizeParameterValue(definition: ModelParameter, value: string): string | undefined {
+  if (definition.values.some(option => option.value === value)) return value;
+  const number = definition.customNumber;
+  if (!number || !/^\d+$/.test(value.trim())) return undefined;
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed >= number.min && parsed <= number.max
+    && (parsed - number.min) % number.step === 0 ? String(parsed) : undefined;
 }
 
 export function sanitizeModelParams(
@@ -185,8 +202,10 @@ export function sanitizeModelParams(
     const id = canonicalParamId(raw.id);
     if (REMOVED_PARAM_IDS.has(id)) continue;
     const definition = allowed.get(id);
-    if (!definition || !definition.values.some((value) => value.value === raw.value)) continue;
-    result.push({ id, value: raw.value });
+    if (!definition) continue;
+    const value = normalizeParameterValue(definition, raw.value);
+    if (value === undefined) continue;
+    result.push({ id, value });
   }
   return orderModelParams(result);
 }

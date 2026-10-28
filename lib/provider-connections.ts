@@ -364,6 +364,7 @@ export function markProviderConnection(
 export function saveProviderModels(
   connectionId: string,
   models: Array<Pick<ProviderModel, "id" | "displayName" | "description" | "capabilities" | "contextWindow"> & {
+    parameterSource?: ProviderModelDefinition["parameterSource"];
     parameters?: ProviderModelDefinition["parameters"];
     defaultParams?: ProviderModelDefinition["defaultParams"];
     tags?: string[];
@@ -383,6 +384,7 @@ export function saveProviderModels(
     for (const model of models.slice(0, 500)) {
       const capabilities = {
         ...(model.capabilities ?? {}),
+        ...(model.parameterSource ? { __parameterSource: model.parameterSource } : {}),
         ...(model.parameters ? { __parameters: model.parameters } : {}),
         ...(model.defaultParams ? { __defaultParams: model.defaultParams } : {}),
         ...(model.tags ? { __tags: model.tags } : {}),
@@ -449,6 +451,7 @@ export function listProviderModels(connectionId: string) {
       capabilities: Object.fromEntries(
         Object.entries(capabilities).filter(([key]) => !key.startsWith("__")),
       ),
+      ...(capabilities.__parameterSource === "provider" || capabilities.__parameterSource === "registry" ? { parameterSource: capabilities.__parameterSource as ProviderModelDefinition["parameterSource"] } : {}),
       ...(Array.isArray(capabilities.__parameters) ? { parameters: capabilities.__parameters } : {}),
       ...(Array.isArray(capabilities.__defaultParams) ? { defaultParams: capabilities.__defaultParams } : {}),
       ...(Array.isArray(capabilities.__tags) ? { tags: capabilities.__tags } : {}),

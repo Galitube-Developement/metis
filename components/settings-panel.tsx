@@ -244,11 +244,7 @@ export type ModelParamValue = {
   displayName?: string;
 };
 
-export type ModelParameter = {
-  id: string;
-  displayName?: string;
-  values: ModelParamValue[];
-};
+export type ModelParameter = import("@/lib/model-params").ModelParameter;
 
 export type ModelParamSelection = {
   id: string;

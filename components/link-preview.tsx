@@ -7,7 +7,8 @@ import { parseInternalLink } from "@/lib/internal-link";
 
 type LinkPreviewProps = {
   href: string;
-  children: ReactNode;
+  children?: ReactNode;
+  anchorElement?: HTMLElement | null;
 };
 
 type Preview = {
@@ -17,12 +18,12 @@ type Preview = {
   image?: string;
 };
 
-export function LinkPreview({ href, children }: LinkPreviewProps) {
+export function LinkPreview({ href, children, anchorElement }: LinkPreviewProps) {
   const target = parseInternalLink(href);
   const chatId = useContext(InternalLinkPreviewChat);
   return <HoverPreview content={target
     ? <InternalLinkPreviewContent key={`${href}:${chatId || ""}`} target={target} chatId={chatId} />
-    : <WebPreview key={href} href={href} />}>{children}</HoverPreview>;
+    : <WebPreview key={href} href={href} />} anchorElement={anchorElement}>{children}</HoverPreview>;
 }
 
 function WebPreview({ href }: { href: string }) {

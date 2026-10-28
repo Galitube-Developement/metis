@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import Image from "next/image";
 import { ChevronDown, ChevronRight, FileText, FolderOpen, Plus, Search, MoreHorizontal, ArrowUp, ArrowDown, PanelLeft, Upload, Download, Star, Clock, Trash2, Pin, Copy, Move, Settings2, FilePlus2, ListTodo, Loader2, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -8,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { NotePinDialog } from "@/components/note-pin-dialog";
 import { NoteDocument, type NoteDocumentHandle } from "./note-document";
+import { NoteBannerUpload, NoteIconPicker } from "./note-appearance-controls";
 import { IssuesView, IssueFileProperties } from "./issues-view";
 import { buildNoteTree, noteAncestors, noteDescendantIds, noteDisplayTitle, notesInContainer, searchNoteTree, type NoteTreeNode, type TreeNote } from "@/lib/notes-tree";
 import { cn } from "@/lib/utils";
@@ -479,8 +481,8 @@ export function NotesWorkspace({ initialProjectId = null, focusNoteId }: Workspa
       <DialogFooter><Button variant="outline" onClick={() => setMoveNote(null)}>Cancel</Button><Button disabled={working || !moveNote} onClick={() => { if (moveNote) void move(moveNote, moveProject, moveParent || null); }}>Move tree</Button></DialogFooter>
     </DialogContent></Dialog>
     <Dialog open={appearance} onOpenChange={setAppearance}><DialogContent><DialogHeader><DialogTitle>Page appearance</DialogTitle></DialogHeader>
-      <label className="grid gap-2 text-sm">Page icon<Input aria-label="Page icon" value={icon} maxLength={12} onChange={event => setIcon(event.target.value)} placeholder="Optional icon" /></label>
-      <label className="grid gap-2 text-sm">Cover image URL<Input aria-label="Cover image URL" type="url" value={cover} onChange={event => setCover(event.target.value)} placeholder="https://…" /></label>
+      <div className="flex items-center gap-2"><NoteIconPicker value={icon} onChange={value => setIcon(value || "")} />{selected && <NoteBannerUpload key={selected.id} noteId={selected.id} value={cover} onChange={value => setCover(value || "")} />}</div>
+      {cover && <div className="relative h-28 overflow-hidden rounded-lg"><Image src={cover} alt="Banner preview" fill unoptimized sizes="100vw" className="object-cover" /></div>}
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={fullWidth} onChange={event => setFullWidth(event.target.checked)} />Full width</label>
       <DialogFooter><Button variant="outline" onClick={() => setAppearance(false)}>Cancel</Button><Button onClick={() => { if (selected) void patch(selected, { icon: icon || null, cover: cover || null, fullWidth }).then(note => { if (note) setAppearance(false); }).catch(cause => setError(cause.message)); }}>Save</Button></DialogFooter>
     </DialogContent></Dialog>

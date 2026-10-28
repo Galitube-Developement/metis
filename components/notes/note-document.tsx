@@ -2,9 +2,11 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import { Check, Loader2, RefreshCw, AlertCircle, Plus, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NoteMedia } from "@/components/note-media";
+import { NoteBannerUpload, NoteIconPicker } from "./note-appearance-controls";
 import { commitNoteDraft, clearSavedNoteDraft, mergeNoteDraft, type NoteDraft } from "@/lib/note-save-state";
 import { createNoteDraftPersistence } from "@/lib/note-draft-persistence";
 import { registerNoteEditorFlush } from "@/lib/note-editor-lifecycle";
@@ -214,9 +216,12 @@ export const NoteDocument = forwardRef<NoteDocumentHandle, Props>(function NoteD
       else onOpenIssue(target.id);
     }}
   >
-    {document.cover && <div className="mb-7 h-36 overflow-hidden rounded-lg bg-muted"><img src={document.cover} alt="" className="h-full w-full object-cover" /></div>}
+    {document.cover && <div className="relative mb-7 h-36 overflow-hidden rounded-lg bg-muted"><Image src={document.cover} alt="Page banner" fill unoptimized sizes="100vw" className="object-cover" /></div>}
     <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-      <span>{document.icon ? <span className="mr-2 text-xl" aria-hidden>{document.icon}</span> : null}{document.issueId ? "Issue" : "Note"}</span>
+      <div className="flex min-w-0 items-center gap-1" aria-label={document.issueId ? "Issue appearance" : "Note appearance"}>
+        <NoteIconPicker value={document.icon} onChange={icon => update({ icon })} />
+        <NoteBannerUpload noteId={note.id} value={document.cover} onChange={cover => update({ cover })} />
+      </div>
       <span className="flex items-center gap-1.5" role="status">
         {status === "saving" ? <Loader2 className="size-3 animate-spin" /> : status === "saved" ? <Check className="size-3" /> : <AlertCircle className="size-3" />}
         {status === "saved" ? "Saved" : status === "saving" ? "Saving…" : status === "conflict" ? "Conflict" : "Draft kept locally"}

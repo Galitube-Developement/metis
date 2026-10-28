@@ -26,6 +26,18 @@ test("late and aborted lookups cannot replace a newer category or repopulate a c
   assert.ok(!states.some(s => s.results.includes("After close")));
 });
 
+test("index preparation keeps polling and cancellation stops the next request",async()=>{
+ let requests=0;
+ const lookup=createReferenceLookup<string>((async()=>{requests++;return Response.json({results:["Partial"],indexing:true});}) as typeof fetch);
+ const states:unknown[]=[];
+ const pending=lookup.load({query:"",key:"index"},state=>states.push(state));
+ await new Promise(resolve=>setTimeout(resolve,30));
+ lookup.cancel();
+ await pending;
+ assert.equal(requests,1);
+ assert.ok(states.length>=2);
+});
+
 test("lookup exposes errors and a fresh retry replaces them with real results", async () => {
   let attempts = 0;
   const lookup = createReferenceLookup<string>((async () => ++attempts === 1

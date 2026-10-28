@@ -7,7 +7,7 @@ import { positionLinkPreview } from "@/lib/link-preview-position";
 let activePreview: { id: string; dismiss: () => void } | null = null;
 
 /** One hover/focus lifecycle, portal, placement and animation for every link preview. */
-export function HoverPreview({ children, content }: { children: ReactNode; content: ReactNode }) {
+export function HoverPreview({ children, content, anchorElement }: { children?: ReactNode; content: ReactNode; anchorElement?: HTMLElement | null }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -16,11 +16,12 @@ export function HoverPreview({ children, content }: { children: ReactNode; conte
   const clearTimer = () => { if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; } };
   useEffect(() => () => { clearTimer(); if (activePreview?.id === id) activePreview = null; }, [id]);
   useLayoutEffect(() => {
-    if (!open || !anchor.current || !tooltip.current) return;
+    if (!open || !(anchorElement || anchor.current) || !tooltip.current) return;
     const node = tooltip.current;
     const update = () => {
-      if (!anchor.current) return;
-      const position = positionLinkPreview(anchor.current.getBoundingClientRect(), { width: node.offsetWidth, height: node.offsetHeight, left: 0, top: 0, bottom: 0 }, innerWidth, innerHeight);
+      const target = anchorElement || anchor.current;
+      if (!target) return;
+      const position = positionLinkPreview(target.getBoundingClientRect(), { width: node.offsetWidth, height: node.offsetHeight, left: 0, top: 0, bottom: 0 }, innerWidth, innerHeight);
       node.style.left = position.left + "px";
       node.style.top = position.top + "px";
       node.dataset.side = position.side;
@@ -38,7 +39,7 @@ export function HoverPreview({ children, content }: { children: ReactNode; conte
       window.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("resize", update);
     };
-  }, [open]);
+  }, [open, anchorElement]);
   const hide = useCallback(() => {
     if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; }
     if (activePreview?.id === id) activePreview = null;
@@ -49,6 +50,15 @@ export function HoverPreview({ children, content }: { children: ReactNode; conte
       timer.current = null; activePreview?.dismiss(); activePreview = { id, dismiss: hide }; setOpen(true);
     }, 180);
   };
+  useEffect(() => {
+    if (!anchorElement) return;
+    const pending = setTimeout(() => { activePreview?.dismiss(); activePreview = { id, dismiss: hide }; setOpen(true); }, 180);
+    const dismiss = () => hide();
+    const keydown=(event:KeyboardEvent)=>{if(event.key==="Escape")hide();};
+    anchorElement.addEventListener("click", dismiss);
+    anchorElement.addEventListener("keydown",keydown);
+    return () => { clearTimeout(pending); anchorElement.removeEventListener("click", dismiss); anchorElement.removeEventListener("keydown",keydown); };
+  }, [anchorElement, hide, id]);
   const trigger = open && isValidElement<{ "aria-describedby"?: string }>(children)
     ? cloneElement(children, { "aria-describedby": [children.props["aria-describedby"], id].filter(Boolean).join(" ") })
     : children;
@@ -56,7 +66,7 @@ export function HoverPreview({ children, content }: { children: ReactNode; conte
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide(); }}
     onClickCapture={hide}
     onKeyDown={event => { if (event.key === "Escape") hide(); }}>
-    {trigger}
+    {anchorElement ? null : trigger}
     {open ? createPortal(<div ref={tooltip} id={id} role="tooltip" data-hover-preview
       style={{ visibility: "hidden", zIndex: 2147483647 }}
       className="hover-preview pointer-events-none fixed w-72 max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border/70 bg-popover p-3 text-left text-popover-foreground shadow-xl">

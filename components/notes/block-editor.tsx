@@ -28,6 +28,11 @@ import { resolveMarkdownSourceLocation } from "@/lib/markdown-source-location";
 import { parseWorkspaceFileLink, type WorkspaceFileLocation } from "@/lib/workspace-file-link";
 import { registerFileDrop } from "@/lib/file-drop";
 import { internalLinkNavigation, parseInternalLink } from "@/lib/internal-link";
+import { LinkPreview } from "@/components/link-preview";
+import { useReferenceSearch } from "@/components/use-reference-search";
+import { notesReferenceQuery, notesReferenceHref } from "@/lib/notes-editor-references";
+import type { ReferenceKind, ReferenceResult } from "@/lib/reference-search";
+import { Type, Heading1, Heading2, Heading3, ListOrdered, ListTodo, Quote, Info, Minus, Table2, ImageIcon, Globe, Sigma, Columns2, ListTree, FilePlus2, CircleDot } from "lucide-react";
 import "./block-editor.css";
 
 export type NotesBlockEditorProps = {
@@ -248,6 +253,16 @@ function NotesBlockEditorInstance({
   const sourceModeRef = useRef(sourceMode); sourceModeRef.current = sourceMode;
   const [error, setError] = useState(""), [slash, setSlash] = useState<SlashMenu | null>(null), [menuIndex, setMenuIndex] = useState(0);
   const [hover, setHover] = useState<HoverBlock | null>(null), [blockMenu, setBlockMenu] = useState<MenuPosition | null>(null);
+  const [reference, setReference] = useState<SlashMenu | null>(null);
+  const [referenceKind,setReferenceKind] = useState<ReferenceKind>("note");
+  const [referenceIndex,setReferenceIndex] = useState(0);
+  const referenceRef=useRef<SlashMenu | null>(null), referenceIndexRef=useRef(0);
+  const referenceResultsRef=useRef<ReferenceResult[]>([]);
+  const selectReferenceRef=useRef<(item:ReferenceResult)=>void>(()=>{});
+  const referenceSearch=useReferenceSearch<ReferenceResult>({enabled:Boolean(reference)&&!disabled&&!sourceMode,chatId:workspace?.chatId,kind:referenceKind,query:reference?.query || ""});
+  referenceResultsRef.current=referenceSearch.results;
+  const referenceMenuId=useId();
+  const [previewAnchor,setPreviewAnchor]=useState<HTMLAnchorElement|null>(null);
   const [selectionMenu, setSelectionMenu] = useState<MenuPosition | null>(null);
   const [, render] = useState(0);
   const [dialog, setDialog] = useState<"link" | "image" | "page" | "embed" | "code" | null>(null);
@@ -291,6 +306,21 @@ function NotesBlockEditorInstance({
       attributes: { class: "notes-prosemirror", "aria-label": ariaLabel, role: "textbox", "aria-multiline": "true", spellcheck: "true" },
       handleKeyDown: (view, event) => {
         if (settings.current.disabled) return false;
+        if (!event.isComposing && referenceRef.current) {
+          const available=referenceResultsRef.current;
+          if(event.key==="ArrowDown" || event.key==="ArrowUp") {
+            event.preventDefault();
+            const next=(referenceIndexRef.current+(event.key==="ArrowDown"?1:-1)+available.length)%Math.max(1,available.length);
+            referenceIndexRef.current=next;setReferenceIndex(next);return true;
+          }
+          if(event.key==="Enter") {
+            event.preventDefault();
+            const item=available[referenceIndexRef.current % Math.max(1,available.length)];
+            if(item)selectReferenceRef.current(item);
+            return true;
+          }
+          if(event.key==="Escape"){event.preventDefault();referenceRef.current=null;setReference(null);return true;}
+        }
         if (slashRef.current) {
           const available = commandsRef.current;
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -356,14 +386,38 @@ function NotesBlockEditorInstance({
         const rect = editor.view.coordsAtPos(from), next = { from: from - textBefore.length, to: from, query: match[1].toLowerCase(), top: rect.bottom + 8, left: Math.min(rect.left, window.innerWidth - 310) };
         setSlash(next); slashRef.current = next;
       } else { setSlash(null); slashRef.current = null; }
+      const mention=editor.isFocused && empty && !$from.parent.type.spec.code && !editor.isActive("link") ? notesReferenceQuery(textBefore) : null;
+      if(mention) {
+        const rect=editor.view.coordsAtPos(from);
+        const next={from:from-mention.length,to:from,query:mention.query,top:rect.bottom+8,left:Math.max(8,Math.min(rect.left,window.innerWidth-330))};
+        setReference(next);referenceRef.current=next;
+      } else {setReference(null);referenceRef.current=null;}
       if (!empty && !(editor.state.selection instanceof NodeSelection)) {
         const start = editor.view.coordsAtPos(from), end = editor.view.coordsAtPos(to);
         setSelectionMenu({ top: Math.max(8, Math.min(start.top, end.top) - 46), left: Math.max(8, Math.min((start.left + end.left) / 2 - 160, window.innerWidth - 340)) });
       } else setSelectionMenu(null);
     };
-    editor.on("transaction", update); update();
-    return () => { editor.off("transaction", update); };
+    const blur=()=>{setReference(null);referenceRef.current=null;};
+    editor.on("transaction", update);editor.on("focus",update);editor.on("blur",blur);update();
+    return () => { editor.off("transaction", update);editor.off("focus",update);editor.off("blur",blur); };
   }, [disabled, editor, sourceMode]);
+  useEffect(()=>{setReferenceIndex(0);referenceIndexRef.current=0;},[reference?.query,referenceKind]);
+  useEffect(()=>{
+    const dom=editor?.view.dom;
+    if(!dom)return;
+    if(reference){
+      dom.setAttribute("aria-autocomplete","list");
+      dom.setAttribute("aria-controls",referenceMenuId);
+      const selected=referenceSearch.results.length ? referenceMenuId+"-"+referenceIndex : "";
+      if(selected)dom.setAttribute("aria-activedescendant",selected);
+      else dom.removeAttribute("aria-activedescendant");
+      document.getElementById(selected)?.scrollIntoView({block:"nearest"});
+    }else{
+      dom.removeAttribute("aria-autocomplete");dom.removeAttribute("aria-controls");dom.removeAttribute("aria-activedescendant");
+    }
+  },[editor,reference,referenceMenuId,referenceIndex,referenceSearch.results]);
+  useEffect(()=>{ if(disabled || sourceMode){setReference(null);referenceRef.current=null;setPreviewAnchor(null);} },[disabled,sourceMode]);
+  useEffect(()=>{setPreviewAnchor(null);},[draft]);
   useEffect(() => { setMenuIndex(0); menuIndexRef.current = 0; }, [slash?.query]);
   useEffect(() => {
     const update = () => setUploadTasks(getUploadSnapshot().filter((task) => ownUploadIds.current.has(task.id) && !["completed", "cancelled"].includes(task.status)));
@@ -513,6 +567,17 @@ function NotesBlockEditorInstance({
     command.run(editor);
   };
   commandRef.current = runCommand;
+  selectReferenceRef.current=(item)=>{
+    const current=referenceRef.current,href=notesReferenceHref(item);
+    if(!editor || disabled || !current || !href)return;
+    referenceRef.current=null;setReference(null);
+    editor.chain().focus().insertContentAt({from:current.from,to:current.to},[
+      {type:"text",text:item.label,marks:[{type:"link",attrs:{href}}]},
+      {type:"text",text:" "},
+    ]).run();
+  };
+  const commandIcons:Record<string,typeof List>={text:Type,h1:Heading1,h2:Heading2,h3:Heading3,bullet:List,number:ListOrdered,task:ListTodo,toggle:ChevronRight,quote:Quote,callout:Info,divider:Minus,code:Code2,table:Table2,image:ImageIcon,file:Paperclip,embed:Globe,math:Sigma,"inline-math":Sigma,columns:Columns2,toc:ListTree,reference:Link2,page:FilePlus2,issue:CircleDot};
+  const commandIcon=(id:string)=>{const Icon=commandIcons[id] || FileText;return <Icon size={17} aria-hidden="true"/>;};
   const selectHovered = (extend = false) => {
     if (!editor || !hover) return;
     const node = editor.state.doc.nodeAt(hover.pos);
@@ -560,16 +625,26 @@ function NotesBlockEditorInstance({
     }
     setDialog(null);
   };
-  return <div ref={root} className={"notes-block-editor" + (disabled ? " is-readonly" : "") + (className ? " " + className : "")} data-note-drop-target={noteId || workspace?.id || identity} onPointerDown={onPointerDown} aria-disabled={disabled || undefined} onClickCapture={(event) => {
+  return <div ref={root} className={"notes-block-editor" + (disabled ? " is-readonly" : "") + (className ? " " + className : "")} data-note-drop-target={noteId || workspace?.id || identity} onPointerDown={onPointerDown} aria-disabled={disabled || undefined}
+    onMouseOver={(event)=>{const anchor=(event.target as HTMLElement).closest<HTMLAnchorElement>(".notes-prosemirror a");setPreviewAnchor(anchor);}}
+    onMouseOut={(event)=>{if(previewAnchor && !(event.relatedTarget instanceof Node && previewAnchor.contains(event.relatedTarget)))setPreviewAnchor(null);}}
+    onFocusCapture={(event)=>setPreviewAnchor((event.target as HTMLElement).closest<HTMLAnchorElement>(".notes-prosemirror a"))}
+    onBlurCapture={()=>setPreviewAnchor(null)}
+    onClickCapture={(event) => {
     const anchor = (event.target as HTMLElement).closest("a");
     const href = anchor?.getAttribute("href");
-    if (href && settings.current.resolveUrl) anchor?.setAttribute("href", settings.current.resolveUrl(href, "link"));
-  }} onClick={(event) => {
-    const anchor = (event.target as HTMLElement).closest("a");
-    const href = anchor?.getAttribute("href");
-    const fileLocation = href ? parseWorkspaceFileLink(href) : null;
+    if(!href)return;
+    const resolved=settings.current.resolveUrl?.(href,"link") || href;
+    const modified=event.ctrlKey || event.metaKey;
+    if(/^https?:\/\//i.test(resolved) && (modified || disabled)) {
+      event.preventDefault();event.stopPropagation();setPreviewAnchor(null);
+      if(modified)window.open(resolved,"_blank","noopener,noreferrer");
+      else window.dispatchEvent(new CustomEvent("ai-chat:open-browser",{detail:resolved}));
+      return;
+    }
+    const fileLocation = parseWorkspaceFileLink(resolved);
     if (fileLocation) { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("ai-chat:open-file", { detail: fileLocation })); return; }
-    const internal = parseInternalLink(href ?? undefined);
+    const internal = parseInternalLink(resolved);
     if (internal) {
       event.preventDefault(); event.stopPropagation();
       if (internal.kind === "note" && internal.id === noteId && internal.blockId) {
@@ -578,6 +653,7 @@ function NotesBlockEditorInstance({
       else { const navigation = internalLinkNavigation(internal); window.dispatchEvent(new CustomEvent(navigation.event, { detail: navigation.detail })); }
     }
   }}>
+    {previewAnchor && <LinkPreview key={previewAnchor.getAttribute("href")} href={settings.current.resolveUrl?.(previewAnchor.getAttribute("href") || "","link") || previewAnchor.getAttribute("href") || ""} anchorElement={previewAnchor}/>}
     <div className="notes-editor-topbar">
       <div className="notes-editor-mode" role="group" aria-label="Editor mode"><button type="button" className={!sourceMode ? "is-active" : ""} onClick={() => { if (!editor) return; try { const parsed = parseNotesMarkdown(latest.current); editor.schema.nodeFromJSON(parsed).check(); if (serialize(editor.state.doc) !== latest.current) { externalUpdate.current = true; try { editor.commands.setContent(parsed as JSONContent, { emitUpdate: false, errorOnInvalidContent: true }); } finally { externalUpdate.current = false; } } setSourceMode(false); setError(""); } catch { setError("Could not open rich blocks. Your complete Markdown source is preserved."); } }}>Blocks</button><button type="button" className={sourceMode ? "is-active" : ""} onClick={() => setSourceMode(true)}><Code2 size={13} /> Markdown</button></div>
       <div className="notes-editor-tools">
@@ -637,10 +713,24 @@ function NotesBlockEditorInstance({
           <button type="button" onClick={() => void blockAction("duplicate")}><Copy size={14}/> Duplicate</button><button type="button" onClick={() => void blockAction("copy")}><Link2 size={14}/> Copy block link</button><button type="button" onClick={() => void blockAction("up")}><ArrowUp size={14}/> Move up</button><button type="button" onClick={() => void blockAction("down")}><ArrowDown size={14}/> Move down</button>{onCreateIssue && <button type="button" disabled={creatingIssue} onClick={() => void blockAction("issue")}><Check size={14}/> {editor.isActive("taskItem") ? "Convert task to issue" : "Create issue"}</button>}<button type="button" className="notes-action-delete" onClick={() => void blockAction("delete")}><Trash2 size={14}/> Delete</button>
         </div>}
         <div className="notes-menu-label">{slash?.query ? "Blocks matching “" + slash.query + "”" : "Insert or turn into"}</div>
-        {(slash ? filtered : commands).map((command, index) => <button key={command.id} type="button" role="option" aria-selected={Boolean(slash && index === menuIndex)} className={slash && index === menuIndex ? "is-selected" : ""} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => { setMenuIndex(index); menuIndexRef.current = index; }} onClick={() => runCommand(command.id)}><span className="notes-command-icon">{command.id.startsWith("h") ? command.id.toUpperCase() : <List size={15}/>}</span><span><strong>{command.title}</strong><small>{command.detail}</small></span></button>)}
+        {(slash ? filtered : commands).map((command, index) => <button key={command.id} type="button" role="option" aria-selected={Boolean(slash && index === menuIndex)} className={slash && index === menuIndex ? "is-selected" : ""} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => { setMenuIndex(index); menuIndexRef.current = index; }} onClick={() => runCommand(command.id)}><span className="notes-command-icon">{commandIcon(command.id)}</span><span><strong>{command.title}</strong><small>{command.detail}</small></span></button>)}
         {slash && !filtered.length && <div className="notes-menu-empty">No matching blocks. Try “table”, “toggle” or “image”.</div>}
       </div>
     </>, document.body)}
+    {!disabled && reference && !sourceMode && createPortal(<>
+      <div className="notes-menu-dismiss" onMouseDown={()=>{setReference(null);referenceRef.current=null;}}/>
+      <div className="notes-block-menu notes-reference-menu" style={{top:"clamp(8px, "+reference.top+"px, calc(100dvh - 360px))",left:"clamp(8px, "+reference.left+"px, calc(100vw - 308px))"}}>
+        <div className="notes-reference-kinds" role="group" aria-label="Reference category">
+          {(["note","canvas","plan"] as const).map(kind=><button key={kind} type="button" aria-pressed={referenceKind===kind} onMouseDown={event=>event.preventDefault()} onClick={()=>setReferenceKind(kind)}>{kind==="note"?"Notes":kind==="canvas"?"Canvases":"Plans"}</button>)}
+        </div>
+        <div role="listbox" id={referenceMenuId} aria-label="Link a note, canvas or plan" aria-busy={referenceSearch.loading}>
+          {referenceSearch.loading ? <div className="notes-menu-empty" role="status">Searching…</div>
+            : referenceSearch.error ? <div className="notes-menu-empty" role="alert">{referenceSearch.error}<button type="button" onClick={referenceSearch.retry}>Retry</button></div>
+            : referenceSearch.results.length ? referenceSearch.results.map((item,index)=><button type="button" key={item.kind+item.id+(item.chatId || "")} role="option" id={referenceMenuId+"-"+index} aria-selected={index===referenceIndex} className={index===referenceIndex?"is-selected":""} onMouseDown={event=>event.preventDefault()} onMouseEnter={()=>{setReferenceIndex(index);referenceIndexRef.current=index;}} onClick={()=>selectReferenceRef.current(item)}><span className="notes-command-icon"><Link2 size={16}/></span><span><strong>{item.label}</strong><small>{item.detail || item.kind}</small></span></button>)
+            : <div className="notes-menu-empty" role="status">No matching {referenceKind==="note"?"notes":referenceKind==="canvas"?"canvases":"plans"}.</div>}
+        </div>
+      </div>
+    </>,document.body)}
     {dialog && <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) setDialog(null); }}><DialogPrimitive.Portal><DialogPrimitive.Overlay className="notes-editor-dialog-overlay"/><DialogPrimitive.Content asChild aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); editor?.commands.focus(); }}>
       <form className="notes-editor-dialog" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); submitDialog(); }}>
         <div><DialogPrimitive.Title asChild><strong>{dialog === "code" ? "Code language" : dialog === "page" ? "Page reference" : "Add " + dialog}</strong></DialogPrimitive.Title><button type="button" aria-label="Close dialog" onClick={() => setDialog(null)}><X size={16}/></button></div>

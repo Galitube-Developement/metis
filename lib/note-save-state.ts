@@ -1,6 +1,6 @@
 import type { NoteTodo, SharedNote } from "@/lib/store";
 
-export type NoteDraft = Partial<Pick<SharedNote, "title" | "content" | "todos" | "position" | "size" | "color" | "archived">> & { projectId?: string | null };
+export type NoteDraft = Partial<Pick<SharedNote, "title" | "content" | "todos" | "position" | "size" | "color" | "archived" | "icon" | "cover">> & { projectId?: string | null };
 
 export type NoteConflict = {
   field: keyof NoteDraft;
@@ -9,7 +9,7 @@ export type NoteConflict = {
   remote: unknown;
 };
 
-const NOTE_FIELDS: Array<keyof NoteDraft> = ["title", "content", "todos", "position", "size", "projectId", "color", "archived"];
+const NOTE_FIELDS: Array<keyof NoteDraft> = ["title", "content", "todos", "position", "size", "projectId", "color", "archived", "icon", "cover"];
 
 export function equalNoteValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -65,9 +65,9 @@ export function noteConflictFields(
       );
       return conflicting ? [{ field, base: base.todos, local: mergeTodos(base.todos, draft.todos, remote.todos, "local"), remote: mergeTodos(base.todos, draft.todos, remote.todos, "remote") }] : [];
     }
-    const baseValue = field === "projectId" ? base[field] ?? null : base[field];
-    const localValue = field === "projectId" ? draft[field] ?? null : draft[field];
-    const remoteValue = field === "projectId" ? remote[field] ?? null : remote[field];
+    const baseValue = (field === "projectId" || field === "icon" || field === "cover") ? base[field] ?? null : base[field];
+    const localValue = (field === "projectId" || field === "icon" || field === "cover") ? draft[field] ?? null : draft[field];
+    const remoteValue = (field === "projectId" || field === "icon" || field === "cover") ? remote[field] ?? null : remote[field];
     return !equalNoteValue(baseValue, remoteValue) && !equalNoteValue(baseValue, localValue) && !equalNoteValue(localValue, remoteValue)
       ? [{ field, base: baseValue, local: localValue, remote: remoteValue }]
       : [];
@@ -83,9 +83,9 @@ export function rebaseNoteDraft(base: SharedNote, draft: NoteDraft, remote: Shar
   const next = { ...draft };
   for (const field of NOTE_FIELDS) {
     if (next[field] === undefined) continue;
-    const baseValue = field === "projectId" ? base[field] ?? null : base[field];
-    const localValue = field === "projectId" ? next[field] ?? null : next[field];
-    const remoteValue = field === "projectId" ? remote[field] ?? null : remote[field];
+    const baseValue = (field === "projectId" || field === "icon" || field === "cover") ? base[field] ?? null : base[field];
+    const localValue = (field === "projectId" || field === "icon" || field === "cover") ? next[field] ?? null : next[field];
+    const remoteValue = (field === "projectId" || field === "icon" || field === "cover") ? remote[field] ?? null : remote[field];
     if (equalNoteValue(localValue, baseValue) || equalNoteValue(localValue, remoteValue)) delete next[field];
   }
   return mergeTodoDraft(base, next, remote);

@@ -17,7 +17,7 @@ export function useReferenceSearch<T>({ enabled, chatId, kind, query }: {
   const current = enabled && state?.key === key ? state : null;
   return {
     results: current?.results || [],
-    loading: enabled && (!current || current.status === "loading"),
+    loading: enabled && (!current || current.status === "loading" || Boolean(current.indexing && !current.results.length)),
     error: current?.status === "error" ? current.error : undefined,
     retry: () => setRetry(value => value + 1),
   };

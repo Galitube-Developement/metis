@@ -1,3 +1,11 @@
+.notes-reference-menu { max-width:calc(100vw - 16px); max-height:min(350px, calc(100dvh - 16px)); }
+.notes-reference-kinds { display:flex; gap:4px; padding:6px; border-bottom:1px solid var(--border); }
+.notes-reference-kinds>button { flex:1; min-height:44px; padding:6px 10px; border-radius:4px; color:var(--muted-foreground); }
+.notes-reference-kinds>button[aria-pressed=true] { background:var(--accent); color:var(--foreground); }
+.notes-reference-menu [role=listbox]>button { min-height:44px; }
+.notes-reference-menu strong,.notes-reference-menu small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.notes-reference-menu [role=option]>span:last-child { min-width:0; }
+.notes-reference-menu button:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 .notes-block-editor { position:relative; width:100%; min-height:260px; color:var(--foreground); }
 .shared-markdown-surface { overflow:auto; }
 .shared-markdown-surface>.notes-block-editor { min-height:0; color:inherit; font-size:inherit; }
@@ -91,8 +99,8 @@
 .notes-color-control input { position:absolute; width:100%; height:100%; opacity:0; cursor:pointer; }
 .notes-menu-dismiss { position:fixed; inset:0; z-index:88; }
 .notes-block-menu { position:fixed; z-index:90; max-height:350px; overflow-y:auto; width:300px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:4px; padding:5px; box-shadow:0 8px 30px #0003; font-size:13px; }
-.notes-block-menu>button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:8px; border-radius:4px; }
-.notes-block-menu>button:hover,.notes-block-menu>button.is-selected { background:var(--accent); }
+.notes-block-menu>button,.notes-reference-menu [role=listbox]>button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:8px; border-radius:4px; }
+.notes-block-menu>button:hover,.notes-block-menu>button.is-selected,.notes-reference-menu [role=option]:hover,.notes-reference-menu [role=option].is-selected { background:var(--accent); }
 .notes-command-icon { display:flex; justify-content:center; align-items:center; flex:none; width:30px; height:30px; border:1px solid var(--border); border-radius:4px; font-size:12px; font-weight:600; }
 .notes-block-menu strong { display:block; font-size:12px; font-weight:550; line-height:1.4; }.notes-block-menu small { display:block; font-size:10px; color:var(--muted-foreground); margin-top:1px; }
 .notes-menu-label { padding:8px 8px 4px; font-size:10px; color:var(--muted-foreground); font-weight:600; text-transform:uppercase; letter-spacing:.05em; }

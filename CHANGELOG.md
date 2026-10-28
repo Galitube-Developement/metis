@@ -4,6 +4,17 @@ All notable Metis AI releases are documented here. Release tags and GitHub
 releases are created locally with `pnpm release`; GitHub Actions does not
 publish releases.
 
+## v1.0.20 — 2026-10-28
+
+- Set a custom Codex context window in the model options menu, with compact K/M labels and an Apply confirmation. Pass validated context and compaction settings to new and resumed Codex turns without changing the user's global Codex configuration; model and account limits still apply.
+- Keep reference searches responsive with background workers, a persistent normalized file index, bounded requests, cancellation and account/project access checks.
+- Insert note, canvas and plan references as Markdown links from the shared editor, restore internal link previews and Ctrl/Cmd-click navigation, and distinguish slash-menu actions with separate icons.
+- Edit note icons and upload banner images from the document toolbar while preserving draft and save-conflict handling.
+- Order issue board columns as Backlog, Todo, In Progress, Done and Canceled.
+- Forward Antigravity reasoning parameters only when the provider explicitly advertises them, and validate saved parameters against the discovered model contract.
+- Improve chat submission, history loading, notification polling and remote-device presence with background processing and bounded persistence work.
+- Match tool details, provider retry controls and automation interfaces to the selected theme.
+
 ## v1.0.19 — 2026-10-24 (updated 2026-10-26)
 
 - Introduce Notebooks with separate project and No Project file trees, nested Markdown documents, and migration of existing note hierarchies.
