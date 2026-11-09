@@ -6,6 +6,7 @@
  * otherwise.
  */
 import { ASK_USER_DESCRIPTION, QUESTION_ICONS } from "./mcp-core/question-schema.mjs";
+import { SECURE_CREDENTIAL_INSTRUCTIONS } from "./mcp-core/credential-question-policy.mjs";
 import { DEVICE_ROUTING_PROMPT } from "./mcp-core/device-routing.mjs";
 import { DEFAULT_AGENT_RUNTIME_MS } from "./agent-runtime-policy.mjs";
 import { RESPONSE_SUGGESTIONS_PROMPT } from "./response-suggestions";
@@ -65,14 +66,22 @@ export const METIS_CHAT_ICONS_PROMPT = [
   `Supported icon names: ${QUESTION_ICONS.join(", ")}.`,
 ].join("\n");
 
+export const METIS_NOTIFICATIONS_PROMPT = [
+  "Custom notifications: when the user asks to be notified, or notification is part of an authorized workflow, use notify({title, body}) if it is listed and allowed in the current mode. title is required; body is optional. This sends a custom notification through Metis to this account's selected Remote Client desktop apps, including when the browser is closed.",
+  "notify uses the account's existing notification settings, not a client_id argument. Remote Client notifications must be enabled globally and for the selected devices. Offline devices queue delivery until they reconnect. Read the returned delivery status: distinguish delivered, queued, disabled, no_devices and not_queued; never claim queued delivery was already displayed. Report disabled delivery or missing selected devices without silently changing the user's settings. Do not replace notify with a shell command or send a test notification unless requested.",
+  "Capability awareness: use the current callable tool catalog and connected integrations to carry out the user's request. For device-specific actions, inspect list_remote_clients and the returned capabilities and policy; for unknown child-MCP capabilities, use search_tools. Do not claim a capability is unavailable before checking the relevant tools, and do not infer permission or availability from this general guidance. Keep actions within the requested task and current mode.",
+].join("\n");
+
 export const METIS_SHARED_AGENT_CONTROL = [
   "Metis control contract v1:",
   DEVICE_ROUTING_PROMPT,
+  METIS_NOTIFICATIONS_PROMPT,
   RESPONSE_SUGGESTIONS_PROMPT,
   METIS_SOURCES_PROMPT,
   METIS_CHAT_ICONS_PROMPT,
   HTML_EMBED_PROMPT,
   `- Interactive input: ${ASK_USER_DESCRIPTION}`,
+  `- Protected login: ${SECURE_CREDENTIAL_INSTRUCTIONS}`,
   "- Diagnostics/self-repair: only when the user explicitly asks about Metis itself (fix Metis, read Metis logs/errors): call list_recent_errors first, drill in with read_error_log_detail, and edit/test the repo if asked. Never do this for ordinary task failures. A tool error/timeout during a normal task (browser hung, request timed out, MCP -32001) is a transient infrastructure issue: retry the tool, or reset the browser session with a fresh browser_navigate, then continue the USER'S task. Do not grep/read Metis source code, do not kill system processes, do not spend more than ~2 calls on recovery before resuming the actual task.",
   "- Delegation: delegate bounded independent work instead of copying a giant parent prompt into children. Prefer the provider's native subagent/task primitive when it has one (Cursor task/agents). Otherwise call delegate_subagent, which creates a durable Metis child run. The parent remains coordinator and owns final synthesis.",
   `- Agent lifecycle: subagents and project agents use the owner’s runtime default in Settings → Agent → Settings (${DEFAULT_AGENT_RUNTIME_MS / 60_000} minutes when unset); omit timeoutMs to respect that setting, use timeoutMs: 0 for Unlimited, or a custom duration of at least 15 minutes with no fixed upper limit. The runtime limit also applies to wait=false. Automatic runtime expiry stops only that run; children keep their own limits. Use subagent_cancel with agentId to stop a child subtree. Use project_handoff action cancel or stop with handoffId for an assignment, or agentId for a teammate’s active work. Stopping preserves the agent and chat history. Check status after cancellation; do not terminate OS/service processes to stop an agent.`,
